@@ -1,0 +1,522 @@
+# -*- coding: utf-8 -*-
+"""
+因子挖掘框架(参照中金 Loop Engineering 简化版)
+================================================
+闭环: 生成(A) -> 审查(B) -> 验证(硬编码)
+验证标准(中金11项简化):
+  1. |IC| > 0.02
+  2. IC胜率 > 50%
+  3. 各年度超额 > 0 (年度稳定性)
+  4. 近1年超额 > 0
+  5. Calmar > 0.5
+  6. 与已入库因子 IC相关性 < 0.70 (独立性)
+换仓: 5日    成本: 单边千一    分组: 10组, Top组多头
+"""
+import os
+import json
+import time
+import warnings
+import numpy as np
+import pandas as pd
+from scipy.stats import spearmanr
+
+warnings.filterwarnings('ignore')
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+PANEL = os.path.join(HERE, 'panel.h5')
+LIB = os.path.join(HERE, 'factor_lib.json')
+UNIVERSE = os.path.join(HERE, 'universe.h5')
+
+_UNIV = None
+
+
+def get_universe():
+    """可交易股票池掩码(date x stock, bool)"""
+    global _UNIV
+    if _UNIV is None:
+        with pd.HDFStore(UNIVERSE, 'r') as st:
+            _UNIV = st['universe']
+    return _UNIV
+
+FWD = 5            # 持有期(交易日)
+N_GRP = 10         # 分组数
+COST = 0.001       # 单边成本
+START = 20180101   # 检验区间
+
+
+def set_fwd(n):
+    """设置换仓周期(交易日): 1=日频 5=周频 20=月频"""
+    global FWD
+    FWD = int(n)
+    return FWD
+
+
+# ===================== 算子 =====================
+def ts_mean(df, w): return df.rolling(w, min_periods=max(2, w // 2)).mean()
+def ts_std(df, w): return df.rolling(w, min_periods=max(2, w // 2)).std()
+def ts_sum(df, w): return df.rolling(w, min_periods=max(2, w // 2)).sum()
+def ts_max(df, w): return df.rolling(w, min_periods=max(2, w // 2)).max()
+def ts_min(df, w): return df.rolling(w, min_periods=max(2, w // 2)).min()
+
+
+def ts_pos(df, w):
+    """当前值在过去w日区间中的相对位置 0~1 (快, 替代 ts_rank)"""
+    mn = ts_min(df, w)
+    mx = ts_max(df, w)
+    return (df - mn) / (mx - mn + 1e-12)
+
+
+def ts_decay(df, w):
+    """线性衰减加权均值(近期权重高)"""
+    wt = np.arange(1, w + 1, dtype=np.float64)
+    wt /= wt.sum()
+    return df.rolling(w, min_periods=max(2, w // 2)).apply(
+        lambda x: np.dot(x, wt[-len(x):] / wt[-len(x):].sum()), raw=True)
+
+
+def ts_corr(x, y, w):
+    return x.rolling(w, min_periods=max(3, w // 2)).corr(y)
+
+
+def ts_delay(df, n): return df.shift(n)
+def ts_delta(df, n): return df - df.shift(n)
+
+
+def cs_rank(df):
+    """截面排名 0~1"""
+    return df.rank(axis=1, pct=True)
+
+
+def cs_zscore(df):
+    mu = df.mean(axis=1)
+    sd = df.std(axis=1)
+    return df.sub(mu, axis=0).div(sd + 1e-12, axis=0)
+
+
+def cs_demean(df):
+    return df.sub(df.mean(axis=1), axis=0)
+
+
+# ===================== 数据 =====================
+def load_panel(fields=None):
+    with pd.HDFStore(PANEL, 'r') as st:
+        keys = fields or [k.strip('/') for k in st.keys()]
+        P = {k: st[k] for k in keys}
+    return P
+
+
+def prepare(P):
+    """计算衍生基础字段"""
+    close = P['close'].astype('float64')
+    P['ret'] = close.pct_change()
+    P['open'] = P['open'].astype('float64')
+    P['high'] = P['high'].astype('float64')
+    P['low'] = P['low'].astype('float64')
+    P['volume'] = P['volume'].astype('float64')
+    P['turnover'] = P['turnover'].astype('float64')
+    P['close'] = close
+    P['prev_close'] = close.shift(1)
+    # 换手率(成交额/市值)
+    mc = P.get('mktcap')
+    if mc is not None:
+        mc = mc.astype('float64').reindex_like(close)
+        P['mktcap'] = mc
+        P['turn_ratio'] = P['turnover'] / (mc + 1e-12)
+    P['vwap'] = P['turnover'] / (P['volume'] + 1e-12)
+    return P
+
+
+# ===================== 可实现性(贴近实盘) =====================
+# 往返成本档位(买入佣金 + 卖出佣金 + 卖出印花税千一)
+COST_RT = 0.005          # 默认: 单边千二 x2 + 印花税千一 = 0.5%
+COST_PRESETS = {
+    '单边千二': 0.005,     # 0.002*2 + 0.001
+    '单边千1.5': 0.004,    # 0.0015*2 + 0.001  <- 用户建议档
+    '单边千一': 0.003,     # 0.001*2 + 0.001   (中金研报用的档)
+}
+_TRADE = None
+
+
+def get_tradability():
+    """一次性预计算可交易性矩阵(缓存)
+    buyable[t,s]  : t 日能否买入(非涨停/非停牌/有价)
+    next_sell[t,s]: t 日(含)起第一个能卖出的交易日索引(跌停/停牌则顺延)
+    """
+    global _TRADE
+    if _TRADE is not None:
+        return _TRADE
+    with pd.HDFStore(PANEL, 'r') as st:
+        keys = [k.strip('/') for k in st.keys()]
+        need = ['close', 'limit_up', 'limit_down', 'turnover']
+        miss = [k for k in need if k not in keys]
+        if miss:
+            raise KeyError(f"panel.h5 缺少 {miss}, 无法实现可实现性约束")
+        P = {k: st[k] for k in need}
+    close = P['close'].astype('float64')
+    cv = close.values
+    T, S = cv.shape
+    vol = P['turnover'].astype('float64').values
+    lu = P['limit_up'].astype('float64').values
+    ld = P['limit_down'].astype('float64').values
+    bad = ~(np.isfinite(cv) & (cv > 0)) | ~(vol > 0)      # 停牌/无数据
+    up = np.isfinite(lu) & (cv >= lu - 1e-6)              # 涨停: 买不进
+    dn = np.isfinite(ld) & (cv <= ld + 1e-6)              # 跌停: 卖不出
+    buyable = (~up) & (~bad)
+    sellable = (~dn) & (~bad)
+    big = T - 1
+    b = np.where(sellable, np.arange(T)[:, None], big)
+    # next_sell[t] = min{t' >= t : sellable[t']}  (反向 minimum accumulate)
+    next_sell = np.minimum.accumulate(b[::-1], axis=0)[::-1].astype(np.int32)
+    _TRADE = dict(dates=close.index.values, cols=list(close.columns),
+                  close=cv, buyable=buyable, next_sell=next_sell)
+    return _TRADE
+
+
+def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
+                  window='full'):
+    """【可实现性版检验(费后)】与 evaluate() 的差别:
+      1. T+1 买入日: 剔除涨停/停牌 -> 买不进的不算
+      2. 卖出日: 跌停/停牌则顺延到下一个可卖日(实盘卖不出的真实处理)
+      3. 成本: 按实际换手率 x 往返成本(默认0.5% = 佣金千二双边 + 印花税千一)
+      4. cash: 仓位现金比例(等权时为1.0; 若策略留5%现金, 传0.95)
+      5. window: 'full'=START(2018)起九年口径; 'recent600'=最近600交易日
+         (对齐中金研报口径: 回测只用最近600日, 过滤只要求最近2年正)
+    其余(IC/分组/年度)与 evaluate 一致, 便于对照。
+    """
+    TR = get_tradability()
+    idx_all = close.index[(close.index >= START)]
+    if window == 'recent600':
+        idx = idx_all[-600:]                 # 中金口径: 只看最近600交易日(~2.5年)
+        if len(idx) < 300:                   # 数据不足时退回全口径
+            idx = idx_all
+    else:
+        idx = idx_all
+    fac = fac.reindex(index=idx, columns=close.columns)
+    col_of = {c: j for j, c in enumerate(close.columns)}
+    dates_all = close.index.values
+    pos_of = {d: i for i, d in enumerate(dates_all)}
+    cv = TR['close']
+
+    U = get_universe().reindex(index=idx, columns=close.columns).fillna(False)
+    fwd_ret = (close.shift(-(1 + FWD)) / close.shift(-1) - 1).reindex(index=idx)
+    ics = []
+    # IC 仍用(不受可实现性影响的)原始口径, 便于与历史结果对照
+    fv_all, rv_all, uv_all = fac.values, fwd_ret.values, U.values
+    for i in range(len(idx)):
+        u = uv_all[i]
+        f_ = fv_all[i][u]
+        r_ = rv_all[i][u]
+        m = np.isfinite(f_) & np.isfinite(r_)
+        if m.sum() < 50:
+            ics.append(np.nan)
+            continue
+        try:
+            c = spearmanr(f_[m], r_[m])[0]
+        except Exception:
+            c = np.nan
+        ics.append(c)
+    ic = pd.Series(ics, index=idx)
+    ic_mean = ic.mean()
+    ic_ir = ic.mean() / ic.std() if ic.std() > 0 else np.nan
+    ic_win = (ic > 0).sum() / ic.notna().sum() if ic.notna().sum() else np.nan
+
+    buyable = TR['buyable']
+    next_sell = TR['next_sell']
+    ar = np.arange(len(close.columns))
+    top_r, mkt_r, dates_l, turns = [], [], [], []
+    prev_top = None
+    for d in idx[::FWD][:-1]:
+        u = U.loc[d]
+        f = fac.loc[d][u].dropna()
+        if len(f) < N_GRP * 10:
+            continue
+        nxt = idx[idx > d]
+        if len(nxt) <= FWD:
+            continue
+        d1, d2 = nxt[0], nxt[FWD]
+        i1, i2 = pos_of[d1], pos_of[d2]
+        grp = pd.qcut(f.rank(method='first'), N_GRP, labels=False)
+        top = list(f.index[grp == N_GRP - 1])
+        j_top = np.array([col_of[s] for s in top])
+        j_all = np.array([col_of[s] for s in f.index])
+        ok_buy = buyable[i1]
+        keep_top = j_top[ok_buy[j_top]]
+        keep_all = j_all[ok_buy[j_all]]
+        if len(keep_top) < 10 or len(keep_all) < N_GRP * 5:
+            continue
+        si = next_sell[i2]                       # 每只股票自己的可卖日
+        buy_px = cv[i1]
+        sell_px = cv[si, ar]
+        r_all = sell_px / buy_px - 1.0
+        rt = np.nanmean(r_all[keep_top])
+        rm = np.nanmean(r_all[keep_all])
+        if not (np.isfinite(rt) and np.isfinite(rm)):
+            continue
+        if prev_top:
+            keep = len(set(top) & prev_top) / max(len(prev_top), 1)
+        else:
+            keep = 0.0
+        turn = 1.0 - keep
+        top_r.append(rt * cash - turn * cost)
+        mkt_r.append(rm * cash)
+        dates_l.append(d)
+        turns.append(turn)
+        prev_top = set(top)
+    if len(top_r) < 30:
+        return None
+    tr = pd.Series(top_r, index=dates_l)
+    mr = pd.Series(mkt_r, index=dates_l)
+    ex = tr - mr
+    nav_t = (1 + tr).cumprod()
+    nav_m = (1 + mr).cumprod()
+    nav_e = (1 + ex).cumprod()
+    yrs = len(tr) * FWD / 243
+    ann_e = nav_e.iloc[-1] ** (1 / yrs) - 1 if yrs > 0 else np.nan
+    dd_e = (nav_e / nav_e.cummax() - 1).min()
+    calmar = ann_e / abs(dd_e) if dd_e < 0 else np.nan
+    sharpe = ex.mean() / ex.std() * np.sqrt(243 / FWD) if ex.std() > 0 else np.nan
+    ann_t = nav_t.iloc[-1] ** (1 / yrs) - 1
+    ann_m = nav_m.iloc[-1] ** (1 / yrs) - 1
+    yr_ex = {}
+    for y, g in ex.groupby(ex.index // 10000):
+        yr_ex[y] = (1 + g).prod() - 1
+    recent = sorted(yr_ex.keys())[-1]
+    recent_2 = sorted(yr_ex.keys())[-2] if len(yr_ex) > 1 else recent
+    return {
+        'name': name, 'window': window, 'ic': ic_mean, 'ic_ir': ic_ir,
+        'ic_win': ic_win, 'ic_series': ic, 'ann_top': ann_t, 'ann_mkt': ann_m,
+        'ann_ex': ann_e, 'dd': dd_e, 'sharpe': sharpe, 'calmar': calmar,
+        'yr': yr_ex, 'last_yr': yr_ex.get(recent, np.nan),
+        'last2_yr': yr_ex.get(recent_2, np.nan), 'n_rebal': len(tr),
+        'turn': float(np.mean(turns)) if turns else np.nan,
+    }
+
+
+def evaluate_dual(fac, close, name='', cost=COST_RT, cash=1.0):
+    """双口径并行: 九年(full) vs 最近600交易日(recent600), 返回 (r_full, r_600)"""
+    r_full = evaluate_real(fac, close, name, cost=cost, cash=cash, window='full')
+    r_600 = evaluate_real(fac, close, name, cost=cost, cash=cash, window='recent600')
+    return r_full, r_600
+
+
+def fmt_dual(r, extra=''):
+    """单行双口径报告文本"""
+    def _s(x):
+        if x is None:
+            return 'N/A'
+        return (f"IC={x['ic']:+.4f} 费后超额={x['ann_ex']*100:+6.2f}% "
+                f"Calmar={x['calmar'] if x['calmar'] else 0:5.2f} "
+                f"夏普={x['sharpe']:5.2f} 换手={x.get('turn', np.nan)*100:4.1f}% "
+                f"负年={sum(1 for v in x['yr'].values() if v <= 0)} "
+                f"最近2年={x['last2_yr']*100:+.1f}%/{x['last_yr']*100:+.1f}%")
+    return (f"{r[0]['name']:26s}{extra:6s} | full : {_s(r[0])}\n"
+            f"{'':26s}{'':6s} | 近600: {_s(r[1])}")
+
+
+def run_round_real(F, close, tag='', min_ic=0.02, verbose=True, **kw):
+    """用 evaluate_real 批量检验"""
+    rows, ic_store = [], {}
+    for i, (nm, fac) in enumerate(F.items(), 1):
+        try:
+            f = cs_rank(fac.astype('float64'))
+            r = evaluate_real(f, close, nm, **kw)
+            del f
+        except Exception as e:
+            if verbose:
+                print(f"  [{i}/{len(F)}] {nm} ERR {type(e).__name__}: {str(e)[:60]}")
+            continue
+        if r is None:
+            if verbose:
+                print(f"  [{i}/{len(F)}] {nm} 样本不足")
+            continue
+        ic_store[nm] = r.pop('ic_series')
+        ok, msg = pass_filter(r, min_ic)
+        r['pass'] = 'PASS' if ok else msg[:30]
+        rows.append(r)
+        if verbose:
+            print(f"  [{i}/{len(F)}] {nm:18s} IC={r['ic']:+.4f} IR={r['ic_ir']:+.3f} "
+                  f"超额={r['ann_ex']*100:+6.2f}% Calmar={r['calmar'] if r['calmar'] else 0:5.2f} "
+                  f"换手={r.get('turn', np.nan)*100:4.1f}% | {r['pass']}")
+    res = pd.DataFrame(rows)
+    if len(res):
+        res = res.sort_values('ann_ex', ascending=False)
+    return res, ic_store
+
+
+# ===================== 验证 =====================
+def evaluate(fac, close, name='', verbose=False):
+    """单因子检验: IC / 分组 / 年度稳定性
+    fac: 因子宽表(date x stock), T日值预测 T+1..T+FWD 收益
+    """
+    idx = close.index[(close.index >= START)]
+    fac = fac.reindex(index=idx, columns=close.columns)
+    # 未来收益: T+1 买入, T+1+FWD 卖出
+    fwd_ret = (close.shift(-(1 + FWD)) / close.shift(-1) - 1).reindex(index=idx)
+
+    U = get_universe().reindex(index=idx, columns=close.columns).fillna(False)
+    fv = fac.values
+    rv = fwd_ret.values
+    uv = U.values
+
+    # 每日 Spearman IC (仅在可交易池内)
+    ics = []
+    for i in range(len(idx)):
+        u = uv[i]
+        f = fv[i][u]
+        r = rv[i][u]
+        m = np.isfinite(f) & np.isfinite(r)
+        if m.sum() < 50:
+            ics.append(np.nan)
+            continue
+        try:
+            c = spearmanr(f[m], r[m])[0]
+        except Exception:
+            c = np.nan
+        ics.append(c)
+    ic = pd.Series(ics, index=idx)
+    ic_mean = ic.mean()
+    ic_ir = ic.mean() / ic.std() if ic.std() > 0 else np.nan
+    ic_win = (ic > 0).sum() / ic.notna().sum() if ic.notna().sum() else np.nan
+
+    # 分组: 每5日调仓, Top组 vs 全市场等权
+    # 注意: 与IC口径一致 —— 用 T 日因子, T+1 日买入, 持满 FWD 天后卖出
+    rebal = idx[::FWD]
+    top_r, mkt_r, dates = [], [], []
+    prev_top = None
+    for d in rebal[:-1]:
+        # 只在可交易池内选股
+        u = U.loc[d]
+        f = fac.loc[d][u].dropna()
+        if len(f) < N_GRP * 10:
+            continue
+        nxt = idx[idx > d]
+        if len(nxt) <= FWD:
+            continue
+        d1 = nxt[0]              # T+1 买入
+        d2 = nxt[FWD]            # T+1+FWD 卖出
+        grp = pd.qcut(f.rank(method='first'), N_GRP, labels=False)
+        top = f.index[grp == N_GRP - 1]
+        r_fwd = (close.loc[d2] / close.loc[d1] - 1)
+        rt = r_fwd.reindex(top).mean()
+        rm = r_fwd.reindex(f.index).mean()
+        if np.isfinite(rt) and np.isfinite(rm):
+            # 成本按实际换手率: 与上期持仓的差异(卖出部分需卖出+买入各付一次)
+            if prev_top:
+                keep = len(set(top) & prev_top) / max(len(prev_top), 1)
+            else:
+                keep = 0.0
+            top_r.append(rt - (1.0 - keep) * COST * 2)
+            mkt_r.append(rm)
+            dates.append(d)
+            prev_top = set(top)
+    if len(top_r) < 30:
+        return None
+    tr = pd.Series(top_r, index=dates)
+    mr = pd.Series(mkt_r, index=dates)
+    ex = tr - mr
+    nav_t = (1 + tr).cumprod()
+    nav_m = (1 + mr).cumprod()
+    nav_e = (1 + ex).cumprod()
+    yrs = len(tr) * FWD / 243
+    ann_e = nav_e.iloc[-1] ** (1 / yrs) - 1 if yrs > 0 else np.nan
+    dd_e = (nav_e / nav_e.cummax() - 1).min()
+    calmar = ann_e / abs(dd_e) if dd_e < 0 else np.nan
+    sharpe = ex.mean() / ex.std() * np.sqrt(243 / FWD) if ex.std() > 0 else np.nan
+    ann_t = nav_t.iloc[-1] ** (1 / yrs) - 1
+
+    # 年度超额
+    yr_ex = {}
+    for y, g in ex.groupby(ex.index // 10000):
+        yr_ex[y] = (1 + g).prod() - 1
+    recent = sorted(yr_ex.keys())[-1]
+    recent_2 = sorted(yr_ex.keys())[-2] if len(yr_ex) > 1 else recent
+
+    ann_m = nav_m.iloc[-1] ** (1 / yrs) - 1 if yrs > 0 else np.nan
+
+    return {
+        'name': name, 'ic': ic_mean, 'ic_ir': ic_ir, 'ic_win': ic_win,
+        'ic_series': ic, 'ann_top': ann_t, 'ann_mkt': ann_m, 'ann_ex': ann_e,
+        'dd': dd_e, 'sharpe': sharpe, 'calmar': calmar,
+        'yr': yr_ex, 'last_yr': yr_ex.get(recent, np.nan),
+        'last2_yr': yr_ex.get(recent_2, np.nan),
+        'n_rebal': len(tr),
+    }
+
+
+def pass_filter(r, min_ic=0.02):
+    """11项过滤简化版"""
+    if r is None:
+        return False, '检验失败'
+    if abs(r['ic']) < min_ic:
+        return False, f"|IC|={r['ic']:.4f}<{min_ic}"
+    if r['ic_win'] < 0.52:
+        return False, f"IC胜率={r['ic_win']:.2f}<0.52"
+    if r['calmar'] is None or not np.isfinite(r['calmar']) or r['calmar'] < 0.5:
+        return False, f"Calmar={r['calmar'] if r['calmar'] else 0:.2f}<0.5"
+    if not np.isfinite(r['last_yr']) or r['last_yr'] <= 0:
+        return False, f"最近年超额={r['last_yr']:.3f}<=0"
+    bad = [y for y, v in r['yr'].items() if v <= -0.02]
+    if len(bad) > 1:
+        return False, f"亏损年{len(bad)}个:{bad}"
+    return True, 'OK'
+
+
+def run_round(F, close, tag='', min_ic=0.02, verbose=True):
+    """批量检验一批候选因子, 返回 (结果DataFrame, IC序列字典)"""
+    rows, ic_store = [], {}
+    for i, (nm, fac) in enumerate(F.items(), 1):
+        try:
+            f = cs_rank(fac.astype('float64'))
+            r = evaluate(f, close, nm)
+            del f
+        except Exception as e:
+            if verbose:
+                print(f"  [{i}/{len(F)}] {nm} ERR {type(e).__name__}: {str(e)[:50]}")
+            continue
+        if r is None:
+            if verbose:
+                print(f"  [{i}/{len(F)}] {nm} 样本不足")
+            continue
+        ic_store[nm] = r.pop('ic_series')
+        ok, msg = pass_filter(r, min_ic)
+        r['pass'] = 'PASS' if ok else msg[:30]
+        rows.append(r)
+        if verbose:
+            print(f"  [{i}/{len(F)}] {nm:18s} IC={r['ic']:+.4f} IR={r['ic_ir']:+.3f} "
+                  f"超额={r['ann_ex']*100:+6.2f}% Calmar={r['calmar'] if r['calmar'] else 0:5.2f} "
+                  f"| {r['pass']}")
+    res = pd.DataFrame(rows)
+    if len(res):
+        res = res.sort_values('ann_ex', ascending=False)
+    return res, ic_store
+
+
+def show(res, title=''):
+    if not len(res):
+        print("无结果")
+        return
+    print("\n" + "=" * 104)
+    print(title)
+    print("=" * 104)
+    cols = ['name', 'ic', 'ic_ir', 'ann_top', 'ann_mkt', 'ann_ex', 'dd', 'calmar', 'pass']
+    print(res[cols].round(4).to_string(index=False))
+    npass = (res['pass'] == 'PASS').sum()
+    print(f"\n通过: {npass}/{len(res)}")
+    if npass:
+        print("\n通过因子年度超额:")
+        for _, r in res[res['pass'] == 'PASS'].iterrows():
+            yr = {k: f"{v*100:+.1f}%" for k, v in sorted(r['yr'].items())}
+            print(f"  {r['name']:18s} IC={r['ic']:+.4f} 超额={r['ann_ex']*100:+.2f}%  {yr}")
+
+
+def load_lib():
+    if os.path.exists(LIB):
+        with open(LIB, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    return {'kept': [], 'tested': [], 'rejected': {}, 'round': 0}
+
+
+def save_lib(lib):
+    with open(LIB, 'w', encoding='utf-8') as f:
+        json.dump(lib, f, ensure_ascii=False, indent=1,
+                  default=lambda o: None if isinstance(o, (pd.Series, np.ndarray)) else str(o))

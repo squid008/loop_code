@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# 大二进制数据（*.h5/*.pkl 可由 build_*.py 从 E:\rq 重建）
+*.h5
+*.npy
+*.pkl
+
+# 运行产物 / 图形 / 日志
+*.png
+*.log
+loop*C.log
+loop*C_err.log
+
+# 引擎滚动状态（运行中会变）
+engine/loop_state.pkl
+engine/loop_archive.csv
+
+# IDE / 系统
+.idea/
+.vscode/
+*.swp
+Thumbs.db
+
+# IDE 会话/项目数据（CodeBuddy 记忆等，本地专用）
+.codebuddy/
+
+# 临时诊断脚本/产物（可随时删）
+ai_test/
