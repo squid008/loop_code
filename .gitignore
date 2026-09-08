@@ -15,7 +15,9 @@ loop*C_err.log
 
 # 引擎滚动状态（运行中会变）
 engine/loop_state.pkl
-engine/loop_archive.csv
+# Loop 每代 L2 明细流水（docs/ 下逐代累积的 CSV 档案，运行产物不上 git）
+docs/loop_archive.csv
+docs/loop_archive.legacy_pre_gen16.csv
 
 # IDE / 系统
 .idea/

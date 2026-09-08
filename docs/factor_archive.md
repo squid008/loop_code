@@ -1,4 +1,6 @@
 # 因子挖掘档案
+> **本档 = factor_miner Round1~7 时代归档，已于 2026-09-08 主区迁移后停更**（生成脚本 `research/make_archive.py` 只汇总到 round7）。
+> Loop 引擎（gen 代际）留档见：`docs/loop_journal.md`（每代诊断）/ `docs/factor_library.md`（入库因子）/ `docs/loop_archive.csv`（每代 L2 明细流水）。
 > 检验区间 2018-01 ~ 2026-08(面板2013起); 换仓5日; 成本单边千一; 分组10组取Top组; 基准=可交易池等权
 > 股票池: 非ST/非停牌/上市≥250日/20日均成交额≥1000万/非涨跌停(占比57.9%)
 > 价格: 前复权(与rqalpha动态前复权收益率等价)

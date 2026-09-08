@@ -110,13 +110,41 @@ def diagnose(l1, l2, gen, verbose=True):
     return d
 
 
+# ---- 五维配比护栏(对齐中金固定规格) ----
+# mix 键序=变异/交叉/扰动/引导/随机; 中金研报固定配比:
+#   变异25 / 交叉25 / 参数扰动15 / 随机探索15 / LLM机制引导20
+#   -> 代码 mix=[0.25, 0.25, 0.15, 0.20, 0.15] (键2扰动15/键3引导20/键4随机15)
+# B角自适应只落在 变异/交叉 两槽(合计50%), 各自保底 MIX_MIN 后重归一化 -> 恒和为1。
+MIX_MIN = 0.10
+
+
+def guard_mix(mix):
+    """五维配比护栏: 修复运行态漂移/旧state槽位错位, 防变异归零与交叉翻倍过头。
+    - 固定槽(中金规格): 扰动15% / LLM机制引导20% / 随机探索15%
+    - 自适应槽: 变异+交叉合计=50%, 按原比例缩放且各≥MIX_MIN(单槽上限=50%-MIX_MIN)
+    例: 旧state [0.006, 0.45, 0.15, 0.15, 0.2] -> [0.10, 0.40, 0.15, 0.20, 0.15]
+    """
+    m = [float(x) for x in (mix or [])]
+    if len(m) != 5 or any(not np.isfinite(x) for x in m):
+        m = [0.25, 0.25, 0.15, 0.20, 0.15]
+    a, b = max(m[0], 0.0), max(m[1], 0.0)
+    if a + b < 1e-9:
+        a = b = 0.25
+    a, b = a / (a + b) * 0.50, b / (a + b) * 0.50
+    if a < MIX_MIN:
+        a, b = MIX_MIN, 0.50 - MIX_MIN
+    elif b < MIX_MIN:
+        a, b = 0.50 - MIX_MIN, MIX_MIN
+    return [round(a, 6), round(b, 6), 0.15, 0.20, 0.15]
+
+
 def suggest(diag, cur=None):
     """根据诊断输出下一代搜索策略(规则透明, 每条带触发原因)"""
     cur = cur or {}
     s = dict(leaf_w=dict(cur.get('leaf_w', {})),
              op_bias=dict(cur.get('op_bias', {})),
              depth=list(cur.get('depth', [2, 3, 4])),
-             mix=list(cur.get('mix', [0.25, 0.25, 0.15, 0.15, 0.20])),
+             mix=list(cur.get('mix', [0.25, 0.25, 0.15, 0.20, 0.15])),
              min_stab=cur.get('min_stab', 0.30),
              decorr=cur.get('decorr', 0.75),
              fsa_th=cur.get('fsa_th', 0.15),
@@ -137,12 +165,12 @@ def suggest(diag, cur=None):
             s['op_bias'][o] = 0.4
         reasons.append(f"稳定性中位{diag.get('stab_med',0):.2f}(低) -> min_stab提到{s['min_stab']:.2f}, "
                        f"偏好长周期算子")
-    # 3) 结构多样性低 -> 提高随机探索
+    # 3) 结构多样性低 -> 加强探索(随机槽固定15%走数据驱动加权, 故提变异逼换新信号源)
     if diag.get('struct_div', 1) < 0.35:
         m = s['mix']
-        s['mix'] = [m[0] * 0.8, m[1] * 0.8, m[2] * 0.8, m[3] * 0.8, min(0.45, m[4] + 0.20)]
-        reasons.append(f"结构多样性{diag.get('struct_div',0):.2f}(同质化) -> 随机探索配比提到"
-                       f"{s['mix'][4]:.0%}")
+        s['mix'] = [min(0.40, m[0] + 0.10), max(0.10, m[1] - 0.10), m[2], m[3], m[4]]
+        reasons.append(f"结构多样性{diag.get('struct_div',0):.2f}(同质化) -> "
+                       f"变异预算提至{s['mix'][0]:.0%}逼探索新信号源")
     # 4) L2 主要因换手失败 -> 再抬稳定性
     if diag.get('fail_turn', 0) > 0.40:
         s['min_stab'] = min(0.75, s['min_stab'] + 0.10)
@@ -168,6 +196,14 @@ def suggest(diag, cur=None):
         reasons.append("本代0通过 -> 深度放宽到3~5, 探索更复杂结构")
     if not reasons:
         reasons.append("各项指标正常, 维持当前策略")
+    # 出口统一护栏: 规则(含从旧state继承的cfg)算出任何 mix 都强制回到中金规格内,
+    # 且修正前后不一致时留痕, 便于在 journal 里追踪护栏生效
+    mix_raw = list(s['mix'])
+    s['mix'] = guard_mix(s['mix'])
+    if any(abs(x - y) > 1e-9 for x, y in zip(s['mix'], mix_raw)):
+        reasons.append(f"配比护栏: 变异/交叉各≥{MIX_MIN:.0%}且合计50%重归一化, "
+                       f"扰动/引导/随机固定15/20/15(中金规格) -> "
+                       f"mix={[round(x, 3) for x in s['mix']]}")
     return s, reasons
 
 
@@ -175,15 +211,20 @@ def report(diag, sug, reasons, path):
     """诊断报告 markdown, 追加写入"""
     lines = []
     lines.append(f"\n## 第 {diag['gen']} 代 (B角诊断)\n")
-    lines.append("| 指标 | 值 |")
-    lines.append("|---|---|")
-    for k in ['n_l1', 'ic_med', 'ic_max', 'stab_med', 'stab_lt50',
-              'leaf_conc', 'struct_div', 'known_ratio',
-              'n_l2', 'n_pass', 'ex_max',
-              'fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic']:
-        if k in diag:
-            v = diag[k]
-            lines.append(f"| {k} | {v:.3f} |" if isinstance(v, float) else f"| {k} | {v} |")
+    # 指标横排 md 表格(键行/分隔/值行): 源码3行, 渲染为横向对齐表格
+    keys = ['n_l1', 'ic_med', 'ic_max', 'stab_med', 'stab_lt50',
+            'leaf_conc', 'struct_div', 'known_ratio',
+            'n_l2', 'n_pass', 'ex_max',
+            'fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic']
+    present = [k for k in keys if k in diag]
+
+    def _fmt(k):
+        v = diag[k]
+        return f"{v:.3f}" if isinstance(v, float) else str(v)
+
+    lines.append("| " + " | ".join(present) + " |")
+    lines.append("| " + " | ".join("---" for _ in present) + " |")
+    lines.append("| " + " | ".join(_fmt(k) for k in present) + " |")
     if 'leaf_hist' in diag:
         lines.append(f"\n叶子使用: {diag['leaf_hist']}")
     lines.append("\n**B角建议(下一代策略)**:")
@@ -196,3 +237,113 @@ def report(diag, sug, reasons, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'a', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
+
+
+# =====================================================================
+# LLM 审查通道(可选): 引擎 --ai_critic auto/on/off, 默认 auto
+# auto=找到 DeepSeek key(环境变量 DEEPSEEK_API_KEY 或桌面 1.txt)即每代自动做一次 AI 审查,
+#      审查全文(含本代统计摘要+规则建议)追加进 loop_journal.md, 人可随时复核/采纳;
+# 未配置 key / 调用失败一律自动跳过 -> 纯规则 B角照常, 绝不影响无人值守迭代。
+# 2026-09-09: 底层客户端(api_key/chat_once)统一迁至 loop_llm.py(供 生成侧/审查侧/代末
+# 复盘 三角色共用, 各自独立 system prompt 做角色隔离); 本文件仅作封装避免重复实现。
+# =====================================================================
+_DEEPSEEK_MODEL = 'deepseek-v4-flash'
+
+
+def _deepseek_key():
+    """DeepSeek key 探测(委托 loop_llm.api_key, 避免双份实现)"""
+    from loop_llm import api_key
+    return api_key()
+
+
+def _chat_once(messages, timeout=120):
+    """单轮 DeepSeek chat 调用(委托 loop_llm.chat_once)"""
+    from loop_llm import chat_once
+    return chat_once(messages, timeout=timeout)
+
+
+def _fmt_l1(l1, n=6):
+    if l1 is None or not len(l1):
+        return '(无 L1 候选)'
+    df = l1.copy()
+    if 'ic' in df:
+        df = df.sort_values('ic', ascending=False)
+    lines = []
+    for _, r in df.head(n).iterrows():
+        try:
+            stab = float(r.get('stab', float('nan')))
+        except (TypeError, ValueError):
+            stab = float('nan')
+        lines.append(f"- ic={r.get('ic', 0):.3f} stab={stab:.2f}  {r['expr']}")
+    return '\n'.join(lines)
+
+
+def _fmt_l2(l2, n=4):
+    if l2 is None or not len(l2):
+        return '(无 L2 结果)'
+    df = l2.copy()
+    if 'passed' in df:
+        bad = df[~df['passed']]
+        show = bad.head(n) if len(bad) else df.head(n)
+    else:
+        show = df.head(n)
+    lines = []
+    for _, r in show.iterrows():
+        try:
+            cal = float(r.get('calmar', float('nan')))
+        except (TypeError, ValueError):
+            cal = float('nan')
+        lines.append(f"- calmar={cal:.2f} turn={r.get('turn', 0):.2f} "
+                     f"neg_yr={r.get('neg_yr', 0)} passed={bool(r.get('passed', True))}  {r['expr']}")
+    return '\n'.join(lines) if lines else '(无样本)'
+
+
+def ai_review(diag, l1, l2, gen, journal_path, reasons=None, sug=None, force=False):
+    """B角 LLM 审查: 调 DeepSeek 对第 gen 代诊断做体检并点评规则建议, 全文追加进 journal。
+    返回 'ok'/'no_key'/'err'; 任何失败均跳过, 不影响主流程(规则 B角照常执行)。"""
+    if not _deepseek_key():
+        print("[AI审查] 未找到 DeepSeek key(环境变量 DEEPSEEK_API_KEY 或桌面 1.txt), "
+              "本代跳过 -> 沿用规则B角")
+        return 'no_key'
+    keys = ['n_l1', 'ic_med', 'ic_max', 'stab_med', 'stab_lt50', 'leaf_conc',
+            'struct_div', 'known_ratio', 'n_l2', 'n_pass', 'ex_max',
+            'fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic']
+    stat = ', '.join(f"{k}={diag.get(k):.3f}" if isinstance(diag.get(k), float)
+                     else f"{k}={diag.get(k)}" for k in keys if k in diag)
+    leaf_hist = diag.get('leaf_hist')
+    rule_txt = '; '.join(reasons) if reasons else '(无)'
+    sug_txt = (f"mix={sug['mix']} depth={sug['depth']} min_stab={sug.get('min_stab')} "
+               f"decorr={sug.get('decorr')} fsa_th={sug.get('fsa_th')} "
+               f"bank_skel_max={sug.get('bank_skel_max')}") if sug else '(无)'
+    user_txt = (
+        f"第 {gen} 代诊断统计:\n{stat}\n"
+        f"叶子使用: {leaf_hist}\n\n"
+        f"L1 头部候选(按ic降序):\n{_fmt_l1(l1)}\n\n"
+        f"L2 样本:\n{_fmt_l2(l2)}\n\n"
+        f"规则B角建议(引擎将按此执行):\n- {rule_txt}\n"
+        f"下代表格: {sug_txt}\n")
+    sys_txt = (
+        "你是资深A股量价因子研究员, 在中金 Loop Engineering 双Agent框架里扮演 B角(审查者/启发者)。"
+        "输入是一轮因子挖掘迭代的诊断统计与规则B角建议。请只做三件事:\n"
+        "(1) 用一句话点出本轮最核心的病根;\n"
+        "(2) 逐条点评规则B角建议是否对症, 指出可能无效或互相冲突的点;\n"
+        "(3) 给出你自己对下代 mix(变异/交叉/扰动/引导/随机)/depth/min_stab/decorr 的取值与一句话理由。\n"
+        "硬性要求: 中文, 全文≤260字, 用(1)(2)(3)分条, 禁止markdown表格/管道符/代码块。")
+    import time
+    try:
+        t0 = time.time()
+        resp = _chat_once([{'role': 'system', 'content': sys_txt},
+                           {'role': 'user', 'content': user_txt}])
+        cost = time.time() - t0
+    except Exception as e:
+        print(f"[AI审查] DeepSeek 调用失败({type(e).__name__}: {e}) -> 跳过, 沿用规则B角")
+        return 'err'
+    block = (f"\n**AI 审查(DeepSeek {_DEEPSEEK_MODEL}, {cost:.0f}s)**:\n\n"
+             + '\n'.join('> ' + x for x in resp.splitlines()) + '\n')
+    os.makedirs(os.path.dirname(journal_path), exist_ok=True)
+    with open(journal_path, 'a', encoding='utf-8') as f:
+        f.write(block)
+    preview = resp.replace('\n', ' ')[:220]
+    print(f"[AI审查] DeepSeek 审查完成({cost:.0f}s), 已写入 {journal_path}\n"
+          f"  {preview}...")
+    return 'ok'

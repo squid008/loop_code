@@ -19,6 +19,7 @@
     python loop_engine.py --gen=2 --n=600        # 第2代(读上一代种子池)
 """
 import os
+import re
 import sys
 import gc
 import json
@@ -35,12 +36,14 @@ from factor_miner import (load_panel, prepare, get_universe, cs_rank,
                           evaluate_real, START, FWD, COST_PRESETS)
 
 STATE = os.path.join(HERE, 'loop_state.pkl')
-ARCHIVE = os.path.join(HERE, 'loop_archive.csv')
+ARCHIVE = os.path.join(os.path.dirname(HERE), 'docs', 'loop_archive.csv')
 JOURNAL = os.path.join(os.path.dirname(HERE), 'docs', 'loop_journal.md')  # B角诊断日志(loop_code/docs)
 
 # 默认搜索策略(B角可动态调整)
+# 中金五策略配比: 变异25 / 交叉25 / 扰动15 / 随机探索15 / LLM机制引导20
+# 本表键序=变异/交叉/扰动/引导/随机 -> mix=[0.25,0.25,0.15,0.20,0.15] 即引导20随机15
 DEFAULT_CFG = dict(leaf_w={}, op_bias={}, depth=[2, 3, 4],
-                   mix=[0.25, 0.25, 0.15, 0.15, 0.20],      # 变异/交叉/扰动/引导/随机
+                   mix=[0.25, 0.25, 0.15, 0.20, 0.15],
                    min_stab=0.30, decorr=0.75, fsa_th=0.15)
 
 # ===================== 1. 基础字段 =====================
@@ -480,6 +483,28 @@ def collect(node, out=None):
     return out
 
 
+# ---- 叶子字段族(写档用: loop_archive.csv 的 cat/leaf 列, 保证人读可筛) ----
+LEAF_CAT = {
+    'close': '价格', 'open': '价格', 'high': '价格', 'low': '价格', 'vwap': '价格',
+    'ret': '收益率', 'overnight': '跳空', 'intraday': '日内收益',
+    'amplitude': '振幅', 'hl_ratio': '振幅', 'true_range': '振幅',
+    'up_shadow': '影线', 'down_shadow': '影线',
+    'volume': '量', 'ln_volume': '量',
+    'turnover': '成交额', 'turn_ratio': '换手率',
+    'mktcap': '市值', 'ln_mktcap': '市值',
+}
+
+
+def leaf_parts(node):
+    """按出现顺序提取去重叶子字段; 返回 (字段顿号串, 分类顿号串)"""
+    cats, names = [], []
+    for x in collect(node):
+        if not x.args and x.op not in names:
+            names.append(x.op)
+            cats.append(LEAF_CAT.get(x.op, x.op))
+    return '、'.join(names), '、'.join(cats)
+
+
 def crossover(n1, n2, rng):
     a = rng.choice(collect(n1))
     b = rng.choice(collect(n2))
@@ -610,6 +635,11 @@ def run(args):
             print("  -", r)
     else:
         print("\n[B角] 首代, 使用默认策略")
+    # 五维配比护栏(与 critic.suggest 出口同源): 即使旧state cfg 漂移且本轮无规则触发
+    # (如无上一代), 本代实际生效 mix 也强制回到中金规格内(变异/交叉≥10%、槽位15/20/15)
+    cfg['mix'] = critic.guard_mix(cfg.get('mix'))
+    print(f"  五维配比 mix={[round(x, 3) for x in cfg['mix']]} "
+          f"(变异/交叉自适应≥{critic.MIX_MIN:.0%}, 扰动/引导/随机=15/20/15)")
     # B角建议落地(命令行显式指定则优先)
     if args.decorr < 0:
         args.decorr = cfg.get('decorr', 0.0)
@@ -637,12 +667,46 @@ def run(args):
         print(f"  [失败库] 本代排除坏骨架 {len(bad)} 个"
               f"(失败>={args.min_fail}次 全败率>={args.fail_rate:.0%})")
 
+    # ---- 随机探索: 数据驱动特征分布引导(中金"随机探索15%=数据驱动分布, 防局部最优") ----
+    # 证据分布 = 历代入库因子 + 上一代 L1 通过候选 的叶子/算子族频率;
+    # 随机位按该分布抽样(探索有苗头方向的新组合), 无证据时退化为 cfg 权重(均匀)。
+    ev_nodes = list(bank) + (list(prev_l1['node'])
+                             if prev_l1 is not None and len(prev_l1) else [])
+    cfg_r = dict(cfg)
+    prof = data_profile(ev_nodes)
+    if prof:
+        cfg_r['leaf_w'] = _mix_weights(cfg.get('leaf_w', {}), prof['leaf'], LEAVES)
+        cfg_r['op_bias'] = _mix_weights(cfg.get('op_bias', {}), prof['op'],
+                                        list(UNARY.keys()) + list(BINARY.keys()),
+                                        family=True)
+        print(f"  [随机探索] 数据驱动特征分布: 叶子证据{len(prof['leaf'])}种 / "
+              f"算子族{len(prof['op'])}种 -> 随机位按证据加权探索")
+    else:
+        print("  [随机探索] 无历史证据(首代) -> 随机位退化均匀")
+
     # ---- 生成候选(按B角给的五维配比) ----
     # ★gen13修复: cut为累积上界, 判重/分支原来写成 cut[i] 相加 -> 数值>1恒真,
     # 使 r<cut0+cut1+cut2 永远成立: guided(引导族)与rand(纯随机)从不会被执行,
     # 代代只在seeds内打转 -> 重复爆炸。 现改回 r<cut[2](seed三操作) / r<cut[3](引导) / 否则随机。
     m = cfg['mix']
     cut = [m[0], m[0] + m[1], m[0] + m[1] + m[2], m[0] + m[1] + m[2] + m[3]]
+    # ---- 生成侧 LLM 引导(A角子代理, 中金"生成预算~20%语义引导"): ----
+    # 引导位 r∈[cut2,cut3) 的候选来源 = LLM 解析池; 池空且调用未超限则按需补一次;
+    # 无 key/超时/解析失败/超限 -> 回退本地 guided_expr。LLM 候选与规则候选走
+    # 同一条守卫链(跨量纲/失败库/FSA/判重), 不产生旁路。
+    llm_on = (getattr(args, 'llm_guide', 'auto') != 'off')
+    llm_pool, llm_hyp = [], ''
+    n_llm_call = n_llm_parse = n_llm_hit = 0
+    if llm_on:
+        import loop_llm
+        if not loop_llm.api_key():
+            if getattr(args, 'llm_guide', 'auto') == 'on':
+                print("  [LLM引导] --llm_guide=on 但未找到 DeepSeek key -> 回退本地引导")
+            llm_on = False
+        else:
+            print("  [LLM引导] 生成侧 A角 LLM 引导已启用(模型="
+                  f"{getattr(args, 'llm_model', None) or loop_llm.DEFAULT_MODEL}), "
+                  f"上限 {args.llm_max_calls} 次/代, 引导位命中按需补池")
     cands, seen = [], set()        # seen: 表达式级判重(原[in list] O(n²) -> O(1))
     n_skip_fsa = n_skip_dim = n_skip_bad = n_skip_dup = 0
     n_tries = dup_streak = 0
@@ -655,7 +719,7 @@ def run(args):
                   flush=True)
             rand_only = True
         if rand_only:
-            node = rand_expr(rng, depth=rng.choice(cfg['depth']), cfg=cfg)
+            node = rand_expr(rng, depth=rng.choice(cfg['depth']), cfg=cfg_r)
         else:
             r = rng.random()
             if seeds and r < cut[2]:
@@ -670,9 +734,20 @@ def run(args):
                 else:
                     node = perturb(node, rng)
             elif r < cut[3]:
-                node = guided_expr(rng, cfg)
+                # 引导位: LLM(A角)候选优先, 池空则按需补一次; 无 key/失败 -> 本地引导
+                if llm_on and not llm_pool and n_llm_call < args.llm_max_calls:
+                    n_llm_call += 1
+                    _ok, llm_hyp, _ns = llm_fetch(args, cfg, seeds, bank,
+                                                  frozen, fail_lib)
+                    n_llm_parse += len(_ns)
+                    llm_pool = _ns
+                if llm_pool:
+                    node = llm_pool.pop()
+                    n_llm_hit += 1
+                else:
+                    node = guided_expr(rng, cfg)
             else:
-                node = rand_expr(rng, depth=rng.choice(cfg['depth']), cfg=cfg)
+                node = rand_expr(rng, depth=rng.choice(cfg['depth']), cfg=cfg_r)
         # 跨量纲审查(中金: 跨量纲运算拒绝): close+volume 之类荒谬组合直接重抽
         if args.dim_review > 0 and review_expr(node):
             n_skip_dim += 1
@@ -684,7 +759,7 @@ def run(args):
         # FSA: 含已冻结骨架的候选禁止复用(中金"冻结骨架不再生成"); 至多重试2次随机探索
         if args.fsa_th > 0 and frozen and has_frozen_skel(node, frozen):
             for _ in range(2):
-                n2 = rand_expr(rng, depth=rng.choice(cfg['depth']), cfg=cfg)
+                n2 = rand_expr(rng, depth=rng.choice(cfg['depth']), cfg=cfg_r)
                 if args.dim_review > 0 and review_expr(n2):
                     continue
                 if not has_frozen_skel(n2, frozen):
@@ -708,6 +783,10 @@ def run(args):
     print(f"生成候选 {len(cands)}/{args.n} 个[{mode}]"
           f"(跨量纲拦{n_skip_dim} 失败库拦{n_skip_bad} FSA拦{n_skip_fsa} "
           f"重复拦{n_skip_dup}, 尝试{n_tries}), 耗时 {time.time()-t0:.0f}s")
+    if llm_on and n_llm_call:
+        print(f"  [LLM引导] 调用{n_llm_call}次, 解析通过{n_llm_parse}条, "
+              f"引导位出队{n_llm_hit}条"
+              + (f" | hyp: {llm_hyp[:110]}" if llm_hyp else ""))
     if getattr(args, 'gen_only', False):
         print("[gen_only] 仅验证候选生成产量, 停在此处(不跑L1/L2/不写状态)")
         return
@@ -877,6 +956,26 @@ def run(args):
             for s in new_frozen[:6]:
                 print(f"     冻结骨架: {s}")
 
+    # ---- 中金【审查】环节: B角候选级 LLM 精判(硬滤后抽5深判, 与生成侧隔离防自证) ----
+    # 硬规则已在上方先滤(IC/稳定/去相关/去重/跨量纲/FSA) -> 剩余候选随机抽 --jury_n 个,
+    # 由审查侧 Sub-agent LLM(loop_llm.jury_verdict)判经济含义/过拟合边界/已知族嫌疑,
+    # verdict=KILL 者剔除出 L2 费后回测; 无 key/调用失败一律放行不误杀(无人值守铁律)。
+    kills_j, n_jury_rev, n_jury_kill, jury_lines = set(), 0, 0, []
+    jury_on = getattr(args, 'ai_jury', 'auto')
+    if jury_on != 'off' and len(l1):
+        import loop_llm
+        if not loop_llm.api_key():
+            if jury_on == 'on':
+                print("  [LLM审查] --ai_jury=on 但未找到 key -> 跳过(纯硬规则审查)")
+        else:
+            jmodel = getattr(args, 'ai_jury_model', None) or loop_llm.DEFAULT_MODEL
+            kills_j, n_jury_rev, n_jury_kill, jury_lines = \
+                llm_jury(args, rng, l1, model=jmodel)
+            if kills_j:
+                l1 = l1[~l1['expr'].isin(kills_j)]
+                print(f"  [LLM审查] KILL {len(kills_j)} 个候选剔除出 L2, "
+                      f"剩余 {len(l1)} 个进入费后回测")
+
     # ---- L2 费后精筛 ----
     top = l1.head(args.l2)
     print(f"\nL2 费后精筛 {len(top)} 个 ...")
@@ -903,7 +1002,9 @@ def run(args):
         from factor_miner import pass_filter
         ok, _ = pass_filter(rr, args.min_ic)
         ok = ok and rr['calmar'] > args.min_calmar and rr['sharpe'] > 0.5
-        rows.append(dict(expr=str(nd), window=args.window, cost=args.cost,
+        leaf_s, cat_s = leaf_parts(nd)
+        rows.append(dict(expr=str(nd), cat=cat_s, leaf=leaf_s,
+                         window=args.window, cost=args.cost,
                          ic=rr['ic'], ic_ir=rr['ic_ir'],
                          ann_ex=rr['ann_ex'], dd=rr['dd'], calmar=rr['calmar'],
                          sharpe=rr['sharpe'], last_yr=rr['last_yr'],
@@ -925,8 +1026,13 @@ def run(args):
             flib_mark(fail_lib, nd, args.gen, bool(r_['passed']),
                       '' if r_['passed'] else 'l2')
     if len(res):
-        res.to_csv(ARCHIVE, index=False, encoding='utf-8-sig')
-        print(f"\n已存 {ARCHIVE}")
+        # 逐代累积流水(带 gen/cat/leaf 列): 文件缺失/为空时写表头, 其后追加
+        # —— 每代 L2 明细永久留档(历史见 docs/loop_archive.legacy_pre_gen16.csv)
+        res.insert(0, 'gen', args.gen)
+        need_head = (not os.path.exists(ARCHIVE)) or os.path.getsize(ARCHIVE) == 0
+        res.to_csv(ARCHIVE, index=False, mode='a', header=need_head,
+                   encoding='utf-8-sig')
+        print(f"\n已存 {ARCHIVE} (追加, 本代 {len(res)} 条)")
         p = res[res['passed']]
         print(f"L2 通过 {len(p)}/{len(res)} 个")
         if len(p):
@@ -941,6 +1047,20 @@ def run(args):
         print("  -", r)
     critic.report(diag, next_cfg, reasons, JOURNAL)
     print(f"诊断已写入 {JOURNAL}")
+    # ---- 生成侧 LLM 引导留痕(独立引用体小节, 与 ai_review 块同风格) ----
+    if llm_on and n_llm_call:
+        llm_journal_block(args.gen, n_llm_call, n_llm_parse, n_llm_hit,
+                          llm_hyp, JOURNAL)
+        print(f"LLM 引导小结已写入 {JOURNAL}")
+    if n_jury_rev:
+        llm_jury_block(args.gen, n_jury_rev, n_jury_kill, jury_lines, JOURNAL)
+        print(f"LLM 候选审查小结已写入 {JOURNAL}")
+
+    # ---- B角 LLM 审查(DeepSeek, --ai_critic auto/on/off, 默认auto=有key即启用) ----
+    ai = getattr(args, 'ai_critic', 'auto')
+    if ai != 'off':
+        critic.ai_review(diag, l1, res if len(res) else None, args.gen,
+                         JOURNAL, reasons=reasons, sug=next_cfg, force=(ai == 'on'))
 
     # ---- 保存状态 ----
     new_seeds = list(l1.head(30)['node'])
@@ -992,41 +1112,252 @@ def clone(n):
 
 
 def guided_expr(rng, cfg=None):
-    """语义引导: 按【机制族】生成(中金定义13族, 其核心为跳空溢价/振幅/影线/价格结构)
-    中金实证: overnight 85% / amplitude 63%; 核心结构家族
-      sub(ma(overnight,N), ...) 与 sub(delta(ma(overnight,N),M), ...)
+    """语义引导: 按【机制族】生成。中金 LLM 机制引导位定义 13 个机制族,
+    核心为跳空溢价/振幅/影线/价格结构(实证 overnight 85% / amplitude 63%)。
+    13族 = gap / gap_trend / gap_decay / amp / amp_vol / shadow / price_struct /
+           mom / rev / vol / liq / turn_anom / vpin
+    (此函数仅在引导位 LLM 候选不足时回退使用, 与 A角 Skill 的族口径同源。)
     """
     cfg = cfg or DEFAULT_CFG
-    kind = rng.choice(['gap', 'gap_trend', 'amp', 'shadow', 'price_struct',
-                       'mom', 'rev', 'vol', 'liq', 'vpin'])
-    N = rng.choice([20, 60, 100, 120, 150, 200])
-    M = rng.choice([5, 20, 60])
-    if kind == 'gap':                      # 跳空溢价(中金第一大族)
+    kind = rng.choice(['gap', 'gap_trend', 'gap_decay', 'amp', 'amp_vol',
+                       'shadow', 'price_struct', 'mom', 'rev', 'vol', 'liq',
+                       'turn_anom', 'vpin'])
+    N = rng.choice([60, 100, 120, 150, 200])   # 长窗口(与中金 51~200 对齐)
+    M = rng.choice([5, 20, 60])                # 短窗口
+    VW = rng.choice([60, 100, 150, 200])       # ts_std 无120窗口
+    leaf = lambda: pick_leaf(rng, cfg)
+    if kind == 'gap':                          # 跳空溢价(中金第一大族)
         return Node('ts_mean%d' % N, [Node('overnight', [])])
-    if kind == 'gap_trend':                # 跳空趋势背离: sub(ma(overnight,N), ...)
+    if kind == 'gap_trend':                    # 跳空趋势背离: sub(ma(overnight,N), 别字段)
         return Node('sub', [Node('ts_mean%d' % N, [Node('overnight', [])]),
-                            Node('ts_mean%d' % N, [Node(pick_leaf(rng, cfg), [])])])
-    if kind == 'amp':                      # 振幅
-        return Node(rng.choice(['ts_mean%d' % N, 'neg']),
-                    [Node('amplitude', [])])
-    if kind == 'shadow':                   # 影线支撑(中金 FSA 后被迫转向的方向)
+                            Node('ts_mean%d' % N, [Node(leaf(), [])])])
+    if kind == 'gap_decay':                    # 隔夜溢价衰减: 短-长均值差
+        return Node('sub', [Node('ts_mean%d' % M, [Node('overnight', [])]),
+                            Node('ts_mean%d' % N, [Node('overnight', [])])])
+    if kind == 'amp':                          # 振幅(中金实证 63%)
+        return Node(rng.choice(['ts_mean%d' % N, 'neg']), [Node('amplitude', [])])
+    if kind == 'amp_vol':                      # 振幅波动聚集(波动率聚族变体)
+        return Node('ts_std%d' % VW, [Node('amplitude', [])])
+    if kind == 'shadow':                       # 影线支撑(中金 FSA 后被迫转向的方向)
         return Node(rng.choice(['ts_mean%d' % N, 'neg']),
                     [Node(rng.choice(['down_shadow', 'up_shadow']), [])])
-    if kind == 'price_struct':             # 价格结构 hl_ratio / true_range
+    if kind == 'price_struct':                 # 价格结构 hl_ratio / true_range
         return Node('ts_mean%d' % N,
                     [Node(rng.choice(['hl_ratio', 'true_range', 'intraday']), [])])
-    if kind == 'mom':
+    if kind == 'mom':                          # 动量
         return Node('ts_delta%d' % M, [Node(rng.choice(['close', 'vwap']), [])])
-    if kind == 'rev':
+    if kind == 'rev':                          # 反转
         return Node('neg', [Node('ts_delta%d' % M,
                                  [Node(rng.choice(['close', 'vwap']), [])])])
-    if kind == 'vol':
-        VW = rng.choice([60, 100, 150, 200])          # ts_std 无120窗口
+    if kind == 'vol':                          # 波动率风险溢价
         return Node('neg', [Node('ts_std%d' % VW, [Node('ret', [])])])
-    if kind == 'liq':
-        return Node('neg', [Node('log', [Node('ts_mean%d' % N,
-                                              [Node(pick_leaf(rng, cfg), [])])])])
-    return Node('corr%d' % min(N, 100), [Node('volume', []), Node('ret', [])])
+    if kind == 'liq':                          # 流动性
+        return Node('neg', [Node('log', [Node('ts_mean%d' % N, [Node(leaf(), [])])])])
+    if kind == 'turn_anom':                    # 量能/换手异动: 短-长换手偏离
+        return Node('sub', [Node('ts_mean%d' % M, [Node('turn_ratio', [])]),
+                            Node('ts_mean%d' % N, [Node('turn_ratio', [])])])
+    return Node('corr%d' % min(N, 100), [Node('volume', []), Node('ret', [])])  # vpin
+
+
+# ===================== 生成侧 LLM 引导(A角子代理, 中金"生成预算20%语义引导") =====================
+# loop_llm.GEN_SYSTEM/gen_candidates 已定义 A角 Skill 与调用封装; 此处只补两件事:
+#   ① parse_expr: LLM 返回的表达式文本 -> 引擎 Node(严格反向解析, 任一不合规返回 None);
+#   ② llm_fetch: 拼本代上下文 -> 调 gen_candidates -> 解析成 Node 池供引导位使用。
+# 失败安全: 无 key/超时/JSON坏/语法不合规 -> 一律静默回退本地 guided_expr, 绝不阻塞迭代;
+# 解析产物与规则候选走同一条守卫链(跨量纲/失败库/FSA/判重), 口径一致不产生旁路。
+LLM_MAX_SIZE = 15         # 解析上限: 超过该节点总数的巨型表达式视为 LLM 失控, 丢弃
+_EXPR_TOK = re.compile(r'[A-Za-z_][A-Za-z0-9_]*|[(),]')
+
+
+def tokenize_expr(text):
+    """分词并校验: token 间只允许空白, 出现其它字符(如 + 1 中缀残留)返回 None
+    (防止 LLM 输出 'cs_rank(volume) + 1' 时非法尾部被静默吞掉而误收)。"""
+    s = str(text)
+    toks, pos = [], 0
+    for mt in _EXPR_TOK.finditer(s):
+        if s[pos:mt.start()].strip():
+            return None
+        toks.append(mt.group(0))
+        pos = mt.end()
+    if s[pos:].strip():
+        return None
+    return toks
+
+
+def _parse_sexp(toks, i):
+    """递归下降单元素: 返回 (Node|None, 下一token下标)"""
+    if i >= len(toks):
+        return None, i
+    name = toks[i]
+    i += 1
+    if i < len(toks) and toks[i] == '(':
+        i += 1
+        args = []
+        while True:
+            nd, i = _parse_sexp(toks, i)
+            if nd is None:
+                return None, i
+            args.append(nd)
+            if i < len(toks) and toks[i] == ',':
+                i += 1
+                continue
+            if i < len(toks) and toks[i] == ')':
+                return Node(name, args), i + 1
+            return None, i
+    return Node(name, []), i
+
+
+def parse_expr(text):
+    """LLM 表达式文本 -> Node(与 Node.__str__ 前缀式 op(a, b) 严格对齐)。
+    校验: 叶子名∈LEAVES / 函数名∈UNARY∪BINARY / 参数个数匹配 / size≤LLM_MAX_SIZE;
+    任一不合规返回 None, 由调用方静默丢弃(不修复不猜测)。"""
+    toks = tokenize_expr(text)
+    if not toks:
+        return None
+    nd, i = _parse_sexp(toks, 0)
+    if nd is None or i != len(toks):
+        return None
+    for x in collect(nd):
+        if not x.args:
+            if x.op not in LEAVES:
+                return None
+            continue
+        if len(x.args) == 1:
+            if x.op not in UNARY:
+                return None
+        elif x.op not in BINARY:          # len(x.args)==2
+            return None
+    if nd.size() > LLM_MAX_SIZE:
+        return None
+    return nd
+
+
+def llm_fetch(args, cfg, seeds, bank, frozen, fail_lib):
+    """A角 LLM 拉一批候选: 拼上下文 -> loop_llm.gen_candidates -> 文本解析回 Node。
+    返回 (ok, hyp, nodes); 任何失败 ok=False 且 nodes=[] (内部已打印原因)。"""
+    import loop_llm
+    diag = (f"第{args.gen}代搜索, 目标候选数{args.n}, 种子池{len(seeds)}个(上一代L1头部)。\n"
+            f"当前已知: 入库因子{len(bank)}个(同骨架上限{args.bank_skel_max}), "
+            f"冻结骨架{len(frozen)}个(禁止复用), "
+            f"失败库{len(fail_lib)}条(多次全败骨架生成端排除)。\n"
+            f"本代策略: mix(变异/交叉/扰动/引导/随机)={cfg['mix']}, depth={cfg['depth']}, "
+            f"min_stab={cfg.get('min_stab')}, decorr={cfg.get('decorr')}, "
+            f"fsa_th={cfg.get('fsa_th')}。\n"
+            f"叶子权重: {cfg.get('leaf_w') or '(均匀)'}。")
+    hint = ("请避开易重复结构: 纯市值/成交额/换手率的旧故事表达、同骨架只换窗口的参数变体"
+            "都算重复; 优先给出有独立金融机制的表达式(跳空溢价/价量背离/波动结构/日内形态/"
+            "流动性等), 宁少勿滥。")
+    model = getattr(args, 'llm_model', None) or loop_llm.DEFAULT_MODEL
+    ok, d = loop_llm.gen_candidates(diag, hint, n=args.llm_n, model=model)
+    if not ok:
+        print(f"  [LLM引导] 调用失败({d}) -> 回退本地引导")
+        return False, '', []
+    nodes = []
+    for t in (d.get('exprs') or []):
+        nd = parse_expr(t)
+        if nd is not None:
+            nodes.append(nd)
+    print(f"  [LLM引导] 回复 {len(d.get('exprs') or [])} 条, "
+          f"语法解析通过 {len(nodes)} 条")
+    return True, (d.get('hyp') or '').strip(), nodes
+
+
+def data_profile(nodes):
+    """随机探索的'数据驱动特征分布'(中金): 统计证据候选的叶子字段与(去窗口)算子族频率。
+    证据 = 历代入库因子 + 上一代 L1 通过候选;
+    返回 {'leaf': {叶: cnt}, 'op': {算子族: cnt}} 或 None(无证据)。"""
+    if not nodes:
+        return None
+    leaf, op = {}, {}
+    for nd in nodes:
+        try:
+            for n in collect(nd):
+                if not n.args:
+                    leaf[n.op] = leaf.get(n.op, 0) + 1
+                else:
+                    fam = ''.join(c for c in n.op if not c.isdigit())
+                    op[fam] = op.get(fam, 0) + 1
+        except Exception:
+            continue
+    return {'leaf': leaf, 'op': op} if (leaf or op) else None
+
+
+def _mix_weights(base, freq, universe, family=False):
+    """把证据频率(按最大归一化)加权到 universe 每个候选名的抽样权重, 保留既有下限(0.3x)。
+    family=True: freq 键为'去窗口算子族', 同族所有具体算子共享该族证据权重。"""
+    if not freq:
+        return dict(base)
+    mx = max(freq.values()) or 1.0
+    out = {}
+    for k in universe:
+        if family:
+            n = freq.get(''.join(c for c in k if not c.isdigit()), 0.0) / mx
+        else:
+            n = freq.get(k, 0.0) / mx
+        out[k] = base.get(k, 1.0) * (0.3 + 0.7 * n)
+    return out
+
+
+def node_stat_txt(nd):
+    """候选级审查输入的结构统计(中金: 审查侧只给'表达式+结构统计', 不知来源/IC/假设)"""
+    nodes = collect(nd)
+    leaves = sorted({n.op for n in nodes if not n.args})
+    ops = sorted({''.join(c for c in n.op if not c.isdigit()) for n in nodes if n.args})
+    wins = sorted({int(x) for n in nodes for x in re.findall(r'\d+', n.op)})
+    return (f"叶子字段: {','.join(leaves) or '无'}; 算子族: {','.join(ops) or '无'}; "
+            f"节点数: {nd.size()}; 窗口参数: {wins or '无'}")
+
+
+def llm_jury(args, rng, l1, model=None):
+    """中金【审查】环节: L1 硬规则过滤后, 随机抽 --jury_n 个做 Sub-agent LLM 精判
+    (与生成侧隔离防自证): verdict=KILL 者剔除出 L2; 调用失败/超时一律放行不误杀。
+    返回 (kills:set[str], n_rev:int, n_kill:int, kill_lines:list[str])。"""
+    import loop_llm
+    kills, kill_lines, n_rev, n_kill = set(), [], 0, 0
+    pool = list(l1['node'])
+    n = min(max(0, int(getattr(args, 'jury_n', 5))), len(pool))
+    if n <= 0:
+        return kills, 0, 0, []
+    print(f"  [LLM审查] 随机抽 {n} 个候选做 Sub-agent 精判 ...", flush=True)
+    for i in rng.sample(range(len(pool)), n):
+        nd = pool[i]
+        ok, d = loop_llm.jury_verdict(str(nd), node_stat_txt(nd), model=model)
+        if not ok:
+            print(f"  [LLM审查] 判定失败({d}) -> 放行")
+            continue
+        n_rev += 1
+        if d.get('verdict') == 'KILL':
+            n_kill += 1
+            kills.add(str(nd))
+            reason = (d.get('reason') or '').replace('\n', ' ')
+            kill_lines.append(f"- KILL `{nd}`\n  > 理由: {reason}")
+            print(f"  [LLM审查] KILL {str(nd)[:72]} | {reason[:40]}")
+        else:
+            print(f"  [LLM审查] PASS {str(nd)[:72]}")
+    return kills, n_rev, n_kill, kill_lines
+
+
+def llm_jury_block(gen, n_rev, n_kill, kill_lines, path):
+    """B角候选级审查小结追加 journal(引用体, 不干扰 _journal_format 的表格处理)"""
+    body = [f"\n**LLM 候选审查(B角 {gen}代)**: 深判 {n_rev} 个, "
+            f"KILL {n_kill} 个(剔除出 L2 费后回测)"]
+    body += kill_lines if kill_lines else ['> (全部 PASS)']
+    body.append('')
+    with open(path, 'a', encoding='utf-8') as f:
+        f.write('\n'.join(body) + '\n')
+
+
+def llm_journal_block(gen, calls, parsed, used, hyp, path):
+    """A角 LLM 引导小结追加 journal(引用体, 不干扰 _journal_format 的表格处理)"""
+    body = [f"\n**LLM 引导(A角 {gen}代)**: 调用{calls}次, 解析通过{parsed}条, "
+            f"引导位使用{used}条"]
+    if hyp:
+        body += ['> ' + x for x in hyp.splitlines()]
+    else:
+        body.append('> (本次无机制族假设)')
+    body.append('')
+    with open(path, 'a', encoding='utf-8') as f:
+        f.write('\n'.join(body) + '\n')
 
 
 if __name__ == '__main__':
@@ -1058,6 +1389,29 @@ if __name__ == '__main__':
                          '负数=跟随B角cfg(默认0.6), 0=关闭')
     ap.add_argument('--min_fail', type=int, default=-1,
                     help='失败模式库最小失败次数(默认3)')
+    ap.add_argument('--ai_critic', default='auto', choices=['auto', 'on', 'off'],
+                    help='B角LLM审查(DeepSeek): auto=找到key(环境变量DEEPSEEK_API_KEY或桌面1.txt)'
+                         '即每代末尾自动AI审查并写journal; on=强制(无key仅告警跳过); off=纯规则B角')
+    ap.add_argument('--llm_guide', default='auto', choices=['auto', 'on', 'off'],
+                    help='A角生成侧LLM引导(中金生成预算~20%语义引导位): '
+                         'auto=找到DeepSeek key即启用(引导位候选=LLM表达式); '
+                         'on=强制(无key告警后回退本地引导); off=纯本地规则引导')
+    ap.add_argument('--llm_n', type=int, default=12,
+                    help='每次A角LLM调用请求的表达式条数(建议8~16, loop_llm上限)')
+    ap.add_argument('--llm_max_calls', type=int, default=3,
+                    help='每代最多A角LLM调用次数(超限回退本地 guided_expr, 防拖慢无人值守)')
+    ap.add_argument('--llm_model', default=None,
+                    help='A角生成侧模型名(缺省与B角审查同款 loop_llm.DEFAULT_MODEL=deepseek-v4-flash; '
+                         '可选 deepseek-v4-pro/deepseek-reasoner 做物理隔离)')
+    ap.add_argument('--ai_jury', default='auto', choices=['auto', 'on', 'off'],
+                    help='B角候选级LLM审查(中金【审查】环节, L1硬滤后随机抽--jury_n深判, '
+                         '与生成侧隔离防自证): KILL者剔除出L2; auto=找到DeepSeek key即启用; '
+                         'on=强制(无key告警跳过); off=纯硬规则审查')
+    ap.add_argument('--jury_n', type=int, default=5,
+                    help='LLM候选精判每代抽样个数(中金随机抽5)')
+    ap.add_argument('--ai_jury_model', default=None,
+                    help='审查侧模型名(缺省同loop_llm.DEFAULT_MODEL=deepseek-v4-flash; '
+                         '可选 deepseek-v4-pro 与生成侧做物理隔离)')
     ap.add_argument('--l2', type=int, default=40)
     ap.add_argument('--seed', type=int, default=42)
     ap.add_argument('--cost', type=float, default=COST_PRESETS['单边千1.5'],
