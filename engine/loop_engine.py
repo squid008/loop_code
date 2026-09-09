@@ -386,8 +386,7 @@ def fam_quota_rows(rows, quota=FAM_QUOTA):
             continue
         cnt[f] = c + 1
         keep.append(r)
-    import pandas as _pd
-    return _pd.DataFrame(keep), len(cnt), n_block
+    return pd.DataFrame(keep), len(cnt), n_block
 
 
 def _lib_sync(gen, res, n_total, added_exprs, expr2nd):
@@ -769,7 +768,7 @@ def run(args):
     block_fams, fam_black_txt = set(), ''
     if prev_l1 is not None and len(prev_l1):
         fam_cnt = {}
-        for nd in list(prev_l1['node'])[:40]:
+        for nd in list(prev_l1['node']):
             f = root_fam(nd)
             fam_cnt[f] = fam_cnt.get(f, 0) + 1
         n_pv = len(prev_l1)
