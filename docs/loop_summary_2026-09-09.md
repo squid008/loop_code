@@ -134,4 +134,5 @@ D:\miniconda3\envs\rqdata\python.exe D:\loop_code\engine\loop_status.py
 
 ---
 
-*本档生成于 2026-09-09，基于 journal/state/log/archive 实读整理；中断点 gen23 未完成（约 9 分钟），无落档，不影响收官结论。*
+*本档生成于 2026-09-09，基于 journal/state/log/archive 实读整理；收官后 gen23 已由新叶通路完整跑完
+（09-5x~10:2x，err 空，journal 第 23 代已落档），watcher 无人值守自动接力 gen24 跑动中（见 §8/loop_ext_leaves.md）。*

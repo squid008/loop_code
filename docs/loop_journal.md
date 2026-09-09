@@ -516,3 +516,46 @@ leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25}
 > (2) 规则B角点评：压volume权重对症但力度不足，因intraday才是主犯；交叉+15%与深度放宽会加剧已有结构同质化，可能无效；min_stab=0.75过低，会放行更多伪信号，与decorr=0.65冲突。
 > 
 > (3) 下代建议：mix=[0.15,0.3,0.2,0.2,0.15]，depth=[2,3,4]，min_stab=0.85，decorr=0.5。理由：用浅层强制换字段，提高稳定性门槛，降低相关性容忍度以逼出真正异质结构。
+
+## 第 23 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 52 | 0.054 | 0.070 | 0.887 | 0.000 | 0.962 | 0.846 | 0.692 | 30 | 2 | 0.067 | 1.000 | 0.000 | 1.000 | 0.179 | 0.000 |
+
+叶子使用: {'intraday': 50, 'turnover': 31, 'volume': 24, 'amplitude': 22, 'up_shadow': 14, 'overnight': 13}
+
+**B角建议(下一代策略)**:
+- 叶子[intraday]占比96%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中100%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25}
+```
+
+**LLM 引导(A角 23代)**: 调用3次, 解析通过36条, 引导位使用36条
+> 大单资金流的主动买卖失衡与价格日内动量背离，能捕捉机构行为对短期收益的预测力。
+
+
+**LLM 候选审查(B角 23代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `ts_mean60(mul(mul(mul(abs(mul(abs(ts_mean10(volume)), intraday)), intraday), ret), intraday))`
+  > 理由: 结构冗余，abs与intraday多次相乘无明确量价行为含义，疑似数学拼凑。
+- KILL `ts_mean60(mul(mul(mul(abs(mul(div(mul(mul(abs(abs(intraday)), intraday), ret), low), volume)), intraday), intraday), intraday))`
+  > 理由: intraday多次自乘与abs嵌套，结构冗余且经济含义不明，疑似数学巧合。
+- KILL `mul(turnover, ts_min100(corr100(overnight, ts_std20(ts_sum100(mul(div(amplitude, corr100(up_shadow, ts_std20(ts_sum100(mul(div(amplitude, turnover), intraday))))), intraday))))))`
+  > 理由: 多层嵌套同源算子且窗口重复，结构冗余难解释，疑似参数拼凑。
+- KILL `ts_mean60(mul(mul(mul(div(hl_ratio, low), intraday), intraday), intraday))`
+  > 理由: intraday三次自乘且除以low，结构冗余无明确量价经济含义，疑似数学巧合。
+- KILL `ts_mean60(mul(mul(mul(abs(mul(div(mul(turnover, ts_min100(corr100(overnight, ts_std20(turnover)))), down_shadow), intraday)), intraday), intraday), intraday))`
+  > 理由: 多层同源intraday自乘冗余，结构拼凑，经济含义模糊，疑似参数搜索产物。
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1) 病根是intraday被反复堆叠成同构高相关因子，ic虚高但L2全灭，说明信号是噪声拟合而非真实alpha。
+> 
+> (2) 压intraday权重对症，但交叉+15%和深度加深会加剧过拟合，与min_stab=0.75矛盾；固定扰动/引导/随机比例限制了探索多样性，可能无效；decorr=0.65偏低，无法拆解同质因子。
+> 
+> (3) mix=[0.2, 0.2, 0.2, 0.2, 0.2] depth=[2,3,3] min_stab=0.85 decorr=0.8。理由：均衡变异与随机打破intraday垄断，浅层降复杂度，高稳定性与去相关强制换血。

@@ -24,17 +24,26 @@
 # 引擎一代（后台）：参数与三道闸详见 loop_engine.py argparse
 cd D:\loop_code\engine
 D:\miniconda3\envs\rqdata\python.exe loop_engine.py --gen=13 --n=800 --l2=30 --seed=123
-#   B角 LLM 审查开关：--ai_critic auto（默认）/on/off
-#   auto=桌面 1.txt（或环境变量 DEEPSEEK_API_KEY）有 key 即每代末尾自动调 DeepSeek
-#        审查本代诊断+点评规则建议，全文写进 docs/loop_journal.md 的“AI 审查(DeepSeek)”小节；
-#   未配置 key 或调用失败自动跳过，纯规则 B角照常，不影响无人值守。
+#   LLM 双子开关（均默认 auto，可 on/off 强开/强关；无 key 或调用失败自动回退纯规则，不影响无人值守）：
+#     --llm_guide  A角生成引导：候选引导位由 loop_llm 解析语义候选，失败/无 key 回退本地 13 机制族
+#     --ai_jury    B角候选审查：L1 硬滤后随机抽 --jury_n(默认5) 精判，KILL 剔除出 L2
+#     --ai_critic  代末 AI 审查：点评本代诊断+规则建议，全文写进 docs/loop_journal.md“AI 审查(DeepSeek)”小节
+#   key=桌面 1.txt 或环境变量 DEEPSEEK_API_KEY
 
 # 无人值守多代接力（可选）：启动 watcher 后每 5min 轮询，空闲且该代无 err 自动启下一代
+#   停止条件：任一代 err 非空即停下等人工（铁律）；代数达 loop_watch.py 上限（默认 50）自动结束。
+#   防多实例/防重复代已内置；引擎在跑时 watcher 只等待不动作，可随时手动启动。
 cd D:\loop_code\engine
-Start-Process python -ArgumentList '-u','loop_watch.py' -WorkingDirectory 'D:\loop_code\engine' -WindowStyle Hidden
+Start-Process "D:\miniconda3\envs\rqdata\python.exe" -ArgumentList '-u','loop_watch.py' -WorkingDirectory 'D:\loop_code\engine' -WindowStyle Hidden
 
 # 进度查询（脚本在 engine/ 下且按自身路径定位：带全路径即可，从任意目录运行都行）
 D:\miniconda3\envs\rqdata\python.exe D:\loop_code\engine\loop_status.py
+
+# 无人值守期间人工查看（代号 N 换成当前代，如 loop23C.*）：
+Get-Content D:\loop_code\engine\loop_watcher.log -Tail 20   # watcher 接力事件: [START]/[OK]/[RUN]/[SKIP]/[STOP]/[DONE]
+Get-Content D:\loop_code\engine\loop23C.log -Tail 20        # 当前代引擎进度（阶段字样见 loop_status.py）
+Get-Content D:\loop_code\engine\loop23C_err.log             # 当前代错误日志（空=正常）
+Get-Content D:\loop_code\docs\loop_journal.md -Tail 30      # B角每代诊断 + AI 审查落档
 
 # 定稿策略回测（示例）
 cd D:\loop_code\strategies\all04
@@ -43,5 +52,5 @@ D:\miniconda3\envs\rqdata\python.exe all04.py
 
 ## 说明
 - 引擎所有文件读写都相对 `engine/` 定位，`loop_code` 可整体搬移；唯一外部依赖是 `E:\rq` 数据盘。
-- `loop_state.pkl` 基线为 **gen22 收官态**（2026-09-09 手动收官；入库因子 9 / 种子 30 / 冻结骨架 3 / L1 累计已测 12133 候选）；扩叶子池(54)落地后自 **gen23 重启**。整体复盘见 `docs/loop_summary_2026-09-09.md`，叶子扩展见 `docs/loop_ext_leaves.md`。
+- `loop_state.pkl` 基线为 **gen22 收官态**（2026-09-09 手动收官；入库因子 9 / 种子 30 / 冻结骨架 3 / L1 累计已测 12133 候选）；扩叶子池(54)落地后自 **gen23 重启**。重启后 gen23 已完成、watcher 无人值守自动接力 **gen24+**（2026-09-09 10:2x 起，接力事件见 `engine/loop_watcher.log`）。整体复盘见 `docs/loop_summary_2026-09-09.md`，叶子扩展见 `docs/loop_ext_leaves.md`。
 - 数据文件（*.h5/*.pkl）体积大且可由 `build_*.py` 重建，git 入库时按 `.gitignore` 排除。

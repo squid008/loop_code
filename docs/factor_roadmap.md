@@ -10,6 +10,9 @@
    （Round12~26 共 22 代、L1 累计 12133 候选、入库 9 因子；叶子池扩展为 54 = 量价21+资金流16+
    BARRA11+财报PIT8，单一事实源 engine/loop_fields.py；复盘 docs/loop_summary_2026-09-09.md、
    落地记录 docs/loop_ext_leaves.md）
+4. **Loop 新叶无人值守续跑中（2026-09-09 09:5x 重启 watcher）**：gen23（新叶首代）已于 10:2x
+   完整跑完（err 空，journal 第 23 代已落档），watcher 自动接力 **gen24（seed=247）跑动中**；
+   目标 gen50 或任一代 err 即停。进度入口：`engine/loop_watcher.log` / `loop_status.py`（命令见 README.md）。
 
 ## 当前阶段（2026-09-08）：对齐中金成功要素 + 引入新方法
 - 补派生字段(overnight/amplitude/影线) + 长窗口算子(100~200天)
