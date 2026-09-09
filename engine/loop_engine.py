@@ -357,6 +357,39 @@ def has_frozen_skel(node, frozen):
     return bool(frozen and (subtree_skels(node) & set(frozen)))
 
 
+# ---- 结构族聚类(QuantaAlpha 冗余检测移植): 拦"外层模板固定、内层微调"的同构霸榜族 ----
+FAM_CUT = 3          # 模板指纹展开算子层数(cut 层以下折叠)
+FAM_QUOTA = 2        # L1 同模板族候选进 L2/种子池上限
+
+
+def root_fam(node, cut=FAM_CUT):
+    """模板族指纹: 叶子统一'X'(身份无关) + 窗口剥除 + 距根cut层以下折叠'#'。
+    mul(turnover,ts_min100(corr100(overnight, <任意深>))) 成员 -> 同一指纹, 判同族。"""
+    def rec(nd, d):
+        if not nd.args:
+            return 'X'
+        if d >= cut:
+            return '#'
+        return norm_op(nd.op) + '(' + ','.join(
+            rec(a, d + 1) if isinstance(a, Node) else 'X' for a in nd.args) + ')'
+    return rec(node, 0)
+
+
+def fam_quota_rows(rows, quota=FAM_QUOTA):
+    """score 降序的 L1 行上做模板族配额: 同族至多保留 quota 条(保跨族多样), 返回过滤后行集"""
+    cnt, keep, n_block = {}, [], 0
+    for _, r in rows.iterrows():
+        f = root_fam(r['node'])
+        c = cnt.get(f, 0)
+        if c >= quota:
+            n_block += 1
+            continue
+        cnt[f] = c + 1
+        keep.append(r)
+    import pandas as _pd
+    return _pd.DataFrame(keep), len(cnt), n_block
+
+
 def _lib_sync(gen, res, n_total, added_exprs, expr2nd):
     """本代新入库因子自动同步追加进 docs/factor_library.md(只增不改历史, 家族命名留待人工精炼)。
     幂等: 编号取文本现有最大 F{nn}+1; 任何失败仅告警, 绝不影响入库主流程。
@@ -730,6 +763,23 @@ def run(args):
             print("  -", r)
     else:
         print("\n[B角] 首代, 使用默认策略")
+    # ---- 结构族黑名单(QuantaAlpha 正交思想, gen31): 上代 L1 霸榜模板族 ----
+    # 上代同模板族(叶子身份无关指纹)占比 >= FAM_BLOCK_THR -> 本代生成端禁产(硬闸换血);
+    # top2 模板文本另注入 A角 LLM 提示词(软约束)。根治"同族霸榜 -> 0 通过"空转。
+    block_fams, fam_black_txt = set(), ''
+    if prev_l1 is not None and len(prev_l1):
+        fam_cnt = {}
+        for nd in list(prev_l1['node'])[:40]:
+            f = root_fam(nd)
+            fam_cnt[f] = fam_cnt.get(f, 0) + 1
+        n_pv = len(prev_l1)
+        tops = sorted(fam_cnt.items(), key=lambda x: -x[1])
+        if args.fam_block_thr > 0 and tops and tops[0][1] / n_pv >= args.fam_block_thr:
+            block_fams = {tops[0][0]}
+        fam_black_txt = '；'.join(f'「{f}」({c}/{n_pv}条)' for f, c in tops[:2])
+    if block_fams:
+        print(f"  [族黑名单] 上代 L1 同模板族占比>={args.fam_block_thr:.0%} -> "
+              f"本代生成端禁产该模板族, 强制结构换血")
     # 五维配比护栏(与 critic.suggest 出口同源): 即使旧state cfg 漂移且本轮无规则触发
     # (如无上一代), 本代实际生效 mix 也强制回到中金规格内(变异/交叉≥10%、槽位15/20/15)
     cfg['mix'] = critic.guard_mix(cfg.get('mix'))
@@ -803,7 +853,7 @@ def run(args):
                   f"{getattr(args, 'llm_model', None) or loop_llm.DEFAULT_MODEL}), "
                   f"上限 {args.llm_max_calls} 次/代, 引导位命中按需补池")
     cands, seen = [], set()        # seen: 表达式级判重(原[in list] O(n²) -> O(1))
-    n_skip_fsa = n_skip_dim = n_skip_bad = n_skip_dup = 0
+    n_skip_fsa = n_skip_dim = n_skip_bad = n_skip_dup = n_skip_fam = 0
     n_tries = dup_streak = 0
     rand_only = False              # 兜底: 连续重复过多/超时 -> 纯随机硬凑产量
     MAX_TRY = args.n * 30
@@ -833,7 +883,8 @@ def run(args):
                 if llm_on and not llm_pool and n_llm_call < args.llm_max_calls:
                     n_llm_call += 1
                     _ok, llm_hyp, _ns = llm_fetch(args, cfg, seeds, bank,
-                                                  frozen, fail_lib)
+                                                  frozen, fail_lib,
+                                                  fam_black=fam_black_txt)
                     n_llm_parse += len(_ns)
                     llm_pool = _ns
                 if llm_pool:
@@ -863,6 +914,10 @@ def run(args):
             else:
                 n_skip_fsa += 1
                 continue
+        # 结构族黑名单闸(gen31): 命中上代垄断模板族 -> 重抽(rand_only 兜底豁免防死锁)
+        if not rand_only and block_fams and root_fam(node) in block_fams:
+            n_skip_fam += 1
+            continue
         k = str(node)
         if k in seen:              # 重复: 计数 + 连续重到阈值切纯随机
             n_skip_dup += 1
@@ -877,7 +932,8 @@ def run(args):
     mode = '随机兜底' if rand_only else '正常'
     print(f"生成候选 {len(cands)}/{args.n} 个[{mode}]"
           f"(跨量纲拦{n_skip_dim} 失败库拦{n_skip_bad} FSA拦{n_skip_fsa} "
-          f"重复拦{n_skip_dup}, 尝试{n_tries}), 耗时 {time.time()-t0:.0f}s")
+          f"族黑名单拦{n_skip_fam} 重复拦{n_skip_dup}, 尝试{n_tries}), "
+          f"耗时 {time.time()-t0:.0f}s")
     if llm_on and n_llm_call:
         print(f"  [LLM引导] 调用{n_llm_call}次, 解析通过{n_llm_parse}条, "
               f"引导位出队{n_llm_hit}条"
@@ -1025,6 +1081,18 @@ def run(args):
     print(f"\nL1 通过 {len(l1)} 个, 取Top{TOPN}去重后 {len(dedup)} 个")
     l1 = pd.DataFrame(dedup) if dedup else l1.head(TOPN)
     print(l1[['expr', 'ic', 'ic_ir', 'stab']].head(15).round(4).to_string(index=False))
+    # ---- 结构族配额(QuantaAlpha 冗余检测移植, gen31) ----
+    # 数值去重(|corr|>0.99) 只拦"数值等价"; FSA 冻结只拦"完整串复用"。同族"外层模板固定、
+    # 内层微调"的候选(score 各异、公共结构巨大)会继续挤满 L2 名额与下代种子池, 费后全灭 ->
+    # 每模板族最多放 fam_quota 条进 L2/种子池(保结构多样性), FSA/下代种子池因此天然跨族。
+    fam_blocked = 0
+    if args.fam_quota > 0 and len(l1):
+        n_pre = len(l1)
+        l1, nfam, n_blocked = fam_quota_rows(l1, quota=args.fam_quota)
+        fam_blocked = n_blocked
+        if n_blocked:
+            print(f"  [族配额] 模板族 {nfam} 个 -> 结构冗余拦 {n_blocked}/{n_pre} "
+                  f"(剩 {len(l1)}, 每族<={args.fam_quota})")
 
     # ---- FSA 骨架统计(对齐中金: 抽象因子结构/剥离窗口参数) ----
     # 观察样本 = 本代L1通过者 + 前50候选; 统计对象 = 非叶子结构骨架(剥掉窗口数字)
@@ -1136,6 +1204,7 @@ def run(args):
     # ---- B角: 诊断本代 + 给出下一代策略 + 写日志 ----
     import loop_critic as critic
     diag = critic.diagnose(l1, res if len(res) else None, args.gen)
+    diag['fam_blocked'] = fam_blocked
     next_cfg, reasons = critic.suggest(diag, cfg)
     print("\n[B角建议] 下一代:")
     for r in reasons:
@@ -1331,7 +1400,7 @@ def parse_expr(text):
     return nd
 
 
-def llm_fetch(args, cfg, seeds, bank, frozen, fail_lib):
+def llm_fetch(args, cfg, seeds, bank, frozen, fail_lib, fam_black=''):
     """A角 LLM 拉一批候选: 拼上下文 -> loop_llm.gen_candidates -> 文本解析回 Node。
     返回 (ok, hyp, nodes); 任何失败 ok=False 且 nodes=[] (内部已打印原因)。"""
     import loop_llm
@@ -1346,6 +1415,9 @@ def llm_fetch(args, cfg, seeds, bank, frozen, fail_lib):
     hint = ("请避开易重复结构: 纯市值/成交额/换手率的旧故事表达、同骨架只换窗口的参数变体"
             "都算重复; 优先给出有独立金融机制的表达式(跳空溢价/价量背离/波动结构/日内形态/"
             "流动性等), 宁少勿滥。")
+    if fam_black:
+        hint += ("\n[结构族黑名单] 上一代 L1 通过集被下列外层模板垄断(L1 高分但费后全灭), "
+                 "本代请勿再产出同构模板(换内层参数/叶子不算新结构): " + fam_black)
     model = getattr(args, 'llm_model', None) or loop_llm.DEFAULT_MODEL
     ok, d = loop_llm.gen_candidates(diag, hint, n=args.llm_n, model=model)
     if not ok:
@@ -1512,6 +1584,12 @@ if __name__ == '__main__':
                     help='审查侧模型名(缺省同loop_llm.DEFAULT_MODEL=deepseek-v4-flash; '
                          '可选 deepseek-v4-pro 与生成侧做物理隔离)')
     ap.add_argument('--l2', type=int, default=40)
+    ap.add_argument('--fam_quota', type=int, default=FAM_QUOTA,
+                    help='结构族配额(QuantaAlpha冗余检测, gen31): L1通过集同模板族'
+                         '(外层结构相同仅内层微调)最多保留N条进L2/种子池; 0=关闭')
+    ap.add_argument('--fam_block_thr', type=float, default=FAM_BLOCK_THR,
+                    help='结构族黑名单: 上代L1同模板族占比>=该值则本代生成端禁产该模板族'
+                         '(强制结构换血); 0=关闭')
     ap.add_argument('--seed', type=int, default=42)
     ap.add_argument('--cost', type=float, default=COST_PRESETS['单边千1.5'],
                     help=f'往返成本, 默认单边千1.5=0.004; 档位: {COST_PRESETS}')

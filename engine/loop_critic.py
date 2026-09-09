@@ -214,7 +214,7 @@ def report(diag, sug, reasons, path):
     lines.append(f"\n## 第 {diag['gen']} 代 (B角诊断)\n")
     # 指标横排 md 表格(键行/分隔/值行): 源码3行, 渲染为横向对齐表格
     keys = ['n_l1', 'ic_med', 'ic_max', 'stab_med', 'stab_lt50',
-            'leaf_conc', 'struct_div', 'known_ratio',
+            'leaf_conc', 'struct_div', 'fam_blocked', 'known_ratio',
             'n_l2', 'n_pass', 'ex_max',
             'fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic']
     present = [k for k in keys if k in diag]
@@ -307,7 +307,7 @@ def ai_review(diag, l1, l2, gen, journal_path, reasons=None, sug=None, force=Fal
               "本代跳过 -> 沿用规则B角")
         return 'no_key'
     keys = ['n_l1', 'ic_med', 'ic_max', 'stab_med', 'stab_lt50', 'leaf_conc',
-            'struct_div', 'known_ratio', 'n_l2', 'n_pass', 'ex_max',
+            'struct_div', 'fam_blocked', 'known_ratio', 'n_l2', 'n_pass', 'ex_max',
             'fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic']
     stat = ', '.join(f"{k}={diag.get(k):.3f}" if isinstance(diag.get(k), float)
                      else f"{k}={diag.get(k)}" for k in keys if k in diag)
