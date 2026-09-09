@@ -8,12 +8,14 @@
   - `loop_critic.py` B角诊断（每代自动写 gen 建议进 journal）+ `loop_llm.py` LLM 双子（A角语义引导 / B角候选审查 / 代末 AI 审查）
   - `loop_watch.py` 常驻接力进程（每 5min 轮询，空闲自动启下一代，支持无人值守多代跑）
   - `loop_status.py` 进度/进程/档案查询
+  - `loop_fields.py` **叶子字段单一事实源**（基础7+派生12+资金流16+BARRA11+财报8=54；新增字段族只改这一处）
   - `factor_miner.py` 因子挖掘基础框架（panel 加载/预筛选/两段式验证）
   - `fastops.py` L1 向量化快速算子
-  - `panel.h5` / `universe.h5` L1 筛选用数据（由 `build_*.py` 从 E:\rq 重建）
+  - `build_mf_leaves.py` / `build_barra.py` / `build_fa_pit.py` 扩展数据源叶子构建（资金流16列入 panel / barra.h5 / fa_pit.h5，幂等可重建）
+  - `panel.h5` / `universe.h5` / `barra.h5` / `fa_pit.h5` L1 筛选用数据（由 `build_*.py` 从 E:\rq 重建）
   - `loop_state.pkl` 引擎滚动状态（运行中会变）
   - `_check_*.py` 机制自检（dry-run 零误杀验证）
-- `docs/` — 结论文档/档案：`loop_summary_2026-09-09.md`（**gen1~22 收官整体复盘**）/ `loop_journal.md`（B角代际诊断）/ `factor_roadmap.md`（研发留痕、续做入口）/ `factor_library.md`（Loop 入库因子）/ `loop_archive.csv`（Loop 每代 L2 明细流水，逐代累积）/ `factor_archive.md/.csv`（factor_miner Round1~7 旧归档，已停更）
+- `docs/` — 结论文档/档案：`loop_summary_2026-09-09.md`（**gen1~22 收官整体复盘**）/ `loop_ext_leaves.md`（**扩叶子池 v3 落地记录**，54叶架构与重启）/ `loop_journal.md`（B角代际诊断）/ `factor_roadmap.md`（研发留痕、续做入口）/ `factor_library.md`（Loop 入库因子）/ `loop_archive.csv`（Loop 每代 L2 明细流水，逐代累积）/ `factor_archive.md/.csv`（factor_miner Round1~7 旧归档，已停更）
 - `strategies/` — 定稿 rqalpha 回测策略：`all01/`（all00/01/03 + factor_snapshot 数据）、`all04/`（barra 落地 + g6 数据）、`vol/`、`big_small/`，共享 `bt_utils.py`
 - `research/` — 早期挖掘轮次 `round*.py` 与专题研究脚本（方法留档；运行需与 `engine` 同目录或放回原 `ai_test` 全套依赖）
 
@@ -41,5 +43,5 @@ D:\miniconda3\envs\rqdata\python.exe all04.py
 
 ## 说明
 - 引擎所有文件读写都相对 `engine/` 定位，`loop_code` 可整体搬移；唯一外部依赖是 `E:\rq` 数据盘。
-- `loop_state.pkl` 当前为 **gen22 收官态**（2026-09-09 手动收官；入库因子 9 / 种子 30 / 冻结骨架 3 / L1 累计已测 12133 候选）。整体复盘见 `docs/loop_summary_2026-09-09.md`。
+- `loop_state.pkl` 基线为 **gen22 收官态**（2026-09-09 手动收官；入库因子 9 / 种子 30 / 冻结骨架 3 / L1 累计已测 12133 候选）；扩叶子池(54)落地后自 **gen23 重启**。整体复盘见 `docs/loop_summary_2026-09-09.md`，叶子扩展见 `docs/loop_ext_leaves.md`。
 - 数据文件（*.h5/*.pkl）体积大且可由 `build_*.py` 重建，git 入库时按 `.gitignore` 排除。

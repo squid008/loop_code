@@ -24,6 +24,10 @@ import hashlib
 import numpy as np
 import pandas as pd
 
+# 叶子字段全集与引擎A角共用单一事实源 loop_fields.py(新增字段族只改那一处)
+# 历史坑: 本文件曾硬编码旧12字段, 引擎叶子池扩展后 B角诊断漏认新族 -> 漂移
+from loop_fields import LEAVES
+
 # 已知有效因子(用于"是否又绕回已知族"的判断)
 KNOWN_HINT = ['ln_mktcap', 'ln_volume', 'turnover', 'mktcap', 'amt']
 
@@ -33,12 +37,10 @@ FAST_OPS = ['ts_mean5', 'ts_delay1', 'ts_delta5']
 
 
 def _leaf_of(expr):
-    """粗暴提取表达式里出现的叶子字段名"""
+    """粗暴提取表达式里出现的叶子字段名(全集=loop_fields.LEAVES, 与引擎生成池同步)"""
     import re
     toks = set(re.findall(r'[A-Za-z_][A-Za-z0-9_]*', expr))
-    leaves = ['close', 'open', 'high', 'low', 'volume', 'turnover', 'mktcap',
-              'vwap', 'ret', 'turn_ratio', 'ln_mktcap', 'ln_volume']
-    return [t for t in toks if t in leaves]
+    return [t for t in toks if t in LEAVES]
 
 
 def _ops_of(expr):
@@ -75,8 +77,7 @@ def diagnose(l1, l2, gen, verbose=True):
         sk = []
         for e in l1['expr']:
             s = e
-            for lf in ['close', 'open', 'high', 'low', 'volume', 'turnover',
-                       'mktcap', 'vwap', 'ret', 'turn_ratio', 'ln_mktcap', 'ln_volume']:
+            for lf in LEAVES:   # 叶子全集(含资金流/风格/财报扩展), 顺序=LEAVES 定义序
                 s = s.replace(lf, 'X')
             sk.append(hashlib.md5(s.encode()).hexdigest()[:8])
         d['struct_div'] = len(set(sk)) / max(len(sk), 1)

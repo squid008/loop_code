@@ -47,7 +47,12 @@ DEFAULT_CFG = dict(leaf_w={}, op_bias={}, depth=[2, 3, 4],
                    min_stab=0.30, decorr=0.75, fsa_th=0.15)
 
 # ===================== 1. 基础字段 =====================
-FIELDS = ['close', 'open', 'high', 'low', 'volume', 'turnover', 'mktcap']
+# ---- 叶子字段单一事实源 = loop_fields.py (引擎A角/B角critic/量纲/写档共用) ----
+# 新增字段族只改 loop_fields.py 一处, 勿在本文件硬编码叶子名(防再漂移)。
+# 资金流 moneyflow3 原始拆分16列: 金额(×1e4元,量纲A)+量(×100股,量纲V), 净额不预焊由GP自组合;
+# BARRA 连续风格11(barra.h5,行业哑不入叶) / 财报PIT as-of比率8(fa_pit.h5,按info_date无未来函数)
+from loop_fields import MF16, BARRA_LEAVES, FA_LEAVES, LEAVES, FIELDS
+
 _BASE = None
 L1_STOCKS = 2000          # L1 粗筛抽样的股票数(越小越快, 但IC估计误差越大)
 L1_ROWS = None
@@ -75,6 +80,13 @@ def base_fields():
         'turnover': P['turnover'].reindex(index=dates, columns=cols).values.astype(np.float32),
         'mktcap': P['mktcap'].reindex(index=dates, columns=cols).values.astype(np.float32),
     }
+    # ---- 扩展叶子(mf16 随 FIELDS 已入 P; barra/fa 独立 store) ----
+    for name in MF16:
+        B[name] = P[name].reindex(index=dates, columns=cols).values.astype(np.float32)
+    for fn, names in (('barra.h5', BARRA_LEAVES), ('fa_pit.h5', FA_LEAVES)):
+        with pd.HDFStore(os.path.join(HERE, fn), 'r') as st:
+            for name in names:
+                B[name] = st[name].reindex(index=dates, columns=cols).values.astype(np.float32)
     # 衍生
     B['vwap'] = (B['turnover'] / np.maximum(B['volume'], 1e-9)).astype(np.float32)
     B['ret'] = (pd.DataFrame(B['close']).pct_change().values).astype(np.float32)
@@ -274,11 +286,8 @@ BINARY = {
     'max': lambda a, b: np.maximum(a, b),
 }
 
-LEAVES = ['close', 'open', 'high', 'low', 'volume', 'turnover', 'mktcap',
-          'vwap', 'ret', 'turn_ratio', 'ln_mktcap', 'ln_volume',
-          # ★派生字段(中金 overnight 85% / amplitude 63%)
-          'overnight', 'intraday', 'amplitude', 'up_shadow', 'down_shadow',
-          'hl_ratio', 'true_range']
+# ★LEAVES 完整叶子池已由顶部 `from loop_fields import LEAVES` 提供
+#   (基础7 + 派生12 + MF16资金流 + BARRA11风格 + FA8财报 = 54), 勿在此重复硬编码(防漂移)
 
 # ===================== 3. 表达式 =====================
 class Node(object):
@@ -356,6 +365,12 @@ _FIELD_DIM = {
     'up_shadow': 'R', 'down_shadow': 'R', 'hl_ratio': 'R', 'true_range': 'R',
     'turn_ratio': 'R', 'volume': 'V', 'ln_volume': 'L', 'ln_mktcap': 'L',
     'turnover': 'A', 'mktcap': 'M',
+    # 资金流金额列(×1e4 元, 与 turnover 同量纲 A) / 量列(×100 股, 与 volume 同 V)
+    **{k: 'A' for k in MF16 if k.endswith(('_buy', '_sell'))},
+    **{k: 'V' for k in MF16 if k.endswith(('_bqty', '_sqty'))},
+    # BARRA 风格(Z化后相对值) / 财报 PIT 比率 -> R
+    **{k: 'R' for k in BARRA_LEAVES},
+    **{k: 'R' for k in FA_LEAVES},
 }
 
 
@@ -492,6 +507,10 @@ LEAF_CAT = {
     'volume': '量', 'ln_volume': '量',
     'turnover': '成交额', 'turn_ratio': '换手率',
     'mktcap': '市值', 'ln_mktcap': '市值',
+    # 扩展: 资金流 / 风格 / 财报
+    **{k: '资金流' for k in MF16},
+    **{k: '风格' for k in BARRA_LEAVES},
+    **{k: '财报' for k in FA_LEAVES},
 }
 
 
