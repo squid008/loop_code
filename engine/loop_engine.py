@@ -38,6 +38,7 @@ from factor_miner import (load_panel, prepare, get_universe, cs_rank,
 STATE = os.path.join(HERE, 'loop_state.pkl')
 ARCHIVE = os.path.join(os.path.dirname(HERE), 'docs', 'loop_archive.csv')
 JOURNAL = os.path.join(os.path.dirname(HERE), 'docs', 'loop_journal.md')  # B角诊断日志(loop_code/docs)
+LIBRARY = os.path.join(os.path.dirname(HERE), 'docs', 'factor_library.md')  # 入库因子文档(代末自动同步新增)
 
 # 默认搜索策略(B角可动态调整)
 # 中金五策略配比: 变异25 / 交叉25 / 扰动15 / 随机探索15 / LLM机制引导20
@@ -354,6 +355,72 @@ def subtree_skels(node):
 def has_frozen_skel(node, frozen):
     """候选是否含任一已冻结的结构骨架(中金: 冻结骨架禁止复用 -> 生成端丢弃/入库端审查)"""
     return bool(frozen and (subtree_skels(node) & set(frozen)))
+
+
+def _lib_sync(gen, res, n_total, added_exprs, expr2nd):
+    """本代新入库因子自动同步追加进 docs/factor_library.md(只增不改历史, 家族命名留待人工精炼)。
+    幂等: 编号取文本现有最大 F{nn}+1; 任何失败仅告警, 绝不影响入库主流程。
+    added_exprs: 本代真正 append 进 bank 的 expr 列表; expr2nd: {str(node): node}(模块已有 Node/skeleton)。"""
+    import re
+    import io
+    try:
+        if not added_exprs or not os.path.exists(LIBRARY):
+            return
+        rows = {str(r['expr']): r for _, r in res.iterrows()} if len(res) else {}
+        txt = io.open(LIBRARY, encoding='utf-8').read()
+        nos = [int(x) for x in re.findall(r'\bF(\d{2})\b', txt)]
+        no = (max(nos) + 1) if nos else 1
+        tbl_rows, det_rows = [], []
+        for expr in added_exprs:
+            r = rows.get(expr)
+            if r is None:
+                continue
+            nd = expr2nd.get(expr)
+            cat_s = str(r['cat']); leaf_s = str(r['leaf'])
+            fam = (cat_s[:20] + '…') if len(cat_s) > 20 else (cat_s or '未分类')
+            short = expr if len(expr) <= 44 else expr[:41] + '…'
+            met = ('IC %.4f / IC_IR %.3f / 年化超额 %+.1f%% / 回撤 %.1f%% / '
+                   'Calmar %.3f / Sharpe %.3f / 最近年 %+.1f%% / 单期换手 %.1f%% / 负年 %d'
+                   % (r['ic'], r['ic_ir'], r['ann_ex'] * 100, r['dd'] * 100,
+                      r['calmar'], r['sharpe'], r['last_yr'] * 100, r['turn'] * 100,
+                      int(r['neg_yr'])))
+            skel = skeleton(nd) if nd is not None else '?'
+            tbl_rows.append('| F%02d | gen%d | %s | %s | 已入库(auto) |'
+                            % (no, gen, fam, short))
+            det_rows.append(
+                '\n### F%02d · gen%d 入库（引擎自动同步，家族命名待人工精炼）\n'
+                '```\n%s\n```\n'
+                '- 家族：%s（auto）\n- 叶子：%s\n- 骨架：`%s`\n'
+                '- 费后指标（full，成本 %.0fbp/边）：%s\n'
+                % (no, gen, expr, fam, leaf_s, skel, r['cost'] * 1000, met))
+            no += 1
+        if not det_rows:
+            return
+        add_tbl = '\n'.join(tbl_rows)
+        add_det = ''.join(det_rows)
+        # 1) 头部计数行(自动同步计数)
+        txt = re.sub(r'> 当前 \*\*\d+ 个入库\*\*', '> 当前 **%d 个入库**' % n_total,
+                     txt, count=1)
+        # 2) 总览表格末尾(## 因子明细 前最后一个 '| F' 数据行)后插入新行
+        j = txt.find('\n## 因子明细')
+        i = txt.rfind('\n| F', 0, j) if j > 0 else -1
+        if i >= 0:
+            k = txt.find('\n', i + 2)
+            if k >= 0:
+                txt = txt[:k] + '\n' + add_tbl + txt[k:]
+        # 3) 明细小节插在 '## 相关文件导航' 前(原 --- 分节保留, 新条目自带分隔)
+        nav = '\n## 相关文件导航'
+        p = txt.find(nav)
+        if p < 0:
+            txt = txt.rstrip('\n') + add_det + '\n'
+        else:
+            txt = txt[:p] + add_det + '\n---\n\n' + txt[p:]
+        io.open(LIBRARY, 'w', encoding='utf-8').write(txt)
+        print(f"  [文档] factor_library.md 已自动追加 {len(det_rows)} 条新入库 "
+              f"(F{nos and max(nos)+1 or 1}~F{no-1}, 累计 {n_total})")
+    except Exception as e:
+        print(f"  [文档] factor_library.md 自动同步失败(不影响入库): "
+              f"{type(e).__name__}: {e}")
 
 
 # ===================== 跨量纲审查(中金审查规则之一) =====================
@@ -1055,7 +1122,7 @@ def run(args):
                       '' if r_['passed'] else 'l2')
     if len(res):
         # 逐代累积流水(带 gen/cat/leaf 列): 文件缺失/为空时写表头, 其后追加
-        # —— 每代 L2 明细永久留档(历史见 docs/loop_archive.legacy_pre_gen16.csv)
+        # —— 每代 L2 明细永久留档(gen16 前旧快照已归 docs/history/loop_archive.legacy_pre_gen16.csv)
         res.insert(0, 'gen', args.gen)
         need_head = (not os.path.exists(ARCHIVE)) or os.path.getsize(ARCHIVE) == 0
         res.to_csv(ARCHIVE, index=False, mode='a', header=need_head,
@@ -1101,6 +1168,7 @@ def run(args):
         skel_cnt = skeleton_freq(bank)
         fset = set(frozen) if args.fsa_th > 0 else set()
         n_bank_old = len(bank)
+        lib_added = []
         for expr in res.loc[res['passed'], 'expr'].tolist():
             nd = by_expr.get(expr)
             if nd is None or any(str(x) == expr for x in bank):
@@ -1115,8 +1183,11 @@ def run(args):
                 continue
             bank.append(nd)
             skel_cnt[s] = skel_cnt.get(s, 0) + 1
+            lib_added.append(expr)
         if len(bank) > n_bank_old:
             print(f"  入库 {len(bank)-n_bank_old} 个新因子, 累计 {len(bank)} 个")
+            # 入库文档自动同步(factor_library.md): 只增不改, 失败不影响入库
+            _lib_sync(args.gen, res, len(bank), lib_added, by_expr)
     for k, v in DEFAULT_CFG.items():
         next_cfg.setdefault(k, v)      # critic.suggest 重建dict可能丢键 -> 兜底补齐
     next_cfg.setdefault('bank_skel_max', args.bank_skel_max)

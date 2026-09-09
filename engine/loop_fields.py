@@ -15,7 +15,7 @@ A角 loop_engine(生成侧) / B角 loop_critic(审查侧) 的叶子白名单必�
   R  比率/收益率/风格暴露/财报 PIT 比率
   L  对数标尺(ln_mktcap/ln_volume)
 
-扩展(2026-09-09 一期+二期, 详见 docs/loop_ext_leaves_v1.md):
+扩展(2026-09-09 一期+二期, 落地记录见 docs/factor_roadmap.md 附录 B):
   1. 资金流 moneyflow3 原始拆分 16 列: 面板列名即叶子名, 净额不预焊由 GP 自组合;
   2. BARRA 连续风格 11 个(barra.h5, 行业哑变量不入叶);
   3. 财报 PIT as-of 比率 8 个(fa_pit.h5, 按 info_date 对齐, 无未来函数)。

@@ -17,7 +17,7 @@ loop*C_err.log
 engine/loop_state.pkl
 # Loop 每代 L2 明细流水（docs/ 下逐代累积的 CSV 档案，运行产物不上 git）
 docs/loop_archive.csv
-docs/loop_archive.legacy_pre_gen16.csv
+# gen16 前旧快照已归 docs/history/（停更，已 git 跟踪为归档，此处不再 ignore）
 
 # IDE / 系统
 .idea/
@@ -30,3 +30,7 @@ Thumbs.db
 
 # 临时诊断脚本/产物（可随时删）
 ai_test/
+
+# 本地密钥文件（不上传；DeepSeek API key，桌面 1.txt 删除后由此兜底）
+.deepseek_key
+engine/.deepseek_key

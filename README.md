@@ -15,7 +15,7 @@
   - `panel.h5` / `universe.h5` / `barra.h5` / `fa_pit.h5` L1 筛选用数据（由 `build_*.py` 从 E:\rq 重建）
   - `loop_state.pkl` 引擎滚动状态（运行中会变）
   - `_check_*.py` 机制自检（dry-run 零误杀验证）
-- `docs/` — 结论文档/档案：`loop_summary_2026-09-09.md`（**gen1~22 收官整体复盘**）/ `loop_ext_leaves.md`（**扩叶子池 v3 落地记录**，54叶架构与重启）/ `loop_journal.md`（B角代际诊断）/ `factor_roadmap.md`（研发留痕、续做入口）/ `factor_library.md`（Loop 入库因子）/ `loop_archive.csv`（Loop 每代 L2 明细流水，逐代累积）/ `factor_archive.md/.csv`（factor_miner Round1~7 旧归档，已停更）
+- `docs/` — 结论文档/档案：`factor_roadmap.md`（**研发档案主入口**：Round 叙事 + 附录A Loop gen1~22 整体复盘 + 附录B 扩叶落地）/ `factor_library.md`（**Loop 入库因子**，引擎代末自动同步新增）/ `loop_journal.md`（B角代际诊断）/ `loop_archive.csv`（Loop 每代 L2 明细流水，逐代累积）/ `history/`（**归档区**：factor_miner Round1~7 旧档案 factor_archive.md/.csv，已停更）
 - `strategies/` — 定稿 rqalpha 回测策略：`all01/`（all00/01/03 + factor_snapshot 数据）、`all04/`（barra 落地 + g6 数据）、`vol/`、`big_small/`，共享 `bt_utils.py`
 - `research/` — 早期挖掘轮次 `round*.py` 与专题研究脚本（方法留档；运行需与 `engine` 同目录或放回原 `ai_test` 全套依赖）
 
@@ -52,5 +52,5 @@ D:\miniconda3\envs\rqdata\python.exe all04.py
 
 ## 说明
 - 引擎所有文件读写都相对 `engine/` 定位，`loop_code` 可整体搬移；唯一外部依赖是 `E:\rq` 数据盘。
-- `loop_state.pkl` 基线为 **gen22 收官态**（2026-09-09 手动收官；入库因子 9 / 种子 30 / 冻结骨架 3 / L1 累计已测 12133 候选）；扩叶子池(54)落地后自 **gen23 重启**。重启后 gen23 已完成、watcher 无人值守自动接力 **gen24+**（2026-09-09 10:2x 起，接力事件见 `engine/loop_watcher.log`）。整体复盘见 `docs/loop_summary_2026-09-09.md`，叶子扩展见 `docs/loop_ext_leaves.md`。
+- `loop_state.pkl` 基线为 **gen22 收官态**（2026-09-09 手动收官；入库因子 9 → 补录 gen23 后当前 11 / 种子 30 / 冻结骨架 3 / L1 累计已测 12133 候选）；扩叶子池(54)落地后自 **gen23 重启**。重启后 gen23~25 已完成、watcher 无人值守自动接力 **gen26**（实时接力事件见 `engine/loop_watcher.log`）。整体复盘/叶子扩展已并入 `docs/factor_roadmap.md` 附录 A/B，入库因子见 `docs/factor_library.md`。
 - 数据文件（*.h5/*.pkl）体积大且可由 `build_*.py` 重建，git 入库时按 `.gitignore` 排除。

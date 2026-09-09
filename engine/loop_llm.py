@@ -78,36 +78,49 @@ def _conv_append(tag, model, messages, reply, err=None):
         pass
 
 
+def _key_from_file(path):
+    """读 key 文件并智能挑选 token: 优先含 sk- 的连续串, 否则第一个长度>16 的非空行。
+    兼容文件带中文说明/非 UTF-8 编码(GBK) 等杂讯。返回 None 表示未取到。"""
+    if not os.path.isfile(path):
+        return None
+    text = None
+    for enc in ('utf-8-sig', 'utf-8', 'gb18030'):
+        try:
+            with open(path, encoding=enc) as f:
+                text = f.read()
+            break
+        except (OSError, UnicodeDecodeError):
+            continue
+    if not text:
+        return None
+    import re
+    m = re.search(r'sk-[A-Za-z0-9_\-]+', text)
+    if m:
+        return m.group(0)
+    for ln in text.splitlines():
+        ln = ln.strip()
+        if ln and len(ln) > 16:
+            return ln
+    return None
+
+
 def api_key():
-    """DeepSeek key: 环境变量 DEEPSEEK_API_KEY > 桌面 1.txt(多位置/双编码探测)。
-    1.txt 可能带中文说明或非 UTF-8 编码(GBK) —— 智能挑选: 优先含 sk- 的 token,
-    否则取第一个长度>16 的非空行。"""
+    """DeepSeek key: 环境变量 DEEPSEEK_API_KEY > 项目本地 .deepseek_key(不上传) > 桌面 1.txt。
+    项目 key 文件推荐放 d:/loop_code/.deepseek_key(与 .gitignore 配套), 单行裸 key 即可;
+    文件若带中文说明/非 UTF-8 编码, 由 _key_from_file 智能挑 sk- token 兜底。"""
     env = os.environ.get('DEEPSEEK_API_KEY')
     if env:
         return env.strip()
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # d:/loop_code
+    for rel in ['.deepseek_key', 'engine/.deepseek_key']:
+        key = _key_from_file(os.path.join(base, rel))
+        if key:
+            return key
     home = os.path.expanduser('~')
     for rel in ['Desktop', 'OneDrive/Desktop', 'OneDrive/桌面', '桌面']:
-        p = os.path.join(home, rel, '1.txt')
-        if not os.path.isfile(p):
-            continue
-        text = None
-        for enc in ('utf-8', 'gb18030'):
-            try:
-                with open(p, encoding=enc) as f:
-                    text = f.read()
-                break
-            except (OSError, UnicodeDecodeError):
-                continue
-        if not text:
-            continue
-        import re
-        m = re.search(r'sk-[A-Za-z0-9_\-]+', text)
-        if m:
-            return m.group(0)
-        for ln in text.splitlines():
-            ln = ln.strip()
-            if ln and len(ln) > 16:
-                return ln
+        key = _key_from_file(os.path.join(home, rel, '1.txt'))
+        if key:
+            return key
     return None
 
 
