@@ -360,6 +360,7 @@ def has_frozen_skel(node, frozen):
 # ---- 结构族聚类(QuantaAlpha 冗余检测移植): 拦"外层模板固定、内层微调"的同构霸榜族 ----
 FAM_CUT = 3          # 模板指纹展开算子层数(cut 层以下折叠)
 FAM_QUOTA = 2        # L1 同模板族候选进 L2/种子池上限
+FAM_BLOCK_THR = 0.5  # 上代 L1 同模板族占比 >= 该值 -> 本代生成端禁产该模板族
 
 
 def root_fam(node, cut=FAM_CUT):
@@ -1548,7 +1549,7 @@ if __name__ == '__main__':
                          '负数=跟随B角建议, 0=关闭')
     ap.add_argument('--fsa_th', type=float, default=-1,
                     help='FSA骨架冻结阈值: bank中同骨架占比超过该值即冻结该骨架, '
-                         '后续候选不再生成/入库(中金>15%冻结); 负数=跟随B角建议, 0=关闭')
+                         '后续候选不再生成/入库(中金>15%%冻结); 负数=跟随B角建议, 0=关闭')
     ap.add_argument('--bank_skel_max', type=int, default=1,
                     help='bank中每个骨架允许的最大入库数(同结构参数变体上限, 中金FSA)')
     ap.add_argument('--dim_review', type=float, default=-1,
@@ -1563,7 +1564,7 @@ if __name__ == '__main__':
                     help='B角LLM审查(DeepSeek): auto=找到key(环境变量DEEPSEEK_API_KEY或桌面1.txt)'
                          '即每代末尾自动AI审查并写journal; on=强制(无key仅告警跳过); off=纯规则B角')
     ap.add_argument('--llm_guide', default='auto', choices=['auto', 'on', 'off'],
-                    help='A角生成侧LLM引导(中金生成预算~20%语义引导位): '
+                    help='A角生成侧LLM引导(中金生成预算~20%%语义引导位): '
                          'auto=找到DeepSeek key即启用(引导位候选=LLM表达式); '
                          'on=强制(无key告警后回退本地引导); off=纯本地规则引导')
     ap.add_argument('--llm_n', type=int, default=12,
