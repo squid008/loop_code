@@ -24,6 +24,58 @@ import time
 # ---------------------------------------------------------------- 基础设施
 _DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
 DEFAULT_MODEL = 'deepseek-v4-flash'
+# 2026-09-09: deepseek-v4-flash 默认深度推理, max_tokens 会被 reasoning_content 吃光
+# 导致 content 恒为空(finish=length) —— 实测 6000 tok 仍全被推理占用。
+# 必须显式 reasoning_effort=none(实测 gen 长任务 3s 出完整 JSON / low 仍吃光 token)。
+_REASONING_EFFORT = 'none'   # 'none' | 'low' | 'medium' | 'high'
+
+# ---------------------------------------------------------------- LLM 对话录音
+# 可选: 引擎每代启动时 set_conv_path() 指向本代录音文件; 之后 chat_once 每次
+# (成功/失败) 都追加 时间戳+角色tag+messages+reply —— 供跑代后人工回溯 A角/B角
+# 与 DeepSeek 的完整往返。automation 无人值守时人看不到实时对话, 靠这份落盘文件
+# (引擎写 ai_test/loop_conv/gen{gen}C_conv.md, .gitignore 排除, 可整删)。
+_CONV_PATH = None   # 非空 = 录音中
+_CONV_T0 = time.time()
+
+
+def set_conv_path(path):
+    """开启本进程 LLM 对话录音(loop_engine 每代启动时调用); path=None 关闭。"""
+    global _CONV_PATH, _CONV_T0
+    _CONV_PATH = path
+    _CONV_T0 = time.time()
+    if not path:
+        return
+    try:
+        with open(path, 'w', encoding='utf-8') as f:
+            f.write("# Loop 引擎 LLM 对话录音 (A角生成侧/B角审查侧 与 DeepSeek 全部往返)\n")
+    except OSError:
+        _CONV_PATH = None   # 录不上不阻塞主流程
+
+
+def _conv_cut(text, n=6000):
+    text = str(text or '')
+    return text if len(text) <= n else text[:n] + f"...[截断, 共{len(text)}字符]"
+
+
+def _conv_append(tag, model, messages, reply, err=None):
+    """追加一次调用记录(含请求 messages 与回复/异常)。写失败静默跳过。"""
+    if not _CONV_PATH:
+        return
+    try:
+        t = time.time() - _CONV_T0
+        head = (f"\n## [T+{t:7.1f}s] {tag or 'chat'} @ {model}"
+                f"{'  **ERROR**' if err else ''}\n")
+        with open(_CONV_PATH, 'a', encoding='utf-8') as f:
+            f.write(head)
+            for m in messages or []:
+                f.write(f"- **{m.get('role', '?')}**:\n\n```\n"
+                        f"{_conv_cut(m.get('content', ''))}\n```\n\n")
+            if err:
+                f.write(f"- **error**: `{_conv_cut(err, 2000)}`\n\n")
+            else:
+                f.write(f"- **reply**:\n\n```\n{_conv_cut(reply)}\n```\n\n")
+    except OSError:
+        pass
 
 
 def api_key():
@@ -60,32 +112,39 @@ def api_key():
 
 
 def chat_once(messages, model=DEFAULT_MODEL, timeout=120,
-              temperature=0.4, max_tokens=1200):
-    """单轮 DeepSeek chat 调用(OpenAI 兼容), 失败抛异常由调用方兜底。"""
+              temperature=0.4, max_tokens=1200, tag=''):
+    """单轮 DeepSeek chat 调用(OpenAI 兼容), 失败抛异常由调用方兜底。
+    tag: 调用角色标记(如 'A角生成侧'), 仅用于对话录音归位。"""
     import urllib.request
     body = json.dumps({'model': model, 'messages': messages,
                        'temperature': temperature,
-                       'max_tokens': max_tokens}).encode('utf-8')
+                       'max_tokens': max_tokens,
+                       'reasoning_effort': _REASONING_EFFORT}).encode('utf-8')
     req = urllib.request.Request(
         _DEEPSEEK_URL, data=body, method='POST',
         headers={'Content-Type': 'application/json',
                  'Authorization': 'Bearer ' + api_key()})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        data = json.loads(r.read().decode('utf-8'))
-    return data['choices'][0]['message']['content'].strip()
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            data = json.loads(r.read().decode('utf-8'))
+    except Exception as e:
+        _conv_append(tag, model, messages, None, err=repr(e))
+        raise
+    content = data['choices'][0]['message']['content'].strip()
+    _conv_append(tag, model, messages, content)
+    return content
 
 
 def ask(sys_txt, user_txt, model=DEFAULT_MODEL, timeout=120,
-        temperature=0.4, max_tokens=1200):
+        temperature=0.4, max_tokens=1200, tag=''):
     """安全封装: 返回 (ok, text); 任何异常返回 (False, 原因), 永不抛出。"""
     if not api_key():
         return False, 'no_key'
     try:
-        t0 = time.time()
         resp = chat_once([{'role': 'system', 'content': sys_txt},
                           {'role': 'user', 'content': user_txt}],
                          model=model, timeout=timeout,
-                         temperature=temperature, max_tokens=max_tokens)
+                         temperature=temperature, max_tokens=max_tokens, tag=tag)
         return True, resp
     except Exception as e:
         return False, f"{type(e).__name__}: {e}"
@@ -184,7 +243,8 @@ def gen_candidates(diag_txt, cfg_txt, n=10, model=DEFAULT_MODEL):
         f"本代搜索策略:\n{cfg_txt}\n\n"
         "请给机制族假设(hyp)并据此生成表达式(8~16条), 严格 JSON。")
     ok, resp = ask(GEN_SYSTEM, user_txt, model=model,
-                   max_tokens=1800, temperature=0.7)
+                   max_tokens=1800, temperature=0.7,
+                   tag='A角生成侧引导(gen_candidates)')
     if not ok:
         return False, resp
     d = _extract_json(resp)
@@ -199,7 +259,8 @@ def jury_verdict(expr, stat_txt, model=DEFAULT_MODEL):
     user_txt = (f"候选表达式: {expr}\n\n候选结构统计:\n{stat_txt}\n\n"
                 "给出你的 PASS/KILL 判断(严格 JSON)。")
     ok, resp = ask(JURY_SYSTEM, user_txt, model=model,
-                   timeout=90, max_tokens=300, temperature=0.2)
+                   timeout=90, max_tokens=300, temperature=0.2,
+                   tag='B角候选精判(jury_verdict)')
     if not ok:
         return False, resp
     d = _extract_json(resp)

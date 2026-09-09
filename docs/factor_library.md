@@ -5,7 +5,7 @@
 > 每代挖掘记录（诊断+B角建议）见 `docs/loop_journal.md`；每代 L2 费后明细流水（逐代累积、带 gen/cat/leaf 列，自 gen16 起）见 `docs/loop_archive.csv`；gen16 前旧快照见 `docs/loop_archive.legacy_pre_gen16.csv`。
 > **本文件只收录入库因子**，预计每数十轮才 +1 个，文件不会膨胀；round 流水永不并入本文件。
 >
-> 当前 **9 个入库**（截至 gen14，2026-09-08 23:00；分布 gen8×1 / gen10×3 / gen11×4 / gen14×1）
+> 当前 **9 个入库**（截至 gen22 收官，2026-09-09；分布 gen8×1 / gen10×3 / gen11×4 / gen14×1；整体复盘见 `loop_summary_2026-09-09.md`）
 
 ---
 

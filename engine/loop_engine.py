@@ -596,6 +596,15 @@ def run(args):
     t0 = time.time()
     rng = random.Random(args.seed)
     np.random.seed(args.seed)
+    # ---- LLM 对话录音: 本代 A角/B角 与 DeepSeek 的全部往返落盘(ai_test, gitignore) ----
+    # automation 无人值守, 人看不到实时 LLM 对话; 录音文件供跑代后随时回溯/本窗口转述。
+    try:
+        import loop_llm as _llm
+        _conv_dir = os.path.join(os.path.dirname(HERE), 'ai_test', 'loop_conv')
+        _llm.set_conv_path(os.path.join(_conv_dir, 'gen%02dC_conv.md' % args.gen))
+        print(f"  LLM 对话录音 -> ai_test/loop_conv/gen{args.gen:02d}C_conv.md", flush=True)
+    except Exception as _e:
+        print(f"  (LLM 对话录音初始化失败: {_e})", flush=True)
     base = base_fields()
     B, dates, cols, close = base['B'], base['dates'], base['cols'], base['close']
     T, S = close.shape

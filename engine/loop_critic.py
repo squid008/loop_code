@@ -256,10 +256,10 @@ def _deepseek_key():
     return api_key()
 
 
-def _chat_once(messages, timeout=120):
-    """单轮 DeepSeek chat 调用(委托 loop_llm.chat_once)"""
+def _chat_once(messages, timeout=120, tag=''):
+    """单轮 DeepSeek chat 调用(委托 loop_llm.chat_once; tag 进对话录音)"""
     from loop_llm import chat_once
-    return chat_once(messages, timeout=timeout)
+    return chat_once(messages, timeout=timeout, tag=tag)
 
 
 def _fmt_l1(l1, n=6):
@@ -333,7 +333,8 @@ def ai_review(diag, l1, l2, gen, journal_path, reasons=None, sug=None, force=Fal
     try:
         t0 = time.time()
         resp = _chat_once([{'role': 'system', 'content': sys_txt},
-                           {'role': 'user', 'content': user_txt}])
+                           {'role': 'user', 'content': user_txt}],
+                          tag='B角代末审查(ai_review)')
         cost = time.time() - t0
     except Exception as e:
         print(f"[AI审查] DeepSeek 调用失败({type(e).__name__}: {e}) -> 跳过, 沿用规则B角")
