@@ -59,7 +59,10 @@ L1_STOCKS = 2000          # L1 粗筛抽样的股票数(越小越快, 但IC估�
 L1_ROWS = None
 L1_COLS = None
 _LRU = {}                 # 跨批次复用子树求值结果(种子演化共享大量子树)
-LRU_MAX = 400
+LRU_MAX = 400             # L1 每批结束把 _LRU 裁到该条数上限(防 L1 段 OOM)
+CACHE2_MAX = 150          # 去相关/去重阶段 cache2 的子树缓存上限
+                          # (该段每候选只需算1次、无跨批复用, 缓存仅服务邻近候选共享,
+                          #  故宜小; 实测 gen37 该段无界累积导致内存从9G单调涨到20G+)
 
 
 def base_fields():
@@ -363,9 +366,46 @@ FAM_QUOTA = 2        # L1 同模板族候选进 L2/种子池上限
 FAM_BLOCK_THR = 0.5  # 上代 L1 同模板族占比 >= 该值 -> 本代生成端禁产该模板族
 
 
-def root_fam(node, cut=FAM_CUT):
+def sole_leaf(node):
+    """若 node 经"纯单目算子链"化简后恰为单一叶子, 返回该叶名; 否则 None。
+    ts_min20(cs_rank(barra_leverage)) -> 'barra_leverage'; div(leverage, gm) -> None。"""
+    cur = node
+    while isinstance(cur, Node) and cur.args:
+        if len(cur.args) != 1:
+            return None
+        cur = cur.args[0]
+    return cur.op if isinstance(cur, Node) else None
+
+
+def leaf_proxy_key(node):
+    """gen51 叶子代理族键: 顶层 max/min 若有一支经"纯单目算子链"化简后恰为单一叶子,
+    则该候选信息量≈该叶(numerically 也确如此: ts_min20(cs_rank(barra_leverage)) 与
+    barra_leverage 相关 0.997), 只是"某叶套壳+地板" -> 返回族键, 把"同叶不同壳"的候选
+    合并为一族, 由 fam_quota 拦重复(防不同外壳反复重发现同一叶、制造虚假多样性)。
+    键含另一支(地板)若为裸叶则一并纳入, 避免把不同地板结构误并。
+    返回 None 表示非叶子代理, 回落常规 root_fam 指纹。"""
+    if not isinstance(node, Node) or node.op not in ('max', 'min') or len(node.args) != 2:
+        return None
+    a, b = node.args
+    for inner, other in ((a, b), (b, a)):
+        if isinstance(inner, Node) and inner.args:
+            sl = sole_leaf(inner)
+            if sl is not None:
+                ol = other.op if (isinstance(other, Node) and not other.args) else ''
+                return '~' + sl + ('|' + ol if ol else '')
+    return None
+
+
+def root_fam(node, cut=FAM_CUT, use_sole=True):
     """模板族指纹: 叶子统一'X'(身份无关) + 窗口剥除 + 距根cut层以下折叠'#'。
-    mul(turnover,ts_min100(corr100(overnight, <任意深>))) 成员 -> 同一指纹, 判同族。"""
+    mul(turnover,ts_min100(corr100(overnight, <任意深>))) 成员 -> 同一指纹, 判同族。
+    gen51 起增补"单叶变换"维度: 顶层 max/min 的内层若只是某叶的单目变换(=叶子代理),
+    直接返回 '~<叶名>[|<地板叶>]' 作为族键 -> 同叶不同壳的代理候选合并同族。"""
+    if use_sole:
+        pk = leaf_proxy_key(node)
+        if pk is not None:
+            return pk
+
     def rec(nd, d):
         if not nd.args:
             return 'X'
@@ -376,11 +416,11 @@ def root_fam(node, cut=FAM_CUT):
     return rec(node, 0)
 
 
-def fam_quota_rows(rows, quota=FAM_QUOTA):
+def fam_quota_rows(rows, quota=FAM_QUOTA, use_sole=True):
     """score 降序的 L1 行上做模板族配额: 同族至多保留 quota 条(保跨族多样), 返回过滤后行集"""
     cnt, keep, n_block = {}, [], 0
     for _, r in rows.iterrows():
-        f = root_fam(r['node'])
+        f = root_fam(r['node'], use_sole=use_sole)
         c = cnt.get(f, 0)
         if c >= quota:
             n_block += 1
@@ -645,6 +685,14 @@ def perturb(node, rng):
 
 
 # ===================== 4. L1 批量 IC =====================
+def trim_cache(cache, cap):
+    """子树缓存容量控制: 条目超过 cap 时淘汰最早插入的键(dict 保插入序)。
+    子树缓存只是加速(命中失败会重算), 淘汰不影响正确性。"""
+    if cache is not None and len(cache) > cap:
+        for k in list(cache.keys())[:len(cache) - cap]:
+            cache.pop(k, None)
+
+
 def rank_rows(X):
     """逐行排名(0~1), NaN 置 NaN; 用两次 argsort"""
     Xf = np.where(np.isfinite(X), X, np.inf)
@@ -672,6 +720,29 @@ def factor_stability(V, dates=None, start=START, fwd=FWD):
         if sa > 0 and sb > 0:
             cs.append(np.corrcoef(a[m], b[m])[0, 1])
     return float(np.nanmean(cs)) if cs else np.nan
+
+
+def seg_verify(ex, k=3, need=2, min_pts=40):
+    """分段独立验证(防"单段行情撑全样本"的伪稳健):
+    把费后日度超额序列按时间均分 k 个不相交子区间, 每段累计费后超额>0 记 1 段达标,
+    达标段数 >= need 才通过。数据太短不足以分段时保守放行(避免小样本误杀),
+    但入库文档会以 seg_na 标注"未分段(样本不足)"。
+    返回 (ok, n_pos, n_k, detail)。detail 形如 '段1+1.2%/段2-0.4%/段3+0.8%'。
+    """
+    if ex is None or len(ex) < k * min_pts:
+        return True, -1, k, '未分段(样本不足)'
+    need = min(need, k)          # 参数自洽: need 不能大于段数
+    segs = np.array_split(ex, k)
+    pos, n_pos = 0, []
+    detail = []
+    for i, s in enumerate(segs, 1):
+        s = pd.Series(s).dropna()
+        cum = float((1 + s).prod() - 1) if len(s) else float('nan')
+        n_pos.append(cum)
+        detail.append(f"段{i}{cum*100:+.1f}%")
+        if cum > 0:
+            pos += 1
+    return (pos >= need), pos, k, '/'.join(detail)
 
 
 def batch_ic(Fs, fwd_ret, U, dates=None, start=START):
@@ -992,11 +1063,10 @@ def run(args):
         n_eval += len(vals)
         del vals, IC
         gc.collect()
-        if len(_LRU) > LRU_MAX:                        # LRU 容量控制(防OOM)
-            for k in list(_LRU.keys())[:len(_LRU) - LRU_MAX]:
-                _LRU.pop(k, None)
+        trim_cache(_LRU, LRU_MAX)                      # LRU 容量控制(防OOM)
     print(f"L1 求值完成 {n_eval} 个, 用时 {time.time()-t_l1:.0f}s "
           f"({(time.time()-t_l1)/max(n_eval,1):.2f}s/候选)")
+    _LRU.clear()                                       # L1 结束: 释放跨批子树缓存
     l1 = pd.DataFrame(stats)
     # 失败模式库: IC/稳定性不过线的候选按骨架记失败(过线者待 L2 后记 ok)
     for r_ in stats:
@@ -1048,6 +1118,7 @@ def run(args):
                 mx = max(mx, c if np.isfinite(c) else 0.0)
             if mx <= args.decorr:
                 keep_rows.append(r)
+            trim_cache(cache2, CACHE2_MAX)             # 去相关缓存容量控制(防OOM)
         print(f"去相关(|corr|<={args.decorr} vs {len(Kr)}个已知因子) 后剩 "
               f"{len(keep_rows)} 个 (原 {len(l1)})")
         if keep_rows:
@@ -1057,9 +1128,13 @@ def run(args):
     l1['turn_est'] = 1.0 - l1['stab']
     l1['score'] = l1['ic_ir'].abs() * (0.25 + 0.75 * l1['stab'].clip(0, 1))
     l1 = l1.sort_values('score', ascending=False)
-    # 数值等价去重(只对 TopN 做, 用采样指纹加速, 否则 O(n^2) 跑不动)
+    # 数值近重复去重(只对 TopN 做, 用采样指纹加速, 否则 O(n^2) 跑不动)
+    # gen51: 阈值 0.99 -> args.dedup_corr(默认0.85)。0.99 过松: 实测同代 F20~F23 两两
+    # |corr| 0.93/0.88 全数放行(4 个近重复因子同代入库)。标定: 全库 23 因子在此口径下
+    # 仅这两对>0.85(其余<=0.744) -> 0.85 既能拦下两对、又不误杀历史入库因子。
     TOPN = min(len(l1), args.dedup_n)
     dedup, seen_v = [], []
+    n_dup = 0
     samp = slice(None, None, max(1, 418 // args.dedup_days))   # 抽样调仓日
     cache2 = {}
     for _, r in l1.head(TOPN).iterrows():
@@ -1072,27 +1147,34 @@ def run(args):
             m = np.isfinite(v) & np.isfinite(w)
             if m.sum() < 100:
                 continue
-            if abs(np.corrcoef(v[m], w[m])[0, 1]) > 0.99:
+            if abs(np.corrcoef(v[m], w[m])[0, 1]) > args.dedup_corr:
                 dup = True
                 break
         if not dup:
             seen_v.append(v)
             dedup.append(r)
-    print(f"\nL1 通过 {len(l1)} 个, 取Top{TOPN}去重后 {len(dedup)} 个")
+        else:
+            n_dup += 1
+        trim_cache(cache2, CACHE2_MAX)                 # 去重缓存容量控制(防OOM)
+    print(f"\nL1 通过 {len(l1)} 个, 取Top{TOPN}近重复去重(|corr|>{args.dedup_corr:g})"
+          f"拦 {n_dup} -> 剩 {len(dedup)} 个")
     l1 = pd.DataFrame(dedup) if dedup else l1.head(TOPN)
     print(l1[['expr', 'ic', 'ic_ir', 'stab']].head(15).round(4).to_string(index=False))
     # ---- 结构族配额(QuantaAlpha 冗余检测移植, gen31) ----
-    # 数值去重(|corr|>0.99) 只拦"数值等价"; FSA 冻结只拦"完整串复用"。同族"外层模板固定、
-    # 内层微调"的候选(score 各异、公共结构巨大)会继续挤满 L2 名额与下代种子池, 费后全灭 ->
+    # 数值去重(|corr|>dedup_corr) 只拦"数值近重复"; FSA 冻结只拦"完整串复用"。同族"外层模板
+    # 固定、内层微调"的候选(score 各异、公共结构巨大)会继续挤满 L2 名额与下代种子池, 费后全灭 ->
     # 每模板族最多放 fam_quota 条进 L2/种子池(保结构多样性), FSA/下代种子池因此天然跨族。
+    # gen51: 族指纹增补"单叶变换"维度(floor_sole_leaf) -> max(<某叶单目变换>, <地板>) 的
+    # "同叶不同壳"代理候选归为同族, 由配额拦重复(防 F23 型"leverage 套壳+地板"反复重发现)。
     fam_blocked = 0
     if args.fam_quota > 0 and len(l1):
         n_pre = len(l1)
-        l1, nfam, n_blocked = fam_quota_rows(l1, quota=args.fam_quota)
+        l1, nfam, n_blocked = fam_quota_rows(l1, quota=args.fam_quota,
+                                             use_sole=args.fam_sole)
         fam_blocked = n_blocked
         if n_blocked:
-            print(f"  [族配额] 模板族 {nfam} 个 -> 结构冗余拦 {n_blocked}/{n_pre} "
-                  f"(剩 {len(l1)}, 每族<={args.fam_quota})")
+            print(f"  [族配额] 模板族 {nfam} 个(含单叶变换维度={'开' if args.fam_sole else '关'})"
+                  f" -> 结构冗余拦 {n_blocked}/{n_pre} (剩 {len(l1)}, 每族<={args.fam_quota})")
 
     # ---- FSA 骨架统计(对齐中金: 抽象因子结构/剥离窗口参数) ----
     # 观察样本 = 本代L1通过者 + 前50候选; 统计对象 = 非叶子结构骨架(剥掉窗口数字)
@@ -1143,6 +1225,7 @@ def run(args):
     top = l1.head(args.l2)
     print(f"\nL2 费后精筛 {len(top)} 个 ...")
     rows = []
+    seg_ok_list = []   # 与 rows 同步, 供 critic 统计 seg_kill(不入 archive 表头)
     for j, (_, r) in enumerate(top.iterrows(), 1):
         nd = r['node']
         try:
@@ -1152,7 +1235,7 @@ def run(args):
             fac = pd.DataFrame(v, index=dates, columns=cols)
             f = cs_rank(fac.astype('float64'))
             rr = evaluate_real(f, close, str(nd), cost=args.cost,
-                               window=args.window)
+                               window=args.window, with_ex=True)
             del f
             gc.collect()
         except Exception as e:
@@ -1165,6 +1248,14 @@ def run(args):
         from factor_miner import pass_filter
         ok, _ = pass_filter(rr, args.min_ic)
         ok = ok and rr['calmar'] > args.min_calmar and rr['sharpe'] > 0.5
+        # ★分段独立验证(防伪衰减): 把费后日超额序列均分 N 个不相交子区间,
+        #   各段须同号(累计费后超额>0)的段数达标才通过 —— 拦"靠单段大行情撑
+        #   全样本高t、一出该段即失效"的候选(F12 型)。样本不足自动放行不误杀。
+        seg_ok, n_seg_pos, n_seg_k, seg_txt = (True, -1, args.seg_n, 'off')
+        if args.seg_n > 1:
+            seg_ok, n_seg_pos, n_seg_k, seg_txt = seg_verify(
+                rr.get('ex'), args.seg_n, args.seg_need)
+            ok = ok and seg_ok
         leaf_s, cat_s = leaf_parts(nd)
         rows.append(dict(expr=str(nd), cat=cat_s, leaf=leaf_s,
                          window=args.window, cost=args.cost,
@@ -1174,11 +1265,13 @@ def run(args):
                          turn=rr.get('turn', np.nan),
                          neg_yr=sum(1 for v in yr.values() if v <= 0),
                          passed=ok))
+        seg_ok_list.append(seg_ok)
         print(f"  [{j}] IC={rr['ic']:+.4f} 费后超额={rr['ann_ex']*100:+6.2f}% "
               f"Calmar={rr['calmar'] if rr['calmar'] else 0:5.2f} "
               f"夏普={rr['sharpe']:5.2f} 换手={rr.get('turn', np.nan)*100:4.1f}% "
               f"负年{sum(1 for v in yr.values() if v <= 0)} "
               f"[cost={args.cost*1000:.1f}bp/边 win={args.window}] "
+              f"分段{seg_txt} "
               f"{'PASS' if ok else ''}")
     res = pd.DataFrame(rows)
     # 失败模式库: L2 费后结果落地成败(中金: 失败表达式写入失败库, 生成阶段排除)
@@ -1203,7 +1296,11 @@ def run(args):
 
     # ---- B角: 诊断本代 + 给出下一代策略 + 写日志 ----
     import loop_critic as critic
-    diag = critic.diagnose(l1, res if len(res) else None, args.gen)
+    # 给 critic 的副本附 seg_ok 列(不进 archive, 避免破坏累积流水表头)
+    res_c = res.copy() if len(res) else res
+    if len(seg_ok_list) == len(res_c):
+        res_c['seg_ok'] = seg_ok_list
+    diag = critic.diagnose(l1, res_c if len(res_c) else None, args.gen)
     diag['fam_blocked'] = fam_blocked
     next_cfg, reasons = critic.suggest(diag, cfg)
     print("\n[B角建议] 下一代:")
@@ -1223,7 +1320,7 @@ def run(args):
     # ---- B角 LLM 审查(DeepSeek, --ai_critic auto/on/off, 默认auto=有key即启用) ----
     ai = getattr(args, 'ai_critic', 'auto')
     if ai != 'off':
-        critic.ai_review(diag, l1, res if len(res) else None, args.gen,
+        critic.ai_review(diag, l1, res_c if len(res_c) else None, args.gen,
                          JOURNAL, reasons=reasons, sug=next_cfg, force=(ai == 'on'))
 
     # ---- 保存状态 ----
@@ -1544,6 +1641,9 @@ if __name__ == '__main__':
                     help='L1 每批候选数(控内存: 每个(T,S)面板约71MB)')
     ap.add_argument('--dedup_n', type=int, default=70)
     ap.add_argument('--dedup_days', type=int, default=60)
+    ap.add_argument('--dedup_corr', type=float, default=0.85,
+                    help='同代数值近重复去重阈值: L1 TopN 内两两 rank|corr|>该值则丢弃后者; '
+                         'gen51 由硬编码 0.99 放宽到此(0.99 拦不住 0.88~0.93 的近重复因子)')
     ap.add_argument('--decorr', type=float, default=-1,
                     help='与已知因子(ln_mktcap/amt_log)的最大|corr|, 超过则丢弃; '
                          '负数=跟随B角建议, 0=关闭')
@@ -1590,9 +1690,19 @@ if __name__ == '__main__':
     ap.add_argument('--fam_block_thr', type=float, default=FAM_BLOCK_THR,
                     help='结构族黑名单: 上代L1同模板族占比>=该值则本代生成端禁产该模板族'
                          '(强制结构换血); 0=关闭')
+    ap.add_argument('--fam_sole', type=int, default=1,
+                    help='族指纹是否并入"单叶变换"维度(gen51 叶子代理闸门): 顶层 max/min 的'
+                         '内层若只是某叶的单目变换(如 ts_min20(cs_rank(barra_leverage))≡leverage), '
+                         '族键追加 |~<叶名> -> 同叶不同壳的代理候选判同族、按 fam_quota 拦重复; 0=关闭')
     ap.add_argument('--seed', type=int, default=42)
     ap.add_argument('--cost', type=float, default=COST_PRESETS['单边千1.5'],
                     help=f'往返成本, 默认单边千1.5=0.004; 档位: {COST_PRESETS}')
     ap.add_argument('--window', choices=['full', 'recent600'], default='full',
                     help='回测口径: full=2018起九年; recent600=最近600交易日(中金口径)')
+    ap.add_argument('--seg_n', type=int, default=3,
+                    help='分段独立验证: 费后日超额序列均分成多少个不相交子区间; '
+                         '0/1=关闭(默认3: 约3年一段); 样本不足自动放行不误杀')
+    ap.add_argument('--seg_need', type=int, default=2,
+                    help='分段独立验证: 至少几个子区间累计费后超额>0 才通过 '
+                         '(默认2: 3段中≥2段为正, 拦"靠单段行情撑全样本"候选)')
     run(ap.parse_args())

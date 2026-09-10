@@ -4,7 +4,7 @@
 
 ## 目录结构
 - `engine/` — **Loop 挖掘引擎（可独立运行，相互引用均用相对自身路径）**
-  - `loop_engine.py` 主引擎（五维演化 + 跨量纲审查 + 失败模式库 + FSA 冻结 + 两级筛选 + 费后验证）
+  - `loop_engine.py` 主引擎（五维演化 + 跨量纲审查 + 失败模式库 + FSA 冻结 + 结构族/叶子代理闸门 + 同代近重复去重 + 两级筛选 + 费后验证）
   - `loop_critic.py` B角诊断（每代自动写 gen 建议进 journal）+ `loop_llm.py` LLM 双子（A角语义引导 / B角候选审查 / 代末 AI 审查）
   - `loop_watch.py` 常驻接力进程（每 5min 轮询，空闲自动启下一代，支持无人值守多代跑）
   - `loop_status.py` 进度/进程/档案查询
@@ -52,5 +52,6 @@ D:\miniconda3\envs\rqdata\python.exe all04.py
 
 ## 说明
 - 引擎所有文件读写都相对 `engine/` 定位，`loop_code` 可整体搬移；唯一外部依赖是 `E:\rq` 数据盘。
-- `loop_state.pkl` 基线为 **gen22 收官态**（2026-09-09 手动收官；入库因子 9 → 补录 gen23 后当前 11 / 种子 30 / 冻结骨架 3 / L1 累计已测 12133 候选）；扩叶子池(54)落地后自 **gen23 重启**。重启后 gen23~25 已完成、watcher 无人值守自动接力 **gen26**（实时接力事件见 `engine/loop_watcher.log`）。整体复盘/叶子扩展已并入 `docs/factor_roadmap.md` 附录 A/B，入库因子见 `docs/factor_library.md`。
+- `loop_state.pkl` 为滚动态：**gen23 起 watcher 无人值守接力，已跑至 gen50 达标收官（2026-09-10）**，入库因子 **23**（F01~F23）。整体复盘见 `docs/factor_roadmap.md` 附录 A/B + Round27；入库因子明细见 `docs/factor_library.md`；逐代诊断见 `docs/loop_journal.md`。
+- **gen51 起新增两道抗冗余闸门**（治 gen50 同代近重复 F20~F23）：`--dedup_corr`（默认 0.85，同代 L1 TopN 两两 |rank corr| 超阈即丢弃后者）+ `--fam_sole`（默认开，族指纹并入"单叶变换"维度把"同叶不同壳"的叶子代理候选归同族）。标定/验证见 `ai_test/calib_gates.py` / `verify_gates.py`，冒烟 `ai_test/qa_fam_smoke.py`。
 - 数据文件（*.h5/*.pkl）体积大且可由 `build_*.py` 重建，git 入库时按 `.gitignore` 排除。

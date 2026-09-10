@@ -96,9 +96,15 @@ def diagnose(l1, l2, gen, verbose=True):
             d['fail_negyear'] = float((fail['neg_yr'] > 1).mean())
             d['fail_lastyr'] = float((fail['last_yr'] <= 0).mean())
             d['fail_ic'] = float((fail['ic'] < 0.02).mean())
+            # 分段独立验证击杀(基础指标可能全达标, 仅因某段失效被拦; 缺失则=0)
+            if 'seg_ok' in l2.columns:
+                d['seg_kill'] = float((l2['seg_ok'] == False).mean())
+            else:
+                d['seg_kill'] = 0.0
         else:
             for k in ['fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic']:
                 d[k] = 0.0
+            d['seg_kill'] = 0.0
     if verbose:
         print("\n" + "=" * 74)
         print(f"[B角诊断] 第 {gen} 代")
@@ -216,7 +222,8 @@ def report(diag, sug, reasons, path):
     keys = ['n_l1', 'ic_med', 'ic_max', 'stab_med', 'stab_lt50',
             'leaf_conc', 'struct_div', 'fam_blocked', 'known_ratio',
             'n_l2', 'n_pass', 'ex_max',
-            'fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic']
+            'fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic',
+            'seg_kill']
     present = [k for k in keys if k in diag]
 
     def _fmt(k):
@@ -308,7 +315,8 @@ def ai_review(diag, l1, l2, gen, journal_path, reasons=None, sug=None, force=Fal
         return 'no_key'
     keys = ['n_l1', 'ic_med', 'ic_max', 'stab_med', 'stab_lt50', 'leaf_conc',
             'struct_div', 'fam_blocked', 'known_ratio', 'n_l2', 'n_pass', 'ex_max',
-            'fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic']
+            'fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic',
+            'seg_kill']
     stat = ', '.join(f"{k}={diag.get(k):.3f}" if isinstance(diag.get(k), float)
                      else f"{k}={diag.get(k)}" for k in keys if k in diag)
     leaf_hist = diag.get('leaf_hist')

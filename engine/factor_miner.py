@@ -173,7 +173,7 @@ def get_tradability():
 
 
 def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
-                  window='full'):
+                  window='full', with_ex=False):
     """【可实现性版检验(费后)】与 evaluate() 的差别:
       1. T+1 买入日: 剔除涨停/停牌 -> 买不进的不算
       2. 卖出日: 跌停/停牌则顺延到下一个可卖日(实盘卖不出的真实处理)
@@ -181,6 +181,9 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
       4. cash: 仓位现金比例(等权时为1.0; 若策略留5%现金, 传0.95)
       5. window: 'full'=START(2018)起九年口径; 'recent600'=最近600交易日
          (对齐中金研报口径: 回测只用最近600日, 过滤只要求最近2年正)
+      6. with_ex: 默认False(行为/返回结构完全不变); True时额外返回 'ex'=
+         费后日度超额序列(每换仓期一条), 供上层做【分段独立验证】——
+         把该序列按时间均分成K个不相交子区间, 各段须方向同号稳定。
     其余(IC/分组/年度)与 evaluate 一致, 便于对照。
     """
     TR = get_tradability()
@@ -289,6 +292,7 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
         'yr': yr_ex, 'last_yr': yr_ex.get(recent, np.nan),
         'last2_yr': yr_ex.get(recent_2, np.nan), 'n_rebal': len(tr),
         'turn': float(np.mean(turns)) if turns else np.nan,
+        **({'ex': ex} if with_ex else {}),
     }
 
 

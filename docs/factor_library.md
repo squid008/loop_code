@@ -2,10 +2,13 @@
 
 > 收录 **Loop 引擎**（`engine/loop_engine.py`）逐代挖掘、通过 L1+L2 费后全部门槛并**入库**的因子。
 > 入库口径：区间 2018 起、成本单边千一、费后 Calmar>0.5、|IC|>0.02、换手与方向经 L2 校验、与已入库因子去相关 |rank corr|<0.65、骨架不重复。
+> 自 gen34 起新增 **分段独立验证**：L2 费后日度超额序列按时间均分 3 个不相交子区间（约 3 年/段），
+> 要求 ≥2 段各自累计费后超额 >0 —— 拦"靠单段大行情撑全样本高 t、行情一过即失效"的伪稳健候选
+> （防数据窥探/伪衰减）；样本不足以分段时自动放行不误杀。开关：`--seg_n 3 --seg_need 2`。
 > 每代挖掘记录（诊断+B角建议）见 `docs/loop_journal.md`；每代 L2 费后明细流水（逐代累积、带 gen/cat/leaf 列，自 gen16 起）见 `docs/loop_archive.csv`；gen16 前旧快照已归 `docs/history/loop_archive.legacy_pre_gen16.csv`。
 > **本文件只收录入库因子**，预计每数十轮才 +1 个，文件不会膨胀；round 流水永不并入本文件。
 >
-> 当前 **11 个入库**（截至 gen23，2026-09-09；分布 gen8×1 / gen10×3 / gen11×4 / gen14×1 / gen23×2）。
+> 当前 **23 个入库**（截至 gen50，2026-09-10；gen8×1 / gen10×3 / gen11×4 / gen14×1 / gen23×2 / gen31×1 / gen33×1 / gen43×3 / gen45×3 / gen50×4）。
 > 运行期起：引擎在每代入库（`state.bank` append）时**自动同步追加**新因子条目（gen24 后的入库代次生效），家族/一句话命名随时可人工精炼覆盖。
 
 ---
@@ -25,10 +28,30 @@
 | F09 | gen14 | 换手×量×价格 深度交叉 | 深度5、混入 mktcap/close/open | 已入库 |
 | F10 | gen23 | 量价背离·影线强度综合 | corr100(up_shadow,ln_volume)/turnover，融合真实波幅/日内 对数合成 | 已入库 |
 | F11 | gen23 | 日内强度密度 | hl_ratio/low × intraday² × ret（ts_mean60） | 已入库 |
+| F12 | gen31 | 跳空、影线、财报、成交额 | div(ts_min100(corr100(overnight, ts_std60… | 已入库(auto) |
+| F13 | gen33 | 风格、风格 | ts_delay1(add(barra_residual_volatility, … | 已入库(auto) |
+| F14 | gen43 | 风格、量 | add(log(barra_non_linear_size), ts_std150… | 已入库(auto) |
+| F15 | gen43 | 成交额、风格、风格、振幅 | ts_mean20(ts_mean60(sub(corr100(turnover,… | 已入库(auto) |
+| F16 | gen43 | 成交额、风格、风格、振幅 | neg(ts_mean100(ts_mean60(sub(corr100(turn… | 已入库(auto) |
+| F17 | gen45 | 财报、财报、风格、振幅 | add(ts_mean100(corr100(corr100(fa_ocf_yoy… | 已入库(auto) |
+| F18 | gen45 | 财报、财报、风格、收益率 | add(ts_mean100(corr100(corr100(fa_ocf_yoy… | 已入库(auto) |
+| F19 | gen45 | 资金流、量、资金流、风格 | max(ts_min20(cs_rank(div(mf_s_buy, ts_min… | 已入库(auto) |
+| F20 | gen50 | 风格、财报、风格 | max(ts_mean120(cs_rank(div(barra_leverage… | 已入库(auto) |
+| F21 | gen50 | 风格、风格、财报、财报 | max(add(barra_residual_volatility, barra_… | 已入库(auto) |
+| F22 | gen50 | 财报、风格、风格 | max(ts_min20(cs_rank(add(fa_ocf_yoy, barr… | 已入库(auto) |
+| F23 | gen50 | 风格、风格 | max(ts_min20(cs_rank(barra_leverage)), ba… | 已入库(auto) |
 
 > ⚠️ F02/F05~F08 为**同一骨架（hl_ratio×turn_ratio）不同窗口**，gen11 后 bank 一度 5/8 同骨架——
 > 正是这触发了 Round24 的 **FSA 骨架冻结**（同骨架 ≤1）与 decorr 收紧，后续不再收同类变体。
 > F10/F11 为 gen23（8:25 手动中断前 L2 已跑完）入库、收官文档封版于 gen22 未收录；2026-09-09 由引擎状态核对后补录。
+>
+> ⚠️ **F20~F23（gen50 同代入库 4 个）为近重复因子**：F20↔F23 |corr|=0.932、F21↔F22=0.879，
+> 顶层骨架均为 `max(<内层>, barra_residual_volatility)`。复盘确认真因是**共享主导叶**
+> （F23 内层 ≡ barra_leverage，相关 0.997；F20 内层 0.786；F21/F22 共享 fa_ocf_yoy）
+> 而非"地板效应"（剔除 resvol 后仍 0.894 / 非坍缩子样本 0.856）。此事件直接催生
+> **gen51 双闸门**（同代近重复去重 `--dedup_corr` + 叶子代理族 `--fam_sole`），
+> 详见 `docs/loop_journal.md` 末节与 `docs/factor_roadmap.md` Round27。**F20~F23 保留入库，
+> 但按去重口径应仅 2 个有效**，使用该库时须注意此冗余。
 
 ---
 
@@ -113,6 +136,129 @@ ts_mean60(mul(div(hl_ratio, low), mul(mul(intraday, ret), intraday)))
 - 备注：同代入库（bank 10→11）；构造明显区别于历史 9 只的"波动/换手稳定"族
 
 ---
+
+### F12 · gen31 入库（引擎自动同步，家族命名待人工精炼）
+```
+div(ts_min100(corr100(overnight, ts_std60(div(corr100(up_shadow, div(fa_roe, turnover)), turnover)))), turnover)
+```
+- 家族：跳空、影线、财报、成交额（auto）
+- 叶子：overnight、up_shadow、fa_roe、turnover
+- 骨架：`div(ts_min(corr(overnight,ts_std(div(corr(up_shadow,div(fa_roe,turnover)),turnover)))),turnover)`
+- 费后指标（full，成本 4bp/边）：IC 0.0607 / IC_IR 0.586 / 年化超额 +5.3% / 回撤 -9.2% / Calmar 0.576 / Sharpe 0.794 / 最近年 +0.7% / 单期换手 35.7% / 负年 2
+
+---
+
+
+### F13 · gen33 入库（引擎自动同步，家族命名待人工精炼）
+```
+ts_delay1(add(barra_residual_volatility, barra_non_linear_size))
+```
+- 家族：风格、风格（auto）
+- 叶子：barra_residual_volatility、barra_non_linear_size
+- 骨架：`ts_delay(add(barra_residual_volatility,barra_non_linear_size))`
+- 费后指标（full，成本 4bp/边）：IC 0.0743 / IC_IR 0.627 / 年化超额 +14.7% / 回撤 -19.5% / Calmar 0.750 / Sharpe 1.460 / 最近年 +3.7% / 单期换手 12.0% / 负年 1
+
+---
+
+
+### F14 · gen43 入库（引擎自动同步，家族命名待人工精炼）
+```
+add(log(barra_non_linear_size), ts_std150(ts_delay1(ts_sum20(ln_volume))))
+```
+- 家族：风格、量（auto）
+- 叶子：barra_non_linear_size、ln_volume
+- 骨架：`add(log(barra_non_linear_size),ts_std(ts_delay(ts_sum(ln_volume))))`
+- 费后指标（full，成本 4bp/边）：IC 0.0390 / IC_IR 0.446 / 年化超额 +4.8% / 回撤 -9.4% / Calmar 0.507 / Sharpe 0.849 / 最近年 +3.6% / 单期换手 9.5% / 负年 1
+
+### F15 · gen43 入库（引擎自动同步，家族命名待人工精炼）
+```
+ts_mean20(ts_mean60(sub(corr100(turnover, barra_non_linear_size), sub(barra_residual_volatility, true_range))))
+```
+- 家族：成交额、风格、风格、振幅（auto）
+- 叶子：turnover、barra_non_linear_size、barra_residual_volatility、true_range
+- 骨架：`ts_mean(ts_mean(sub(corr(turnover,barra_non_linear_size),sub(barra_residual_volatility,true_range))))`
+- 费后指标（full，成本 4bp/边）：IC 0.0430 / IC_IR 0.412 / 年化超额 +5.2% / 回撤 -10.2% / Calmar 0.507 / Sharpe 0.902 / 最近年 +1.7% / 单期换手 8.3% / 负年 2
+
+### F16 · gen43 入库（引擎自动同步，家族命名待人工精炼）
+```
+neg(ts_mean100(ts_mean60(sub(corr100(turnover, barra_non_linear_size), sub(barra_residual_volatility, true_range)))))
+```
+- 家族：成交额、风格、风格、振幅（auto）
+- 叶子：turnover、barra_non_linear_size、barra_residual_volatility、true_range
+- 骨架：`neg(ts_mean(ts_mean(sub(corr(turnover,barra_non_linear_size),sub(barra_residual_volatility,true_range)))))`
+- 费后指标（full，成本 4bp/边）：IC 0.0377 / IC_IR 0.382 / 年化超额 +5.7% / 回撤 -8.0% / Calmar 0.720 / Sharpe 1.018 / 最近年 +3.5% / 单期换手 6.2% / 负年 0
+
+---
+
+
+### F17 · gen45 入库（引擎自动同步，家族命名待人工精炼）
+```
+add(ts_mean100(corr100(corr100(fa_ocf_yoy, fa_gm), barra_residual_volatility)), max(ts_rank200(ts_max100(amplitude)), barra_residual_volatility))
+```
+- 家族：财报、财报、风格、振幅（auto）
+- 叶子：fa_ocf_yoy、fa_gm、barra_residual_volatility、amplitude
+- 骨架：`add(ts_mean(corr(corr(fa_ocf_yoy,fa_gm),barra_residual_volatility)),max(ts_rank(ts_max(amplitude)),barra_residual_volatility))`
+- 费后指标（full，成本 4bp/边）：IC 0.0528 / IC_IR 0.641 / 年化超额 +4.1% / 回撤 -4.7% / Calmar 0.874 / Sharpe 0.959 / 最近年 +1.7% / 单期换手 12.9% / 负年 1
+
+### F18 · gen45 入库（引擎自动同步，家族命名待人工精炼）
+```
+add(ts_mean100(corr100(corr100(fa_ocf_yoy, fa_gm), add(barra_residual_volatility, fa_ocf_yoy))), max(ret, barra_residual_volatility))
+```
+- 家族：财报、财报、风格、收益率（auto）
+- 叶子：fa_ocf_yoy、fa_gm、barra_residual_volatility、ret
+- 骨架：`add(ts_mean(corr(corr(fa_ocf_yoy,fa_gm),add(barra_residual_volatility,fa_ocf_yoy))),max(ret,barra_residual_volatility))`
+- 费后指标（full，成本 4bp/边）：IC 0.0531 / IC_IR 0.603 / 年化超额 +3.5% / 回撤 -6.2% / Calmar 0.568 / Sharpe 0.959 / 最近年 +6.3% / 单期换手 13.0% / 负年 1
+
+### F19 · gen45 入库（引擎自动同步，家族命名待人工精炼）
+```
+max(ts_min20(cs_rank(div(mf_s_buy, ts_min20(ts_std200(corr200(ln_volume, mf_s_bqty)))))), barra_residual_volatility)
+```
+- 家族：资金流、量、资金流、风格（auto）
+- 叶子：mf_s_buy、ln_volume、mf_s_bqty、barra_residual_volatility
+- 骨架：`max(ts_min(cs_rank(div(mf_s_buy,ts_min(ts_std(corr(ln_volume,mf_s_bqty)))))),barra_residual_volatility)`
+- 费后指标（full，成本 4bp/边）：IC 0.0644 / IC_IR 0.576 / 年化超额 +5.0% / 回撤 -7.7% / Calmar 0.643 / Sharpe 0.894 / 最近年 +3.6% / 单期换手 15.4% / 负年 2
+
+---
+
+
+### F20 · gen50 入库（引擎自动同步，家族命名待人工精炼）
+```
+max(ts_mean120(cs_rank(div(barra_leverage, fa_gm))), barra_residual_volatility)
+```
+- 家族：风格、财报、风格（auto）
+- 叶子：barra_leverage、fa_gm、barra_residual_volatility
+- 骨架：`max(ts_mean(cs_rank(div(barra_leverage,fa_gm))),barra_residual_volatility)`
+- 费后指标（full，成本 4bp/边）：IC 0.0562 / IC_IR 0.707 / 年化超额 +6.7% / 回撤 -7.4% / Calmar 0.907 / Sharpe 1.415 / 最近年 +2.7% / 单期换手 10.2% / 负年 1
+
+### F21 · gen50 入库（引擎自动同步，家族命名待人工精炼）
+```
+max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_ocf_yoy, fa_gm))), barra_residual_volatility))
+```
+- 家族：风格、风格、财报、财报（auto）
+- 叶子：barra_residual_volatility、barra_leverage、fa_ocf_yoy、fa_gm
+- 骨架：`max(add(barra_residual_volatility,barra_leverage),max(ts_min(cs_rank(div(fa_ocf_yoy,fa_gm))),barra_residual_volatility))`
+- 费后指标（full，成本 4bp/边）：IC 0.0525 / IC_IR 0.708 / 年化超额 +5.5% / 回撤 -6.4% / Calmar 0.868 / Sharpe 1.310 / 最近年 +0.4% / 单期换手 13.2% / 负年 0
+
+### F22 · gen50 入库（引擎自动同步，家族命名待人工精炼）
+```
+max(ts_min20(cs_rank(add(fa_ocf_yoy, barra_leverage))), barra_residual_volatility)
+```
+- 家族：财报、风格、风格（auto）
+- 叶子：fa_ocf_yoy、barra_leverage、barra_residual_volatility
+- 骨架：`max(ts_min(cs_rank(add(fa_ocf_yoy,barra_leverage))),barra_residual_volatility)`
+- 费后指标（full，成本 4bp/边）：IC 0.0527 / IC_IR 0.689 / 年化超额 +4.8% / 回撤 -6.9% / Calmar 0.699 / Sharpe 1.230 / 最近年 +0.8% / 单期换手 13.2% / 负年 0
+
+### F23 · gen50 入库（引擎自动同步，家族命名待人工精炼）
+```
+max(ts_min20(cs_rank(barra_leverage)), barra_residual_volatility)
+```
+- 家族：风格、风格（auto）
+- 叶子：barra_leverage、barra_residual_volatility
+- 骨架：`max(ts_min(cs_rank(barra_leverage)),barra_residual_volatility)`
+- 费后指标（full，成本 4bp/边）：IC 0.0535 / IC_IR 0.653 / 年化超额 +4.8% / 回撤 -8.9% / Calmar 0.532 / Sharpe 1.042 / 最近年 +2.9% / 单期换手 10.2% / 负年 1
+
+---
+
 
 ## 相关文件导航
 

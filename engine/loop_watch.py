@@ -1,11 +1,11 @@
 # -*- coding: utf-8 -*-
-"""Loop 引擎无人值守接力 watcher（loop-gen50 兜底，不依赖 automation 调度）。
+"""Loop 引擎无人值守接力 watcher（不依赖 automation 调度）。
 
 每 ~5 分钟一个循环：
 1. 若 loop_engine 进程在跑 -> 等待。
 2. 若空闲 -> 读 docs/loop_journal.md 找最近已完成代数 N（标题 "## 第 N 代"）。
    - 该代 err log 非空 -> 记日志并退出（报错停止，等待人工）。
-   - N >= 50 -> 达成目标退出。
+   - N >= TARGET_GEN -> 达成目标退出（TARGET_GEN 默认 70，可用环境变量 LOOP_TARGET_GEN 覆盖）。
    - 否则启动 gen N+1（防重复：对应 loop{N+1}C.log 不存在才启）。
 3. 每代启动后 sleep 20s 确认进程存活 + 日志头正常。
 
@@ -24,6 +24,7 @@ PY = r"D:\miniconda3\envs\rqdata\python.exe"
 WATCH_LOG = os.path.join(ENGINE_DIR, "loop_watcher.log")
 POLL_S = 300          # 主轮询间隔
 LIFTOFF_S = 20        # 启动后确认存活间隔
+TARGET_GEN = int(os.environ.get("LOOP_TARGET_GEN", "70"))   # 目标代数(达此代即停)
 
 _LOG_FD = open(WATCH_LOG, "a", encoding="utf-8", buffering=1)
 
@@ -148,8 +149,8 @@ def main():
         if err_nonempty(N):
             log(f"[STOP] gen{N} err 日志非空，按铁律停止等人工")
             break
-        if N >= 50:
-            log(f"[DONE] 已达成 gen{N} >= 50，目标完成")
+        if N >= TARGET_GEN:
+            log(f"[DONE] 已达成 gen{N} >= {TARGET_GEN}，目标完成")
             break
         g = N + 1
         if start_next_gen(g):

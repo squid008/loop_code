@@ -12,10 +12,10 @@
    （Round12~26 共 22 代、L1 累计 12133 候选、收官入库 9 因子 → 补录 gen23 后当前 11；叶子池扩展为
    54 = 量价21+资金流16+BARRA11+财报PIT8，单一事实源 engine/loop_fields.py；整体复盘/落地记录
    见本文件**附录 A/B**，入库因子与明细见 `docs/factor_library.md`）
-4. **Loop 新叶无人值守续跑中（2026-09-09 重启 watcher）**：gen23~25 已完整跑完（含 gen23 的 F10/F11
-   入库与逐代 AI 审查），当前 **gen26（seed=267）跑动中**；目标 gen50 或任一代 err 即停。
-   实时进度：`engine/loop_watcher.log` / `loop_status.py`（命令见 README.md）；每代产出自动落
-   `docs/loop_journal.md` + `docs/loop_archive.csv`，新入库自动同步进 `docs/factor_library.md`。
+4. **Loop 新叶无人值守**：gen23 起重启 watcher 无人值守接力，**已跑至 gen50 达标收官（2026-09-10）**；
+   每代产出自动落 `docs/loop_journal.md` + `docs/loop_archive.csv`，新入库自动同步进
+   `docs/factor_library.md`（入库 11 → 23）。gen50 暴露同代近重复问题 → **gen51 双闸门**
+   （见 Round27）。实时进度：`engine/loop_watcher.log` / `loop_status.py`（命令见 README.md）。
 
 ## 当前阶段（2026-09-08）：对齐中金成功要素 + 引入新方法
 - 补派生字段(overnight/amplitude/影线) + 长窗口算子(100~200天)
@@ -643,6 +643,22 @@ regime 条件化(仅趋势市)、全档-主力背离(反转口径), 但预期低
   去重 list→set+计数 n_skip_dup; 上限 4n→30n; >12n 次或连续重复>100 切纯随机兜底; 加 --gen_only 干跑。
   dry-run 与真实 gen13/15 均 **800/800[正常]**(gen13 日志: 尝试5148/重复拦3212/5s; gen15 亦 800/800),
   未触发兜底。此后 journal n_l1 低是 L1 弱信号过滤, 与生成产量无关。
+
+### Round27 Loop gen23~50 收官 + gen50 近重复复盘 → gen51 双闸门(2026-09-10)
+- **续跑收官**：watcher 自 gen23 无人值守接力至 **gen50 达标**（`[DONE] gen50 >= 50`）；入库因子
+  11 → **23**（F12 gen31 / F13 gen33 / F14~F16 gen43 / F17~F19 gen45 / F20~F23 gen50）。
+  内存治理：`cache2` 容量上限 + L1 后 `_LRU.clear()`，L1 段峰值由 gen37 的 **37.1GB** 降至
+  gen48 的 **14.5GB**（降约 60%）。
+- **gen50 近重复事件**：同代入库的 F20~F23 实为近重复（F20↔F23=0.932、F21↔F22=0.879）。
+  复盘（`ai_test/verify_max_collapse.py`）确认顶层 `max(·,resvol)` 存在"地板效应"（≈1/3 样本
+  坍缩为 resvol，实测 24~35%），但**高相关真因是共享主导叶**（F23 内层 ≡ barra_leverage，
+  相关 0.997；F20 内层 0.786；F21/F22 共享 fa_ocf_yoy），**非地板**。根因缺口：同代去重阈值
+  0.99 过松、`root_fam` 判成不同族、`decorr` 不互查同代。
+- **gen51 双闸门**（已实现 + 冒烟）：
+  ① `--dedup_corr`（默认 0.85）同代近重复去重 → 回放 F19~F23 把 4 近重复压到 2；
+  ② `--fam_sole`（默认开）族指纹增补"单叶变换"维度 → "同叶不同壳"代理候选归同族、按配额拦重复。
+  标定/验证：`ai_test/calib_gates.py` / `verify_gates.py`；冒烟 `qa_fam_smoke.py` 8 项全过。
+  详见 `docs/loop_journal.md` 末节。
 
 ---
 
