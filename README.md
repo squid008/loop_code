@@ -52,6 +52,36 @@ D:\miniconda3\envs\rqdata\python.exe all04.py
 
 ## 说明
 - 引擎所有文件读写都相对 `engine/` 定位，`loop_code` 可整体搬移；唯一外部依赖是 `E:\rq` 数据盘。
-- `loop_state.pkl` 为滚动态：**gen23 起 watcher 无人值守接力，已跑至 gen50 达标收官（2026-09-10）**，入库因子 **23**（F01~F23）。整体复盘见 `docs/factor_roadmap.md` 附录 A/B + Round27；入库因子明细见 `docs/factor_library.md`；逐代诊断见 `docs/loop_journal.md`。
+- `loop_state.pkl` 为滚动态：**gen23 起 watcher 无人值守接力，已跑至 gen70 达标收官（2026-09-11）**，入库因子 **30**（F01~F30）。整体复盘见 `docs/factor_roadmap.md` 附录 A/B + Round27；入库因子明细见 `docs/factor_library.md`；逐代诊断见 `docs/loop_journal.md`。跨系统（存储/数据库/对齐）决策见 `docs/software_framework.md`。
 - **gen51 起新增两道抗冗余闸门**（治 gen50 同代近重复 F20~F23）：`--dedup_corr`（默认 0.85，同代 L1 TopN 两两 |rank corr| 超阈即丢弃后者）+ `--fam_sole`（默认开，族指纹并入"单叶变换"维度把"同叶不同壳"的叶子代理候选归同族）。标定/验证见 `ai_test/calib_gates.py` / `verify_gates.py`，冒烟 `ai_test/qa_fam_smoke.py`。
 - 数据文件（*.h5/*.pkl）体积大且可由 `build_*.py` 重建，git 入库时按 `.gitignore` 排除。
+
+## 版本与回退（2026-09-11 起）
+
+**约定：每个"版本" = 一次 commit + 一个 annotated tag**（版本名 `v<major>.<minor>` 递增）。
+tag 说明固定记录四项，便于回退时判断影响面：
+
+| 项 | 说明 |
+|---|---|
+| **引擎行为** | 是否改变挖掘结果（阈值/排序分/生成端改动 = **变**；纯工具/文档 = 不变） |
+| **已完成代** | 该版下的代数与入库范围（如 gen70 / F01~F30） |
+| **关键变更** | 3~5 条要点 |
+| **回退方式** | `git checkout <tag>` |
+
+⚠ **引擎滚动状态不在 git 内**：`engine/loop_state.pkl`（bank / 种子 / 冻结 / 失败库）与
+`docs/loop_archive.csv` 均按 `.gitignore` 排除。**回退代码 ≠ 回退库状态**——若要连状态一起回退，
+需另行备份 `loop_state.pkl`。
+
+```powershell
+git --no-pager tag -l -n20                 # 列出所有版本及说明
+git --no-pager show v0.1 --stat            # 看某版改了什么
+git checkout v0.0                          # 回退到基线（再 git checkout main 回来）
+git tag -a v0.2 -F <说明文件>               # 建新版（说明按上表四项写）
+```
+
+**已建版本**
+
+| tag | 提交 | 内容 |
+|---|---|---|
+| **v0.1** | `4ebf734` | 成本档单一事实源 + L1 指标层（`loop_metrics.py`）+ `--min_mono` / `--score_mode`（默认关闭）+ `software_framework.md`；**引擎行为不变** |
+| **v0.0** | `e582921` | 代码基线（改造之前）：gen51 双闸门版 |
