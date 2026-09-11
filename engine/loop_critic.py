@@ -223,7 +223,12 @@ def report(diag, sug, reasons, path):
             'leaf_conc', 'struct_div', 'fam_blocked', 'known_ratio',
             'n_l2', 'n_pass', 'ex_max',
             'fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic',
-            'seg_kill']
+            'seg_kill',
+            # 风格暴露观测(--style_obs, 2026-09-11): 各组 |截面秩相关| 中位。
+            # st_l2_=进L2组 / st_l1_=L1通过组; 入库组(st_ok_)样本过小, 只进 CSV 不进表。
+            # 未开启观测时这些键不在 diag 里 -> present 过滤掉, 表头不受影响。
+            'st_l2_lncap', 'st_l2_lnamt', 'st_l2_lntr', 'st_l2_lnpx',
+            'st_l1_lncap', 'st_l1_lnamt', 'st_l1_lntr', 'st_l1_lnpx']
     present = [k for k in keys if k in diag]
 
     def _fmt(k):

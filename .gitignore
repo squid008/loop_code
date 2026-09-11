@@ -24,6 +24,8 @@ standard/*_report.png
 strategies/all04/f11_*.txt
 # Loop 每代 L2 明细流水（docs/ 下逐代累积的 CSV 档案，运行产物不上 git）
 docs/loop_archive.csv
+# 风格暴露观测（--style_obs 的逐代累积产物：每代每个被求值候选一行）
+docs/loop_style_obs.csv
 # gen16 前旧快照已归 docs/history/（停更，已 git 跟踪为归档，此处不再 ignore）
 
 # IDE / 系统

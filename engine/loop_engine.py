@@ -35,10 +35,13 @@ sys.path.insert(0, HERE)
 from factor_miner import (load_panel, prepare, get_universe, cs_rank,
                           evaluate_real, START, FWD, COST_PRESETS)
 from cost_presets import DEFAULT_COST, cost_label      # 成本档单一事实源(2026-09-11)
-from loop_metrics import rank_rows, decile_shape, l1_score   # L1 指标层(2026-09-11, 含 rank_rows)
+from loop_metrics import (rank_rows, decile_shape, l1_score,   # L1 指标层(2026-09-11, 含 rank_rows)
+                          style_expo, STYLE_KEYS)              # 风格暴露观测(2026-09-11, --style_obs)
 
 STATE = os.path.join(HERE, 'loop_state.pkl')
 ARCHIVE = os.path.join(os.path.dirname(HERE), 'docs', 'loop_archive.csv')
+# 风格暴露观测独立成文件(2026-09-11): 不进 ARCHIVE 表头 —— 追加模式下加列会让历史行错位
+STYLE_OBS = os.path.join(os.path.dirname(HERE), 'docs', 'loop_style_obs.csv')
 JOURNAL = os.path.join(os.path.dirname(HERE), 'docs', 'loop_journal.md')  # B角诊断日志(loop_code/docs)
 LIBRARY = os.path.join(os.path.dirname(HERE), 'docs', 'factor_library.md')  # 入库因子文档(代末自动同步新增)
 
@@ -127,6 +130,23 @@ def base_fields():
     B_sub = {k: v[np.ix_(L1_ROWS, L1_COLS)] for k, v in B.items()}
     _BASE = dict(B=B, B_sub=B_sub, dates=dates, cols=cols, close=close)
     return _BASE
+
+
+def style_features(B):
+    """风格观测四项(与 `standard_test.py`【3】风格归因同口径, 20 日均值 + log):
+    lncap=log(市值) / lnamt=log(20日均成交额) / lntr=log(20日均换手率) / lnpx=log(收盘价)。
+    0/非正 -> NaN(与 standard_test 的 replace(0,nan) 一致), 由 rank_rows/style_expo 跳过。"""
+    mc = np.where(B['mktcap'] > 0, B['mktcap'].astype('float64'), np.nan)
+    turn = B['turnover'].astype('float64')
+    amt20 = pd.DataFrame(turn).rolling(20, min_periods=5).mean().values
+    tr20 = pd.DataFrame(turn / mc).rolling(20, min_periods=5).mean().values
+    px = np.where(B['close'] > 0, B['close'].astype('float64'), np.nan)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        out = {'lncap': np.log(mc),
+               'lnamt': np.log(np.where(amt20 > 0, amt20, np.nan)),
+               'lntr': np.log(np.where(tr20 > 0, tr20, np.nan)),
+               'lnpx': np.log(px)}
+    return {k: v.astype(np.float32) for k, v in out.items()}
 
 
 # ===================== 2. 算子 =====================
@@ -1020,10 +1040,28 @@ def run(args):
     Rsub_s, Usub_s = Rsub[::FWD], Usub[::FWD]
     _min_mono = float(getattr(args, 'min_mono', 0.0) or 0.0)      # 缺字段=关闭(默认行为)
     _score_mode = getattr(args, 'score_mode', 'old') or 'old'
-    need_shape = (_min_mono > 0) or (_score_mode == 'new')
+    _style_obs = bool(getattr(args, 'style_obs', False))
+    # ★need_shape 必须把 --style_obs 也算进来(2026-09-11 实测踩坑):
+    #  否则单独开 --style_obs(默认 old 排序)时 mono/shape_pos 不计算 -> 观测文件这两列全 NaN,
+    #  离线就无法复算 score_new = stab×(0.5+0.5·shape_pos), 整轮观测作废。
+    #  这**不改变选择压力**(need_shape 只管"算不算"), 只是让观测自足。
+    need_shape = (_min_mono > 0) or (_score_mode == 'new') or _style_obs
     if need_shape:
         print(f"  [形状] 已启用十档单调性计算 (min_mono={_min_mono:g}, "
-              f"score_mode={_score_mode}; 调仓日视图 {Rsub_s.shape[0]}期)")
+              f"score_mode={_score_mode}, style_obs={_style_obs}; "
+              f"调仓日视图 {Rsub_s.shape[0]}期)")
+    # ---- 风格暴露观测(2026-09-11, --style_obs 默认关) ----
+    #  口径 = standard_test【3】风格归因的四项特征定义; 取 **L1 子面板 + [::FWD] 调仓日视图**
+    #  (与 decile_shape 同视图 -> 两者共用一次 rank_rows); 快, 但只是"相对比较用代理",
+    #  绝对值以 standard_test 全量报告为准。用途: 验证批1 是否让因子更往低换手/低成交额挤。
+    STYLE_S = {}
+    if _style_obs:
+        _sf = style_features(B)
+        for _k in STYLE_KEYS:
+            STYLE_S[_k] = rank_rows(_sf[_k][np.ix_(L1_ROWS, L1_COLS)][::FWD])
+        del _sf
+        print(f"  [风格观测] 已启用 ({', '.join(STYLE_KEYS)}; 子面板[::FWD] "
+              f"{Rsub_s.shape[0]}期) -> {STYLE_OBS}")
     stats = []
     BATCH = args.batch
     n_eval = 0
@@ -1063,16 +1101,36 @@ def run(args):
         stab = [factor_stability(v, None) for v in vals]
         # 形状量: 仅在需要时算(默认 --min_mono 0 + score_mode old -> 零额外开销)
         # 防御: 单个候选形状计算异常不应拖垮整代(引擎常无人值守), 记 None 即等同"无形状值"
-        shp = []
+        # 形状量 / 风格暴露: 仅在需要时算(默认 --min_mono 0 + score_mode old + 无 --style_obs
+        # -> 零额外开销)。防御: 单个候选异常不应拖垮整代(引擎常无人值守), 记 None 即等同"无值"
+        shp, sty = [], []
         for v in vals:
-            if not need_shape:
+            if not need_shape and not _style_obs:
                 shp.append(None)
+                sty.append(None)
                 continue
+            # 秩视图只算一次: decile_shape 与风格观测共用(两者都基于 [::FWD] 调仓日视图)
             try:
-                shp.append(decile_shape(rank_rows(v[::FWD]), Rsub_s, Usub_s))
+                rs = rank_rows(v[::FWD])
             except Exception:
                 shp.append(None)
-        for m_, i_, s_, k_, sg, sh in zip(mu, ir, stab, kidx, sign, shp):
+                sty.append(None)
+                continue
+            if need_shape:
+                try:
+                    shp.append(decile_shape(rs, Rsub_s, Usub_s))
+                except Exception:
+                    shp.append(None)
+            else:
+                shp.append(None)
+            if _style_obs:
+                try:
+                    sty.append({k: style_expo(rs, STYLE_S[k]) for k in STYLE_KEYS})
+                except Exception:
+                    sty.append(None)
+            else:
+                sty.append(None)
+        for m_, i_, s_, k_, sg, sh, sy in zip(mu, ir, stab, kidx, sign, shp, sty):
             d = dict(idx=int(k_), node=cands[int(k_)],
                      expr=str(cands[int(k_)]), ic=float(m_),
                      ic_ir=float(i_), stab=float(s_), sign=float(sg))
@@ -1080,6 +1138,9 @@ def run(args):
                 d['mono'] = sh['mono']
                 d['best_grp'] = sh['best_grp']
                 d['shape_pos'] = sh['shape_pos']
+            if sy is not None:                      # 风格观测(仅 --style_obs 时非空)
+                for _k in STYLE_KEYS:
+                    d['st_' + _k] = sy[_k]
             stats.append(d)
         n_eval += len(vals)
         del vals, IC
@@ -1089,6 +1150,31 @@ def run(args):
           f"({(time.time()-t_l1)/max(n_eval,1):.2f}s/候选)")
     _LRU.clear()                                       # L1 结束: 释放跨批子树缓存
     l1 = pd.DataFrame(stats)
+    # ---- 风格暴露观测落盘(2026-09-11, --style_obs; 失败只告警不拖垮主流程) ----
+    #  ★位置很关键: **紧跟 L1 求值**。引擎在 L1 之后有多处早退(无候选通过 / 形状门槛全灭 /
+    #   去相关全灭), 若放到代末则这些代的样本全丢(试点已实测: n=40 时 17->10 后仍可能全灭)。
+    #  观测样本 = 本代**被求值的全部候选**(含未过门槛者), 这正是离线配对比较需要的总体。
+    #  每行 = 一个候选: ic/ic_ir/stab/mono/shape_pos + 4 项风格暴露(见 roadmap §8.4)。
+    #  是否进 L2 / 是否通过 L2: 用 (gen, expr) 与 docs/loop_archive.csv 离线 join 即可。
+    obs_df = None
+    if _style_obs and stats:
+        try:
+            obs_df = pd.DataFrame([dict(
+                gen=args.gen, expr=d_['expr'], sign=d_['sign'],
+                ic=d_['ic'], ic_ir=d_['ic_ir'], stab=d_['stab'],
+                mono=d_.get('mono', np.nan), shape_pos=d_.get('shape_pos', np.nan),
+                **{'st_' + k: d_['st_' + k] for k in STYLE_KEYS})
+                for d_ in stats if ('st_' + STYLE_KEYS[0]) in d_])
+            need_h = (not os.path.exists(STYLE_OBS)) or os.path.getsize(STYLE_OBS) == 0
+            obs_df.to_csv(STYLE_OBS, index=False, mode='a', header=need_h,
+                          encoding='utf-8-sig')
+            print(f"已存 {STYLE_OBS} (追加, 本代 {len(obs_df)} 条候选)")
+            if obs_df['shape_pos'].isna().all():          # 自检: 见上方 need_shape 的踩坑注释
+                print("  [风格观测] ⚠ shape_pos 全为 NaN -> need_shape 未生效, "
+                      "本轮观测无法复算 score_new, 请检查 --score_mode/--min_mono/--style_obs")
+        except Exception as e:
+            obs_df = None
+            print(f"  [风格观测] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
     # 失败模式库: IC/稳定性不过线的候选按骨架记失败(过线者待 L2 后记 ok)
     for r_ in stats:
         nd = r_['node']
@@ -1342,6 +1428,24 @@ def run(args):
         res_c['seg_ok'] = seg_ok_list
     diag = critic.diagnose(l1, res_c if len(res_c) else None, args.gen)
     diag['fam_blocked'] = fam_blocked
+    # ---- 风格暴露诊断聚合(2026-09-11, --style_obs): 落盘已在 L1 求值后完成, 此处只做分组聚合 ----
+    #  判读(见 docs/factor_roadmap.md §8.3/§8.4): new vs old 两组对比, 若 L2 候选/通过集的
+    #  |lntr|、|lnamt| 中位显著上升 -> 确诊"新排序分在低换手/低成交额方向加倍下注"。
+    if obs_df is not None and len(obs_df):
+        try:
+            _grp = {'st_l1_': set(l1['expr']) if len(l1) else set()}
+            if 'expr' in getattr(res, 'columns', []):     # --l2=0 时 res 无列, 只报 L1 组
+                _grp['st_l2_'] = set(res['expr'])
+                if 'passed' in res.columns:
+                    _grp['st_ok_'] = set(res.loc[res['passed'], 'expr'])
+            for _tag, _es in _grp.items():
+                _df = obs_df[obs_df['expr'].isin(_es)]
+                if not len(_df):
+                    continue
+                for _k in STYLE_KEYS:
+                    diag[_tag + _k] = float(np.nanmedian(np.abs(_df['st_' + _k])))
+        except Exception as e:
+            print(f"  [风格观测] 聚合失败(不影响主流程): {type(e).__name__}: {e}")
     next_cfg, reasons = critic.suggest(diag, cfg)
     print("\n[B角建议] 下一代:")
     for r in reasons:
@@ -1696,6 +1800,13 @@ if __name__ == '__main__':
                     help='L1 排序分(批1 P0, 2026-09-11): old=|IC_IR|×(0.25+0.75·stab) (默认, 原行为); '
                          'new=stab×(0.5+0.5·shape_pos)。标定: 与 L2 Calmar 的相关性 old +0.167 -> '
                          'new +0.668; new 不含 ic_ir(IC 仅留作 ic>min_ic 准入门槛)')
+    ap.add_argument('--style_obs', action='store_true',
+                    help='风格暴露观测(2026-09-11, 默认关): 记录**每个被求值的 L1 候选**对 '
+                         'lncap/lnamt/lntr/lnpx 的截面秩相关(L1 子面板[::FWD] 视图), 紧跟 L1 求值 '
+                         '落 docs/loop_style_obs.csv(故 L1 之后的任何早退都不丢样本); '
+                         '是否进 L2/通过 L2 可与 loop_archive.csv 按 (gen, expr) 离线 join。'
+                         '用途: 验证 --score_mode=new / --min_mono 是否让因子更往'
+                         '「低换手/低成交额」挤(stab 即低换手代理)。关闭时零额外开销')
     ap.add_argument('--fsa_th', type=float, default=-1,
                     help='FSA骨架冻结阈值: bank中同骨架占比超过该值即冻结该骨架, '
                          '后续候选不再生成/入库(中金>15%%冻结); 负数=跟随B角建议, 0=关闭')

@@ -18,6 +18,9 @@ import numpy as np
 
 N_GRP = 10            # 十档（与 standard_test 一致；D1 = 因子值最高档）
 
+# 风格暴露观测四项（与 `standard_test.py`【3】风格归因同口径）
+STYLE_KEYS = ('lncap', 'lnamt', 'lntr', 'lnpx')
+
 
 def rank_rows(X):
     """逐行排名(0~1), NaN 置 NaN；两次 argsort。
@@ -85,3 +88,30 @@ def l1_score(stab, ic_ir, shape_pos=None, mode='old'):
         sp = np.clip(np.asarray(shape_pos, dtype='float64'), 0, 1)
         return np.nan_to_num(st, nan=0.0) * (0.5 + 0.5 * np.nan_to_num(sp, nan=0.0))
     return np.abs(np.asarray(ic_ir, dtype='float64')) * (0.25 + 0.75 * st)
+
+
+def style_expo(RS, SS, min_n=30):
+    """逐期截面秩相关(因子 vs 风格)的期均值 —— 与 `standard_test.py`【3】风格归因同口径。
+
+    参数
+      RS : (T,S) 因子秩(0~1; **调用方须已方向对齐**)
+      SS : (T,S) 风格特征秩(0~1), 由 `STYLE_KEYS` 四项各一
+    返回 float; 有效期不足 -> NaN。
+      负值 = 因子偏「小市值 / 低成交额 / 低换手 / 低价」；正相反。
+
+    全向量化(逐期去均值后按行求 Pearson, NaN 位不参与) —— 避免 T 次 python 循环,
+    也避免每期调一次 np.corrcoef(见 `ai_test/qa_style_obs.py` 与朴素实现逐位对拍)。
+    """
+    m = np.isfinite(RS) & np.isfinite(SS)
+    n = m.sum(axis=1).astype('float64')
+    nn = np.maximum(n, 1.0)
+    A = np.where(m, RS, 0.0).astype('float64')
+    Bm = np.where(m, SS, 0.0).astype('float64')
+    ca = np.where(m, A - (A.sum(axis=1) / nn)[:, None], 0.0)
+    cb = np.where(m, Bm - (Bm.sum(axis=1) / nn)[:, None], 0.0)
+    num = (ca * cb).sum(axis=1)
+    den = np.sqrt((ca ** 2).sum(axis=1) * (cb ** 2).sum(axis=1))
+    ok = (n >= min_n) & (den > 1e-12)
+    if not ok.any():
+        return np.nan
+    return float(np.mean(num[ok] / den[ok]))
