@@ -15,6 +15,13 @@ loop*C_err.log
 
 # 引擎滚动状态（运行中会变）
 engine/loop_state.pkl
+
+# standard_test 运行产物（带时间戳的报告；只跟踪 standard_test.py 本身）
+standard/*_report.txt
+standard/*_report.png
+
+# all04_f11_idx 运行输出（stdout/stderr 日志，可随时重跑）
+strategies/all04/f11_*.txt
 # Loop 每代 L2 明细流水（docs/ 下逐代累积的 CSV 档案，运行产物不上 git）
 docs/loop_archive.csv
 # gen16 前旧快照已归 docs/history/（停更，已 git 跟踪为归档，此处不再 ignore）

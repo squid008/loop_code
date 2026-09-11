@@ -1740,3 +1740,837 @@ leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 
 **验证**：`ai_test/verify_gates.py`（真实 F19~F23 回放）：闸门1 拦 F22(0.879 vs F21)、
 F23(0.932 vs F20)，4 近重复 → 2；冒烟 `ai_test/qa_fam_smoke.py` 8 项全过。
 **遗留**：F20~F23 已入 bank 不动（保历史可追溯），仅在新档加冗余警示；后续代次由双闸门拦截。
+
+## 第 51 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 26 | 0.046 | 0.063 | 0.933 | 0.000 | 0.423 | 1.000 | 6 | 0.115 | 26 | 1 | 0.148 | 0.960 | 0.120 | 0.840 | 0.400 | 0.000 | 0.385 |
+
+叶子使用: {'barra_residual_volatility': 11, 'barra_leverage': 8, 'fa_ocf_yoy': 5, 'close': 4, 'fa_gm': 3, 'vwap': 3}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比42%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中96%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25}
+```
+
+**LLM 引导(A角 51代)**: 调用3次, 解析通过33条, 引导位使用33条
+> 日内价格路径的'尾盘承接强度'——即日内收益中由收盘前主动买入推动、且伴随量额放大而非单纯换手抬升的部分——能刻画知情资金在当日信息消化后的真实方向,从而预测未来5日截面收益。
+
+
+**LLM 候选审查(B角 51代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `max(corr200(fa_np_margin, barra_leverage), barra_residual_volatility)`
+  > 理由: barra风格因子与财务利润率拼凑，无清晰量价机制，属数学巧合
+- KILL `neg(div(log(max(sign(ts_std20(corr200(ln_volume, ts_std200(barra_leverage)))), barra_residual_volatility)), barra_comovement))`
+  > 理由: 多层嵌套同源算子拼凑，无清晰量价经济含义，参数冗余似过拟合
+- KILL `max(corr100(fa_ocf_yoy, ts_min20(max(barra_leverage, barra_leverage))), barra_residual_volatility)`
+  > 理由: 财务字段与barra风格因子拼凑，ts_min取自身无意义，经济含义不清
+- KILL `cs_scale(mul(ts_std200(ln_volume), div(ts_delta120(barra_non_linear_size), ts_sum20(barra_liquidity))))`
+  > 理由: 成交量波动率乘规模变化除流动性，三源拼凑无清晰量价机制，窗口冗余疑过拟合
+- KILL `mul(add(max(add(barra_residual_volatility, barra_leverage), barra_residual_volatility), barra_leverage), barra_residual_volatility)`
+  > 理由: 仅两字段嵌套add/max/mul，无窗口无经济机制，属数学拼凑冗余结构
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:叶子被barra_residual_volatility绑架(42%),L2信号同质化,Calmar普遍不足,不是搜索强度问题而是表达多样性枯竭。
+> 
+> (2)压权重到0.25对症;交叉+15%与深度加深方向对但会加剧同质(现有L2已全是max+barra结构),可能无效;扰动/引导/随机固定15/20/15与"交叉≥10%合计50%"存在配比冲突,重归一化后实际交叉被稀释,护栏形同虚设。
+> 
+> (3)建议mix=[0.2,0.3,0.15,0.2,0.15],depth=[3,4,4],min_stab=0.75,decorr=0.7。理由:降交叉、提变异与decorr,先破叶子垄断再谈深度,否则加深只是复制同质结构。
+
+## 第 52 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 19 | 0.056 | 0.063 | 0.928 | 0.000 | 1.000 | 1.000 | 17 | 0.053 | 19 | 1 | 0.069 | 1.000 | 0.167 | 0.778 | 0.500 | 0.000 | 0.263 |
+
+叶子使用: {'barra_residual_volatility': 19, 'barra_leverage': 9, 'fa_ocf_yoy': 9, 'fa_gm': 2, 'barra_comovement': 2, 'hl_ratio': 2}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比100%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中100%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25}
+```
+
+**LLM 引导(A角 52代)**: 调用3次, 解析通过28条, 引导位使用28条
+> 在换手与成交额活跃的股票里,日内价格路径(振幅/上下影线/隔夜跳空)与残差波动率共同刻画了'交易拥挤度—情绪错配'结构:当短期日内形态相对长期基准发生偏离、且残差波动率被压缩或放大时,未来5日截面收益会出现可预测的反转/延续,而非单纯的量能水平。
+
+
+**LLM 候选审查(B角 52代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `max(ts_rank100(neg(barra_leverage)), barra_residual_volatility)`
+  > 理由: barra风险因子非量价字段，max拼接无经济含义，属数学拼凑
+- KILL `max(ts_mean120(cs_rank(div(barra_leverage, max(add(add(barra_residual_volatility, fa_ocf_yoy), barra_leverage), barra_residual_volatility)))), barra_residual_volatility)`
+  > 理由: 财务杠杆/现金流与波动率拼凑相除，无清晰量价行为，属数学巧合
+- KILL `max(ts_rank100(max(ts_mean120(cs_rank(corr200(barra_leverage, fa_gm))), barra_residual_volatility)), barra_residual_volatility)`
+  > 理由: 多窗口嵌套堆叠同源算子，经济含义拼凑难解释，属参数海捞针
+- KILL `max(ts_mean150(corr100(cs_rank(barra_leverage), ts_min20(cs_rank(barra_leverage)))), barra_residual_volatility)`
+  > 理由: barra风格暴露自相关叠加残差波动，无清晰量价行为，属参数海捞针冗余结构
+- KILL `max(ts_mean120(cs_rank(div(barra_leverage, add(add(fa_gm, barra_leverage), barra_residual_volatility)))), barra_residual_volatility)`
+  > 理由: 杠杆/毛利/残差波动拼凑比值，无清晰量价机制，属数学巧合
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:叶子被barra_residual_volatility单一支配(19/19),L1的IC全是它撑的,信号同质化,换字段才是真解。
+> 
+> (2)压权重0.25对症;但交叉+15%与深度加深同时上,易生成同质深树,无效甚至反效;扰动/引导/随机固定15/20/15与"变异/交叉合计50%重归一化"冲突,护栏会吃掉交叉增量;min_stab=0.75偏松,会放水。
+> 
+> (3)建议mix=[0.15,0.30,0.15,0.25,0.15],depth=[3,3,4],min_stab=0.80,decorr=0.70。理由:降交叉、提引导与去相关,先破同质再谈深度。
+
+## 第 53 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 9 | 0.055 | 0.064 | 0.904 | 0.000 | 1.000 | 1.000 | 17 | 0.111 | 9 | 0 | 0.069 | 0.889 | 0.222 | 0.778 | 0.333 | 0.000 | 0.222 |
+
+叶子使用: {'barra_residual_volatility': 9, 'barra_leverage': 4, 'fa_np_yoy': 3, 'mf_s_buy': 2, 'fa_gm': 2, 'fa_ocf_yoy': 2}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比100%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中89%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25}
+```
+
+**LLM 引导(A角 53代)**: 调用3次, 解析通过48条, 引导位使用48条
+> 在换手与成交额主导的短周期博弈中，日内振幅相对隔夜跳空的错配（振幅放大而跳空收敛）与上影线相对真实波幅的异常抬升，反映日内抛压未被隔夜定价吸收，这类量价结构失衡会在未来5日截面收益上表现为负向修正，而大单主动净买入占比与中小单方向背离则提供资金流侧的独立确认。
+
+
+**LLM 候选审查(B角 53代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `max(ts_rank100(max(ts_mean150(ts_min20(corr100(fa_ocf_yoy, vwap))), barra_residual_volatility)), barra_residual_volatility)`
+  > 理由: 多层嵌套同源时序算子，窗口20/100/150冗余，经济含义拼凑难解释，过拟合嫌疑
+- KILL `max(ts_mean150(corr100(fa_ocf_yoy, cs_rank(fa_rev_yoy))), barra_residual_volatility)`
+  > 理由: 财务字段相关叠加残差波动率取大，无清晰量价机制，属拼凑结构
+- KILL `neg(div(log(max(sign(ts_std20(corr200(ln_volume, ts_std200(add(fa_gm, ts_mean10(cs_rank(div(barra_leverage, max(add(fa_gm, barra_leverage), barra_residual_volatility))))))))), barra_residual_volatility)), barra_comovement))`
+  > 理由: 多层嵌套拼凑，经济含义不可解，属参数海捞针式冗余结构
+- KILL `max(cs_scale(max(ts_mean120(cs_rank(div(barra_leverage, max(add(fa_gm, cs_scale(cs_scale(mf_s_bqty))), barra_residual_volatility)))), barra_residual_volatility)), fa_rev_yoy)`
+  > 理由: 财务与量价字段混搭嵌套，经济含义拼凑难解释，冗余高
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:叶子被barra_residual_volatility单一字段垄断(占比100%),导致所有L1候选同源、L2信号弱且换手/负年集中,是"字段塌缩"而非搜索不足。
+> 
+> (2)点评:压权重到0.25对症,但仅压权重不封字段,引擎仍会换壳复用;交叉+15%与深度加深同时上,会放大同源表达式、加剧过拟合,二者部分冲突;扰动/引导/随机固定15/20/15偏保守,引导20%在字段塌缩下易无效;护栏"变异≥10%"与压权重方向一致,可保留。
+> 
+> (3)下代取值:mix=[0.15,0.30,0.15,0.20,0.20],depth=[3,4,4],min_stab=0.80,decorr=0.75。理由:提高变异与随机以强制换字段,降交叉防同源放大,decorr上调压制barra残差波动率家族。
+
+## 第 54 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 8 | 0.059 | 0.068 | 0.884 | 0.000 | 1.000 | 1.000 | 21 | 0.125 | 8 | 0 | 0.047 | 1.000 | 0.500 | 0.875 | 0.500 | 0.000 | 0.500 |
+
+叶子使用: {'barra_residual_volatility': 8, 'mf_s_buy': 6, 'fa_np_yoy': 6, 'fa_lev': 4, 'barra_leverage': 2, 'fa_ocf_yoy': 2}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比100%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中50%因换手过高失败 -> min_stab再+0.10
+- L2中100%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25}
+```
+
+**LLM 引导(A角 54代)**: 调用3次, 解析通过36条, 引导位使用36条
+> 日内价格路径的'位置-形态'信息（收盘在当日区间的相对位置、上下影线不对称、隔夜与日内收益的背离）在截面内对短期反转/延续有独立于纯换手与成交额的预测力，尤其当这种形态与残差波动率或资金流失衡交互时。
+
+
+**LLM 候选审查(B角 54代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `div(log(add(add(barra_residual_volatility, fa_op_yoy), add(add(barra_residual_volatility, barra_leverage), max(barra_leverage, barra_leverage)))), close)`
+  > 理由: 多字段无意义相加后除价格，纯数学拼凑，无对应量价行为
+- KILL `max(max(ts_mean120(cs_rank(div(barra_leverage, max(add(fa_gm, add(barra_residual_volatility, barra_leverage)), barra_residual_volatility)))), barra_residual_volatility), barra_residual_volatility)`
+  > 理由: 杠杆/残差波动/毛利拼凑比值，无清晰量价行为，属数学巧合
+- KILL `max(ts_mean120(ts_mean120(cs_rank(fa_op_yoy))), barra_residual_volatility)`
+  > 理由: 基本面盈利增速与残差波动率取max，量纲含义拼凑，无清晰量价机制
+- KILL `div(log(add(add(barra_residual_volatility, barra_leverage), add(add(barra_residual_volatility, barra_leverage), max(barra_leverage, barra_leverage)))), close)`
+  > 理由: barra风险因子与价格相除取对数，无明确量价机制，属数学拼凑
+- KILL `log(log(add(barra_residual_volatility, max(corr200(fa_np_yoy, ts_mean60(ts_min20(div(fa_ocf_yoy, vwap)))), barra_leverage))))`
+  > 理由: 多层嵌套log/max/corr拼凑基本面与量价，无清晰经济机制，属参数海捞针
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根：叶子被barra_residual_volatility单一字段垄断，导致L1高IC全是同源换皮，L2一落地就Calmar崩、负年多，属结构性过拟合而非信号不足。
+> 
+> (2)压权重0.25对症但会误伤头部IC；min_stab+0.10与depth加深、交叉+15%互相打架：深度越深越不稳，稳定门槛反而更难过，等于自锁。交叉提到0.4而变异仅0.1，会加速同源收敛，与decorr目标冲突。扰动/引导/随机固定值合理，可保留。
+> 
+> (3)建议mix=[0.2,0.3,0.15,0.2,0.15]，depth=[3,3,4]，min_stab=0.70，decorr=0.75。理由：先保多样性、松稳定门槛，让新字段有机会活过L2，再谈加深。
+
+## 第 55 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 3 | 0.060 | 0.069 | 0.852 | 0.000 | 1.000 | 1.000 | 17 | 0.000 | 3 | 0 | 0.031 | 1.000 | 0.667 | 0.667 | 0.667 | 0.000 | 0.667 |
+
+叶子使用: {'barra_residual_volatility': 3, 'fa_np_yoy': 3, 'mf_s_buy': 2, 'barra_leverage': 2, 'fa_ocf_yoy': 2}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比100%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中67%因换手过高失败 -> min_stab再+0.10
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25}
+```
+
+**LLM 引导(A角 55代)**: 调用3次, 解析通过30条, 引导位使用30条
+> 在换手与波动率给定的条件下，日内价格位置相对隔夜跳空的偏离（跳空未被日内吸收的部分）以及主动资金净买入与价格变化的背离，会在未来5日截面收益上产生反转/延续，且该效应在低流动性、高残差波动股票中更强。
+
+
+**LLM 候选审查(B角 55代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `max(ts_rank100(mul(mf_s_buy, ts_rank100(corr200(fa_np_yoy, ts_mean60(ts_mean60(ts_min20(corr100(fa_ocf_yoy, barra_leverage)))))))), barra_residual_volatility)`
+  > 理由: 多层嵌套同源相关/均值算子，窗口堆砌无经济机制，属参数海捞针
+- KILL `max(ts_rank100(cs_rank(mul(mf_s_buy, ts_rank100(corr200(fa_np_yoy, ts_mean60(max(ts_mean120(cs_rank(mf_s_sqty)), barra_residual_volatility))))))), barra_residual_volatility)`
+  > 理由: 多层嵌套同源算子冗余，窗口参数堆砌，经济含义拼凑难解释
+- KILL `neg(div(log(max(sign(ts_std20(corr200(ln_volume, ts_std200(add(true_range, ts_std150(hl_ratio)))))), barra_residual_volatility)), barra_comovement))`
+  > 理由: 多层嵌套同源波动/量算子，窗口20/150/200拼凑，无清晰量价机制，疑似参数海捞
+- KILL `max(ts_rank100(max(ts_rank100(cs_rank(mul(mf_s_buy, ts_rank100(corr200(fa_np_yoy, ts_mean60(barra_non_linear_size)))))), barra_residual_volatility)), barra_residual_volatility)`
+  > 理由: 多层ts_rank/cs_rank嵌套无清晰量价机制，参数60/100/200冗余，疑过拟合拼凑
+- KILL `log(log(add(barra_residual_volatility, max(corr200(fa_np_yoy, ts_mean60(ts_min20(corr100(barra_residual_volatility, barra_leverage)))), barra_leverage))))`
+  > 理由: 多层嵌套相关/时序算子拼凑，无清晰量价经济含义，参数冗余似过拟合
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:叶子被barra_residual_volatility单一垄断(占比100%),叠加max/ts_rank100嵌套过深,信号被平滑成低换手但无alpha的残差波动暴露。
+> 
+> (2)压权重0.25对症,但min_stab+0.10与L2失败主因(换手0.5、neg_yr高)不对症,反而会进一步锁死高稳定低IC的残差叶子,加剧同质;两者叠加会互相抵消换字段效果。fsa_th=0.15与bank_skel_max=1也偏保守,难破垄断。
+> 
+> (3)建议:mix=[0.15,0.35,0.2,0.2,0.1],depth=[2,3,3],min_stab=0.65,decorr=0.75。理由:降深度去嵌套、提扰动与去相关,才真正逼引擎换叶子并救换手。
+
+## 第 56 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2 | 0.060 | 0.069 | 0.871 | 0.000 | 1.000 | 1.000 | 14 | 0.000 | 2 | 0 | 0.038 | 1.000 | 0.500 | 0.500 | 0.500 | 0.000 | 0.500 |
+
+叶子使用: {'fa_np_yoy': 2, 'barra_residual_volatility': 2, 'barra_leverage': 2, 'mf_s_buy': 1}
+
+**B角建议(下一代策略)**:
+- 叶子[fa_np_yoy]占比100%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中50%因换手过高失败 -> min_stab再+0.10
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25}
+```
+
+**LLM 引导(A角 56代)**: 调用3次, 解析通过29条, 引导位使用29条
+> 资金流主动买卖的方向失衡在短窗内被价格确认时延续、未被确认时反转，即大单净买入强度与日内收益的匹配度（量额一致性）比单纯净额更能预测未来5日截面收益。
+
+
+**LLM 候选审查(B角 56代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `log(log(add(barra_residual_volatility, max(corr200(fa_np_yoy, ts_mean60(ts_min20(sub(fa_ocf_yoy, barra_leverage)))), barra_leverage))))`
+  > 理由: 财务字段与barra风险因子嵌套相减再取log，无清晰量价行为，属数学拼凑
+- KILL `max(ts_rank100(cs_rank(mul(mf_s_buy, ts_rank100(add(barra_residual_volatility, max(corr200(fa_np_yoy, ts_mean60(ts_min20(corr100(mf_x_bqty, barra_leverage)))), barra_leverage)))))), barra_residual_volatility)`
+  > 理由: 多层嵌套同源算子，窗口20/60/100/200堆砌，经济含义拼凑难解释，过拟合嫌疑
+- KILL `max(ts_rank100(max(ts_rank100(cs_rank(mul(mf_s_buy, ts_rank100(mul(fa_np_yoy, ts_mean60(barra_residual_volatility)))))), barra_residual_volatility)), barra_residual_volatility)`
+  > 理由: 多层同源ts_rank/max嵌套冗余，量价与基本面拼凑，经济含义不清，过拟合嫌疑
+- KILL `max(ts_rank100(max(ts_rank100(cs_rank(mul(mf_s_buy, ts_rank100(corr200(fa_np_yoy, ts_mean60(barra_residual_volatility)))))), mul(mf_s_buy, ts_rank100(corr200(fa_np_yoy, ts_mean60(barra_residual_volatility)))))), barra_residual_volatility)`
+  > 理由: 多层ts_rank/corr嵌套冗余，经济含义拼凑难解释，参数海捞针
+- KILL `max(ts_rank100(max(ts_rank100(cs_rank(mul(mf_s_buy, ts_rank100(corr200(fa_np_yoy, ts_mean100(barra_residual_volatility)))))), barra_residual_volatility)), barra_residual_volatility)`
+  > 理由: 多层ts_rank/cs_rank嵌套冗余，经济含义拼凑难解释，属参数海捞针
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:叶子集中度1.0、结构多样性1.0却全族被拦14次,说明不是多样性不足,而是有效信号在L2被换手与稳定性双杀,进化在自噬。
+> 
+> (2)建议一(压fa_np_yoy到0.25)不对症:叶子占比高是结果不是原因,强压会砍掉唯一有IC的字段,应改按族配额而非单字段。建议二(min_stab+0.10)与L2换手失败冲突:换手高是失败主因,提稳定性阈值只会更早淘汰候选,加剧n_pass=0。两条建议方向相反,一条松一条紧,叠加后大概率空转。
+> 
+> (3)我建议mix=[0.15,0.35,0.2,0.2,0.1],depth=[2,3,4],min_stab=0.70,decorr=0.55。理由:降深度与稳定性门槛先救活L2,再靠交叉与引导补多样性,避免在无候选时继续收紧。
+
+## 第 57 代 (B角诊断)
+
+| n_l1 | fam_blocked | n_l2 |
+| --- | --- | --- |
+| 0 | 19 | 0 |
+
+**B角建议(下一代策略)**:
+- 各项指标正常, 维持当前策略
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 57代)**: 调用3次, 解析通过31条, 引导位使用31条
+> 资金流方向与价格/换手行为发生背离时（大单主动净买入强而价格未跟上，或中小单承接而超大单撤离），未来5日截面收益更可能向上；同时盈利同比加速度与风格暴露的错配提供独立确认。
+
+
+**LLM 候选审查(B角 57代)**: 深判 3 个, KILL 3 个(剔除出 L2 费后回测)
+- KILL `log(log(add(barra_residual_volatility, max(corr200(fa_np_yoy, ts_mean60(ts_mean200(corr100(barra_residual_volatility, barra_leverage)))), barra_leverage))))`
+  > 理由: 多层嵌套corr/ts_mean拼凑，无清晰量价机制，参数冗余似过拟合
+- KILL `log(log(add(barra_residual_volatility, max(corr200(fa_np_yoy, ts_mean60(ts_min20(corr100(amplitude, barra_leverage)))), barra_leverage))))`
+  > 理由: 多层嵌套corr/ts_min/ts_mean拼凑，无清晰量价机制，参数冗余似过拟合
+- KILL `max(ts_rank100(add(barra_residual_volatility, max(corr200(fa_np_yoy, ts_mean60(ts_min20(corr100(barra_residual_volatility, barra_leverage)))), barra_leverage))), barra_residual_volatility)`
+  > 理由: 多层嵌套corr/ts_min/ts_mean拼凑，无清晰量价经济含义，参数冗余似过拟合
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:19个家族全被blocked且L1/L2双零产出,说明是准入门槛或去相关约束把整代掐死,而非搜索无效。
+> 
+> (2)规则B"指标正常维持现状"完全不对症:零产出不是正常,是硬约束过紧。min_stab=0.75配decorr=0.65在无候选时只会继续空转,二者叠加等于双重否决,互相强化锁死。
+> 
+> (3)我建议mix=[0.2,0.3,0.15,0.2,0.15],depth=[2,3,4],min_stab=0.5,decorr=0.4,fsa_th=0.1,bank_skel_max=2:先放宽稳定与去相关门槛让种子活下来,再谈择优。
+
+## 第 58 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 27 | 0.039 | 0.067 | 0.908 | 0.000 | 0.222 | 0.963 | 13 | 0.148 | 27 | 2 | 0.083 | 1.000 | 0.240 | 1.000 | 0.560 | 0.000 | 0.704 |
+
+叶子使用: {'intraday': 6, 'barra_residual_volatility': 4, 'barra_non_linear_size': 4, 'overnight': 3, 'mf_m_sqty': 3, 'mf_l_sqty': 2}
+
+**B角建议(下一代策略)**:
+- L2中100%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 58代)**: 调用3次, 解析通过37条, 引导位使用37条
+> 在换手与成交额放大的背景下，若日内价格强度（收盘位置/振幅）与隔夜跳空方向出现背离，且这种背离伴随残余波动率抬升，则未来5日截面收益倾向于反转向上——即'高换手+日内弱但隔夜强'的错杀股存在短期修复溢价。
+
+
+**LLM 候选审查(B角 58代)**: 深判 5 个, KILL 2 个(剔除出 L2 费后回测)
+- KILL `mul(sub(ts_delta20(corr60(open, fa_ocf_yoy)), ts_mean150(barra_residual_volatility)), mul(mf_s_bqty, mf_s_bqty))`
+  > 理由: 价量基本面混搭，mf_s_bqty平方无经济含义，窗口拼凑似参数海捞针
+- KILL `max(cs_demean(mf_s_sqty), ts_std20(ts_mean5(corr100(barra_size, mf_m_sqty))))`
+  > 理由: 两分支量纲/含义拼凑，corr100与嵌套窗口冗余，无清晰量价机制
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根：IC尚可但L2全军覆没，fail_calmar与fail_negyear双100%，说明信号是"高稳定低收益"的伪alpha，非深度不足。
+> 
+> (2)交叉+15%对症存疑：病根在收益/换手结构而非搜索空间，加深depth只会放大过拟合，无效。mix重归一化后交叉0.4偏高，与decorr=0.65叠加会挤压变异探索，互相冲突。min_stab=0.75反而放松了本就过稳的约束，方向反了。
+> 
+> (3)建议：mix=[0.25,0.2,0.15,0.25,0.15]，depth=[2,3,3]，min_stab=0.85，decorr=0.5。理由：提变异与引导、降深度与相关约束，逼出收益弹性而非更稳的弱信号。
+
+## 第 59 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 39 | 0.046 | 0.069 | 0.878 | 0.000 | 0.513 | 0.897 | 9 | 0.103 | 30 | 0 | 0.023 | 1.000 | 0.500 | 0.967 | 0.700 | 0.000 | 0.933 |
+
+叶子使用: {'barra_residual_volatility': 20, 'mf_m_sqty': 9, 'mf_l_sqty': 8, 'barra_non_linear_size': 6, 'barra_liquidity': 6, 'barra_size': 5}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比51%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中50%因换手过高失败 -> min_stab再+0.10
+- L2中100%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 本代0通过 -> 深度放宽到3~5, 探索更复杂结构
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 5]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 59代)**: 调用3次, 解析通过37条, 引导位使用37条
+> 在资金流分层信息未被价格充分定价时，超大单主动净买入占比的短期抬升、以及中小单与超大单的方向背离，能预测未来5日截面收益，且该效应在低换手、低残波环境中更强。
+
+
+**LLM 候选审查(B角 59代)**: 深判 5 个, KILL 2 个(剔除出 L2 费后回测)
+- KILL `ts_delta60(barra_non_linear_size)`
+  > 理由: 对市值类因子做60日差分，仅再表达规模老故事，无增量量价机制
+- KILL `min(mf_s_buy, div(sub(log(mf_s_bqty), cs_rank(close)), mul(max(turn_ratio, fa_lev), true_range)))`
+  > 理由: 多字段量价杠杆波动率拼凑嵌套，无清晰经济机制，属数学巧合
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根: 叶子被barra_residual_volatility家族垄断(51%), L1高IC全是同一结构的自相关变体, 信号同质导致L2 Calmar全灭。
+> 
+> (2)压权重到0.25对症但不够, 需硬性ban该字段或强制跨族配对; min_stab+0.10方向反了, 失败主因是Calmar弱非不稳, 加稳会进一步锁死探索; 交叉+15%与深度3~5合理, 但mix里变异仅0.1偏低, 交叉0.4易在贫瘠池里近亲繁殖; 扰动/引导/随机固定值无冲突但引导0.2在叶子集中时会被同族吸走。
+> 
+> (3)建议mix=[0.2,0.3,0.15,0.2,0.15], depth=[2,3,4], min_stab=0.70, decorr=0.75。理由: 提变异+降decorr阈值强制换族, 深度不过5避免过拟合弱信号。
+
+## 第 60 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 33 | 0.057 | 0.070 | 0.875 | 0.000 | 0.545 | 0.939 | 12 | 0.061 | 30 | 0 | 0.015 | 1.000 | 0.567 | 1.000 | 0.667 | 0.000 | 0.867 |
+
+叶子使用: {'barra_residual_volatility': 18, 'mf_m_sqty': 12, 'barra_non_linear_size': 11, 'mf_x_bqty': 10, 'mf_s_bqty': 7, 'mf_l_sqty': 6}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比55%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中57%因换手过高失败 -> min_stab再+0.10
+- L2中100%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 本代0通过 -> 深度放宽到3~5, 探索更复杂结构
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 5]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 60代)**: 调用3次, 解析通过35条, 引导位使用35条
+> 在资金流与波动结构交互层面，超大单主动净买入相对中小单的背离、以及资金流强度与价格变化的量额错配，能刻画知情交易者的隐蔽吸筹/派发行为，从而预测未来5日截面收益。
+
+
+**LLM 候选审查(B角 60代)**: 深判 5 个, KILL 3 个(剔除出 L2 费后回测)
+- KILL `sub(barra_residual_volatility, corr20(mul(barra_non_linear_size, mf_m_sqty), ts_sum100(mf_l_sell)))`
+  > 理由: 残差波动率减量价相关，字段尺度与含义拼凑，无清晰经济机制
+- KILL `sub(barra_residual_volatility, ts_rank60(corr60(ts_rank100(barra_size), corr20(ret, mf_x_sqty))))`
+  > 理由: 多层嵌套同源相关与排序，经济含义拼凑难解释，参数冗余疑过拟合
+- KILL `sub(barra_residual_volatility, corr20(corr100(barra_non_linear_size, mf_m_sqty), barra_non_linear_size))`
+  > 理由: 残差波动率与非线性市值相关量相减，量纲含义拼凑，无清晰量价机制，属数学巧合
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:叶子被barra_residual_volatility绑架,所有L1都是"减波动"同质变体,IC虚高但无独立alpha,L2全灭。
+> 
+> (2)叶子压权重对症;但min_stab+0.10与depth放宽到3~5自相矛盾,复杂结构稳定性更差,会加剧0通过;交叉+15%在叶子同质下等于近亲繁殖,无效;decorr=0.65偏松,无法拆散同族。
+> 
+> (3)mix=[0.25,0.2,0.15,0.25,0.15],depth=[2,3],min_stab=0.70,decorr=0.80。理由:先降同质、强去相关、控深度,再谈复杂度。
+
+## 第 61 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 33 | 0.058 | 0.073 | 0.881 | 0.000 | 0.667 | 0.909 | 11 | 0.091 | 30 | 0 | 0.025 | 1.000 | 0.500 | 1.000 | 0.567 | 0.000 | 0.700 |
+
+叶子使用: {'barra_residual_volatility': 22, 'mf_m_sqty': 11, 'barra_liquidity': 10, 'mf_x_bqty': 10, 'barra_non_linear_size': 9, 'amplitude': 7}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比67%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中50%因换手过高失败 -> min_stab再+0.10
+- L2中100%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 本代0通过 -> 深度放宽到3~5, 探索更复杂结构
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 5]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 61代)**: 调用3次, 解析通过33条, 引导位使用33条
+> 在换手率与波动率放大的背景下，日内价格位置相对开盘价的偏移（日内动量）与隔夜跳空的方向背离，能捕捉知情交易者与非知情交易者的博弈，从而预测未来5日截面收益。
+
+
+**LLM 候选审查(B角 61代)**: 深判 5 个, KILL 3 个(剔除出 L2 费后回测)
+- KILL `mul(corr20(mul(barra_non_linear_size, barra_liquidity), barra_non_linear_size), neg(barra_residual_volatility))`
+  > 理由: Barra风格暴露相乘再相关，属已知市值/流动性/波动率同源冗余，无增量机制
+- KILL `sub(barra_residual_volatility, corr20(mul(neg(ts_rank60(barra_liquidity)), mf_m_sqty), ts_mean200(mf_l_sell)))`
+  > 理由: 残差波动率减流动性-资金流相关，量纲与机制拼凑，无清晰量价行为
+- KILL `ts_delta20(ts_std200(mul(mf_l_sqty, ts_mean60(barra_liquidity))))`
+  > 理由: 多层同源时序算子嵌套，窗口20/60/200无机制解释，经济含义拼凑难辨，过拟合嫌疑
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:叶子被barra_residual_volatility单点垄断(67%),且L2全灭于Calmar/负年,说明信号弱在结构同质而非深度不足。
+> 
+> (2)压叶子权重对症;min_stab+0.10与depth放宽到3~5自相矛盾,更深结构通常更不稳,会加剧换手与过拟合;交叉+15%对Calmar无效,因同质叶子交叉仍产同族;mix护栏把变异压到10%反而削弱去同质化。
+> 
+> (3)我建议mix=[0.25,0.30,0.15,0.15,0.15],depth=[2,3],min_stab=0.80,decorr=0.80。理由:提变异+强去相关才能破叶子垄断,深度不升反降以保稳定。
+
+## 第 62 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 32 | 0.056 | 0.069 | 0.909 | 0.000 | 0.906 | 0.875 | 10 | 0.094 | 30 | 0 | 0.039 | 1.000 | 0.433 | 1.000 | 0.567 | 0.000 | 0.600 |
+
+叶子使用: {'barra_residual_volatility': 29, 'amplitude': 12, 'barra_liquidity': 10, 'mf_m_sqty': 9, 'barra_non_linear_size': 8, 'mf_x_bqty': 6}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比91%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中43%因换手过高失败 -> min_stab再+0.10
+- L2中100%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 本代0通过 -> 深度放宽到3~5, 探索更复杂结构
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 5]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 62代)**: 调用3次, 解析通过40条, 引导位使用40条
+> 资金流内部结构失衡（大单与中小单方向背离、量额不匹配）叠加日内形态与波动结构，能捕捉未被价格充分定价的短期截面收益。
+
+
+**LLM 候选审查(B角 62代)**: 深判 5 个, KILL 3 个(剔除出 L2 费后回测)
+- KILL `sub(barra_residual_volatility, corr20(mul(barra_non_linear_size, corr100(mf_x_bqty, mf_s_bqty)), barra_non_linear_size))`
+  > 理由: 残差波动率与非线性市值自相关相减，量价含义拼凑，属数学巧合
+- KILL `ts_delta20(ts_std200(mul(mf_l_sqty, ts_mean60(corr60(low, corr20(neg(mul(barra_liquidity, neg(barra_residual_volatility))), barra_residual_volatility))))))`
+  > 理由: 多层嵌套corr/neg/mul拼凑，无清晰量价机制，参数冗余似过拟合
+- KILL `sub(barra_residual_volatility, corr20(mul(neg(ts_rank60(ts_std200(sub(mf_x_bqty, mf_m_bqty)))), amplitude), ts_sum20(mf_l_sell)))`
+  > 理由: 多层嵌套同源算子冗余，买卖量差与振幅拼凑，无清晰量价机制，疑似参数海捞针
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:叶子被barra_residual_volatility垄断(91%),L2全是它的残差变体,信号同质且Calmar全灭,是"单因子过拟合"而非探索不足。
+> 
+> (2)压权重0.25对症;min_stab+0.10错——换手失败是turn高不是stab低,加stab无效且与放宽depth冲突;交叉+15%加深depth方向对但会加剧叶子集中,需配合去相关;mix里交叉0.4已够,扰动/引导固定值偏机械,随机0.15在0通过时是浪费。
+> 
+> (3)建议mix=[0.15,0.30,0.15,0.25,0.15],depth=[2,3,4],min_stab=0.70,decorr=0.75。理由:降depth防过拟合、提decorr强制换字段、引导权重升以注入先验,比盲目加深更对症。
+
+## 第 63 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 26 | 0.058 | 0.069 | 0.896 | 0.000 | 0.962 | 0.923 | 14 | 0.115 | 26 | 0 | 0.021 | 1.000 | 0.577 | 1.000 | 0.538 | 0.000 | 0.500 |
+
+叶子使用: {'barra_residual_volatility': 25, 'barra_liquidity': 6, 'amplitude': 6, 'mf_m_sqty': 6, 'barra_non_linear_size': 4, 'mf_x_bqty': 4}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比96%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中58%因换手过高失败 -> min_stab再+0.10
+- L2中100%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 本代0通过 -> 深度放宽到3~5, 探索更复杂结构
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 5]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 63代)**: 调用3次, 解析通过44条, 引导位使用44条
+> 日内收益与隔夜跳空的背离（日内被砸而出价未跳低=日内吸收）预示未来五日截面收益反转向上，且该吸收效应在低残波、低杠杆、高盈利增长股中更强。
+
+
+**LLM 候选审查(B角 63代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `max(barra_residual_volatility, ts_rank60(cs_scale(barra_non_linear_size)))`
+  > 理由: max拼接波动率与规模时序排名，两字段异源无经济机制，属含义拼凑
+- KILL `sub(sub(barra_residual_volatility, corr100(barra_non_linear_size, fa_roe)), corr100(barra_non_linear_size, fa_roe))`
+  > 理由: 残差波动率减两倍同源相关项，结构冗余且经济含义拼凑，难解释
+- KILL `max(barra_residual_volatility, ts_rank60(cs_scale(ts_std60(ts_std60(fa_ocf_yoy)))))`
+  > 理由: 残差波动率与现金流同比双层波动率拼凑，经济含义不清，属数学巧合
+- KILL `max(barra_residual_volatility, ts_rank60(sub(barra_residual_volatility, corr20(mul(barra_non_linear_size, mul(mf_m_sqty, mul(mf_m_sqty, amplitude))), barra_growth))))`
+  > 理由: 多层同源barra残差波动嵌套，含成交量平方与振幅拼凑，无清晰量价机制，冗余过拟合
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1) 病根:叶子被barra_residual_volatility单点垄断(96%),信号同源导致L2全线Calmar不足,不是深度不够而是多样性枯竭。
+> 
+> (2) 压权重0.25对症;min_stab+0.10与0通过矛盾,只会更死;交叉+15%且深度3~5,在单叶垄断下只放大同源噪声,无效;扰动/引导/随机固定值合理但被交叉挤压;整体把"缺多样性"误诊为"缺复杂度"。
+> 
+> (3) mix=[0.25,0.2,0.15,0.25,0.15],depth=[2,3,4],min_stab=0.70,decorr=0.80。理由:先靠变异与引导换字段、降相关,再谈深度。
+
+## 第 64 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 26 | 0.059 | 0.076 | 0.883 | 0.000 | 1.000 | 1.000 | 15 | 0.038 | 26 | 0 | 0.037 | 1.000 | 0.769 | 1.000 | 0.500 | 0.000 | 0.538 |
+
+叶子使用: {'barra_residual_volatility': 26, 'barra_liquidity': 11, 'low': 8, 'amplitude': 7, 'mf_x_bqty': 7, 'barra_non_linear_size': 6}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比100%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中77%因换手过高失败 -> min_stab再+0.10
+- L2中100%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 本代0通过 -> 深度放宽到3~5, 探索更复杂结构
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 5]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 64代)**: 调用3次, 解析通过45条, 引导位使用45条
+> 资金流内部方向背离（中小单与超大单主动买卖净额之差）叠加日内价格位置与波动结构，能刻画知情交易者与散户的博弈，从而预测未来5日截面收益。
+
+
+**LLM 候选审查(B角 64代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `max(barra_residual_volatility, ts_rank60(cs_scale(ts_std200(ts_delta5(ln_volume)))))`
+  > 理由: max拼接残差波动率与成交量波动秩，含义拼凑且窗口冗余，无统一经济机制
+- KILL `max(sub(barra_residual_volatility, ts_rank200(cs_scale(ts_std200(ts_std60(low))))), ts_rank60(corr60(mf_x_bqty, amplitude)))`
+  > 理由: 多层嵌套同源波动算子冗余，含barra残差波动与量价拼凑，经济含义不清，疑似参数海捞针
+- KILL `mul(corr60(mf_x_bqty, amplitude), sub(mul(barra_residual_volatility, barra_residual_volatility), corr100(barra_non_linear_size, fa_roe)))`
+  > 理由: 多字段多算子拼凑，经济含义不清，疑似参数海捞针与冗余嵌套
+- KILL `sub(barra_residual_volatility, corr20(div(barra_non_linear_size, barra_liquidity), barra_non_linear_size))`
+  > 理由: barra因子间相减拼凑，无明确量价行为，属数学巧合结构
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 1s)**:
+
+> (1)病根:叶子被barra_residual_volatility单一主导(100%),信号同质化导致Calmar全灭,换手与稳定性只是伴生症状。
+> 
+> (2)点评:压权重到0.25对症,但需配字段白名单否则无效;min_stab+0.10与深度放宽到3~5互相冲突,深树更易过拟合、稳定性更难达标;交叉+15%在叶子同质时只是近亲繁殖,无效;mix重归一化后交叉0.4偏高、变异0.1偏低,探索不足。
+> 
+> (3)我建议:mix=[0.25,0.25,0.15,0.2,0.15],depth=[2,3,4],min_stab=0.80,decorr=0.75。理由:先提变异与去相关打破叶子垄断,深度收敛防过拟合,稳定门槛不降反升。
+
+## 第 65 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 28 | 0.060 | 0.076 | 0.893 | 0.000 | 1.000 | 1.000 | 9 | 0.036 | 28 | 0 | 0.066 | 0.964 | 0.679 | 1.000 | 0.607 | 0.000 | 0.571 |
+
+叶子使用: {'barra_residual_volatility': 28, 'barra_liquidity': 13, 'barra_non_linear_size': 8, 'low': 7, 'mf_m_sqty': 6, 'mf_s_bqty': 5}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比100%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中68%因换手过高失败 -> min_stab再+0.10
+- L2中96%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 本代0通过 -> 深度放宽到3~5, 探索更复杂结构
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 5]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 65代)**: 调用3次, 解析通过43条, 引导位使用43条
+> 主动资金流的方向性失衡(大单/超大单净买入占比)与价格变化出现背离时，未来5日截面收益向资金流方向修复；同时财报景气加速度与风格暴露的错配提供独立定价线索。
+
+
+**LLM 候选审查(B角 65代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `max(barra_residual_volatility, ts_rank60(cs_scale(div(barra_non_linear_size, ts_std150(barra_residual_volatility)))))`
+  > 理由: 残差波动率与非线性市值相除再标准化，属已知市值/波动率族冗余拼凑，无增量机制
+- KILL `max(max(barra_residual_volatility, ts_rank60(barra_liquidity)), ts_rank60(max(barra_residual_volatility, ts_rank60(cs_scale(ts_std200(mf_m_sqty))))))`
+  > 理由: 多层max/ts_rank嵌套冗余，残差波动与流动性拼凑，无清晰增量机制
+- KILL `max(barra_residual_volatility, ts_rank60(sub(barra_residual_volatility, ts_rank100(cs_scale(ts_std200(ts_std60(barra_liquidity)))))))`
+  > 理由: 多层同源波动率/流动性嵌套，窗口60/100/200冗余，经济含义拼凑难解释
+- KILL `mul(corr60(mf_m_sqty, cs_demean(div(mf_m_buy, low))), abs(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(mf_m_sell))))))`
+  > 理由: 多层嵌套同源量价算子，窗口60/200冗余，经济含义拼凑难解释，过拟合嫌疑
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:叶子被barra_residual_volatility单一垄断,信号同质化,IC虚高但Calmar/换手全崩,是过拟合而非因子弱。
+> 
+> (2)压权重0.25对症;min_stab+0.10与depth放宽到3~5自相矛盾,越复杂越不稳,应反向;交叉+15%且depth加深会放大同质繁殖,无效;扰动/引导/随机固定比例合理;decorr=0.65偏松,难破垄断。
+> 
+> (3)我建议mix=[0.15,0.25,0.15,0.25,0.20],depth=[2,3],min_stab=0.85,decorr=0.80。理由:先降复杂度、提稳定性与去相关,逼引擎换字段,而非加深结构。
+
+## 第 66 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 27 | 0.060 | 0.076 | 0.884 | 0.000 | 1.000 | 0.963 | 16 | 0.074 | 27 | 0 | 0.066 | 0.963 | 0.741 | 0.926 | 0.481 | 0.000 | 0.593 |
+
+叶子使用: {'barra_residual_volatility': 27, 'barra_liquidity': 13, 'mf_m_sqty': 6, 'barra_non_linear_size': 6, 'low': 6, 'amplitude': 4}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比100%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中74%因换手过高失败 -> min_stab再+0.10
+- L2中96%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 本代0通过 -> 深度放宽到3~5, 探索更复杂结构
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 5]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 66代)**: 调用3次, 解析通过33条, 引导位使用33条
+> 在资金流、财报景气与风格暴露三条新叶子上，真正能预测未来5日截面收益的是'信息到达速度差'：主动资金流相对其自身历史的异常强度、盈利同比的加速度、以及风格动量短长窗背离，三者共同刻画'增量信息尚未被价格完全吸收'的股票，其未来5日截面收益更高。
+
+
+**LLM 候选审查(B角 66代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `max(max(barra_residual_volatility, ts_rank60(barra_liquidity)), ts_rank60(cs_scale(ts_std200(sub(barra_non_linear_size, barra_liquidity)))))`
+  > 理由: 多因子max拼凑，含尺度相减与嵌套同源算子，无清晰量价机制，冗余过拟合
+- KILL `max(mul(barra_residual_volatility, barra_residual_volatility), ts_rank60(sub(barra_residual_volatility, abs(barra_residual_volatility))))`
+  > 理由: 残差波动率平方与自减绝对值恒为0的ts_rank拼凑，无经济含义，纯数学巧合
+- KILL `sub(mul(barra_residual_volatility, barra_residual_volatility), corr200(barra_non_linear_size, cs_scale(ts_mean20(barra_liquidity))))`
+  > 理由: 残差波动平方减流动性相关，量纲与含义拼凑，无清晰量价机制
+- KILL `max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity))`
+  > 理由: 同源barra字段自除再取max，无窗口无经济机制，属数学拼凑冗余结构
+- KILL `sub(max(barra_residual_volatility, ts_rank60(sub(barra_residual_volatility, ts_rank200(cs_scale(ts_std200(ts_std60(ts_rank60(barra_liquidity)))))))), ts_rank60(barra_comovement))`
+  > 理由: 多层同源波动率/流动性算子嵌套冗余，窗口60/200拼凑，经济含义难辨，疑似参数海捞
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 1s)**:
+
+> (1)病根:叶子被barra_residual_volatility单一霸占,信号同质化,换手与Calmar双杀,0通过是必然。
+> 
+> (2)压权重0.25对症;min_stab+0.10错,stab_med已0.884且lt50为0,再抬只砍候选不降换手;交叉+15%与深度3~5叠加会加剧过拟合,且与decorr0.65冲突;扰动/引导/随机固定值合理。核心矛盾是换手,非稳定性。
+> 
+> (3)建议mix=[0.15,0.25,0.2,0.25,0.15],depth=[2,3,4],min_stab=0.80,decorr=0.75。理由:降深度、提引导与去相关,逼叶子换血并压换手,而非堆复杂度。
+
+## 第 67 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 25 | 0.060 | 0.069 | 0.871 | 0.000 | 1.000 | 1.000 | 17 | 0.120 | 25 | 1 | 0.066 | 0.958 | 0.833 | 0.958 | 0.292 | 0.000 | 0.400 |
+
+叶子使用: {'barra_residual_volatility': 25, 'barra_liquidity': 10, 'barra_non_linear_size': 10, 'volume': 6, 'mf_l_sqty': 5, 'mf_s_bqty': 4}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比100%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中83%因换手过高失败 -> min_stab再+0.10
+- L2中96%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 67代)**: 调用3次, 解析通过43条, 引导位使用43条
+> 资金流内部结构失衡（大单/超大单主动净买入相对中小单的背离）配合日内形态与隔夜跳空的量价背离，能刻画知情交易者的吸筹/派发行为，从而预测未来5日截面收益。
+
+
+**LLM 候选审查(B角 67代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `max(mul(corr60(mf_l_sell, amplitude), abs(barra_residual_volatility)), cs_scale(barra_non_linear_size))`
+  > 理由: 拼凑barra风格因子与资金流，max叠加无经济机制，属参数堆砌
+- KILL `sub(max(barra_residual_volatility, ts_rank60(cs_scale(barra_liquidity))), ts_rank200(cs_scale(ts_std200(ts_std60(ts_rank60(cs_scale(ts_std150(barra_residual_volatility))))))))`
+  > 理由: 多层同源波动率嵌套+窗口堆叠，无清晰量价机制，冗余过拟合
+- KILL `mul(corr60(turnover, amplitude), abs(max(max(mul(corr60(mf_l_sell, amplitude), abs(barra_residual_volatility)), ts_rank60(barra_non_linear_size)), ts_rank60(cs_scale(ts_std200(cs_rank(mf_l_sqty)))))))`
+  > 理由: 多层同源算子嵌套拼凑，含市值/成交额老因子，无清晰量价机制，过拟合嫌疑重
+- KILL `mul(corr60(turnover, amplitude), abs(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(mf_l_sqty))))))`
+  > 理由: 成交额与振幅相关乘残差波动，多算子嵌套冗余，经济含义拼凑难解释
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:叶子被barra_residual_volatility单一霸占(占比100%),信号同质化导致L2普遍Calmar弱、换手高,是"伪分散"。
+> 
+> (2)压权重0.25对症;min_stab再+0.10方向反了,换手高不是稳定性问题,加stab只会更锁死同质叶子;交叉+15%且depth加深与"降换手"目标冲突,深树更易过拟合、换手更高;mix护栏本身自洽,但把交叉抬到0.4会放大同质重组。
+> 
+> (3)建议mix=[0.25,0.2,0.15,0.25,0.15],depth=[2,3,3],min_stab=0.70,decorr=0.80。理由:提变异、压交叉、降深度、升decorr,才能真正打破单叶子垄断并压换手。
+
+## 第 68 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 17 | 0.055 | 0.069 | 0.885 | 0.000 | 1.000 | 0.941 | 8 | 0.294 | 17 | 0 | 0.108 | 0.941 | 0.529 | 1.000 | 0.353 | 0.000 | 0.294 |
+
+叶子使用: {'barra_residual_volatility': 17, 'barra_liquidity': 11, 'turnover': 5, 'barra_non_linear_size': 5, 'mf_s_buy': 4, 'mf_m_sqty': 3}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比100%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中53%因换手过高失败 -> min_stab再+0.10
+- L2中94%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 本代0通过 -> 深度放宽到3~5, 探索更复杂结构
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 5]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 68代)**: 调用3次, 解析通过38条, 引导位使用38条
+> 隔夜跳空与日内反转的背离结构（跳空高开但日内资金/量能无法延续）是短期截面收益的负向预测源，其与波动率暴露、换手率冲击的交互能进一步放大该反转效应。
+
+
+**LLM 候选审查(B角 68代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `mul(corr60(turnover, amplitude), abs(max(barra_residual_volatility, ts_rank100(cs_scale(ts_std200(cs_rank(turnover)))))))`
+  > 理由: 多层同源换手率嵌套+多窗口拼凑，经济含义不清，冗余过拟合
+- KILL `max(max(barra_residual_volatility, ts_min100(barra_non_linear_size)), max(barra_residual_volatility, ts_rank200(cs_scale(ts_std100(cs_rank(mf_s_buy))))))`
+  > 理由: barra残差波动与非线性市值拼凑，量价含义不清，属参数海捞针冗余结构
+- KILL `sub(mul(barra_residual_volatility, barra_liquidity), corr100(barra_non_linear_size, cs_rank(max(barra_residual_volatility, ts_rank200(cs_scale(ts_std100(cs_rank(mf_s_buy))))))))`
+  > 理由: 多层嵌套同源波动/流动性算子，含原始尺度相减，经济含义拼凑难解释，过拟合嫌疑
+- KILL `max(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std150(cs_rank(mf_s_buy)))))`
+  > 理由: 残差波动率与流动性相除无经济含义，再叠长窗量价rank，属参数拼凑冗余
+- KILL `max(abs(max(barra_residual_volatility, max(abs(max(barra_residual_volatility, ts_rank60(cs_scale(ts_std200(cs_rank(turnover)))))), ts_rank60(cs_scale(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity))))))), ts_rank60(cs_scale(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)))))`
+  > 理由: 多层max/abs嵌套冗余，含barra残差波动与流动性自除，无清晰量价机制，疑似参数拼凑
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 3s)**:
+
+> (1)病根:叶子被barra_residual_volatility单一字段垄断(占比100%),信号同质化,叠加过度换手与弱Calmar,导致L2全灭。
+> 
+> (2)点评:压权重到0.25对症,但仅压权重不够,需硬性字段配额。min_stab+0.10方向反了——stab_med已0.885、stab_lt50=0,再抬只会更空,应降。交叉+15%与深度加深对症弱信号,但depth放宽到5会加剧换手,与fail_turn冲突。mix重归一化后交叉0.4偏高、变异0.1偏低,探索不足。decorr=0.65偏松,难破同质。
+> 
+> (3)取值:mix=[0.2,0.3,0.15,0.2,0.15],depth=[2,3,4],min_stab=0.80,decorr=0.80。理由:提变异+收紧decorr破字段垄断,控深度压换手,min_stab微降留活口。
+
+## 第 69 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 38 | 0.052 | 0.075 | 0.900 | 0.000 | 0.579 | 0.921 | 5 | 0.211 | 30 | 1 | 0.108 | 0.966 | 0.379 | 0.966 | 0.483 | 0.000 | 0.400 |
+
+叶子使用: {'barra_residual_volatility': 22, 'barra_liquidity': 17, 'barra_non_linear_size': 14, 'turnover': 5, 'intraday': 5, 'mf_s_buy': 3}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比58%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中97%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 69代)**: 调用3次, 解析通过45条, 引导位使用45条
+> 本代假设：在流动性与波动暴露被风格化剥离后，真正的截面收益来自‘资金流方向与价格/跳空形态的错位’——即主动大单净买入持续但日内价格未跟上（价量背离）的股票，以及隔夜跳空与日内反转结构不匹配的股票，未来5日截面收益更高；同时盈利景气与杠杆风格的错配提供二次确认。
+
+
+**LLM 候选审查(B角 69代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `sub(mul(barra_residual_volatility, barra_liquidity), corr100(barra_non_linear_size, cs_rank(ts_mean100(mf_s_buy))))`
+  > 理由: 波动率×流动性再减规模与资金流相关，结构拼凑冗余，属已知风格因子重述
+- KILL `sub(mul(barra_residual_volatility, barra_liquidity), corr100(barra_non_linear_size, cs_rank(cs_rank(amplitude))))`
+  > 理由: barra风险因子与振幅秩相关相乘再减，含义拼凑，无清晰量价机制
+- KILL `max(barra_residual_volatility, div(div(barra_non_linear_size, barra_liquidity), barra_liquidity))`
+  > 理由: barra因子二次相除拼凑，无明确量价机制，属数学巧合
+- KILL `max(max(barra_residual_volatility, ts_rank60(sub(barra_residual_volatility, ts_rank200(cs_scale(ts_std200(barra_liquidity)))))), ts_rank60(ts_std200(volume)))`
+  > 理由: 残差波动率与流动性/成交量多层嵌套拼凑，无清晰量价机制，冗余过拟合
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:叶子被barra_residual_volatility垄断58%,信号同质化,IC虚高但Calmar/负年普遍不过,是"单一因子换皮"而非真分散。
+> 
+> (2)压权重到0.25对症;但交叉+15%与深度加深同时上,会放大同源重组,反致叶子更集中,二者部分冲突。扰动/引导/随机固定15/20/15偏保守,引导20%在已知比仅0.21时易空转。decorr=0.65偏松,难破58%集中。min_stab=0.75会放行stab0.76的弱叶,与去同质目标矛盾。
+> 
+> (3)建议mix=[0.15,0.30,0.15,0.20,0.20],depth=[3,4,3],min_stab=0.85,decorr=0.75。理由:提变异与随机、降交叉深度以强制换字段,收紧stab与decorr直接压集中度。
+
+## 第 70 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | fail_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 21 | 0.054 | 0.075 | 0.906 | 0.000 | 1.000 | 0.905 | 8 | 0.238 | 21 | 1 | 0.108 | 0.850 | 0.450 | 0.950 | 0.750 | 0.000 | 0.143 |
+
+叶子使用: {'barra_residual_volatility': 21, 'barra_liquidity': 15, 'barra_non_linear_size': 13, 'turnover': 5, 'mf_s_buy': 1, 'barra_comovement': 1}
+
+**B角建议(下一代策略)**:
+- 叶子[barra_residual_volatility]占比100%过高 -> 权重压到0.25, 逼引擎换字段
+- L2中45%因换手过高失败 -> min_stab再+0.10
+- L2中85%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**LLM 引导(A角 70代)**: 调用3次, 解析通过45条, 引导位使用45条
+> 日内振幅相对换手率的异常放大（振幅未被成交充分解释）反映知情交易者隐蔽吸筹，此类个股未来5日截面收益更高，且该效应在隔夜跳空温和、上影线受抑时更纯净。
+
+
+**LLM 候选审查(B角 70代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `max(max(barra_residual_volatility, ts_rank60(sub(barra_residual_volatility, ts_rank200(ts_rank60(ts_std200(cs_rank(barra_residual_volatility))))))), ts_rank60(ts_std200(cs_rank(corr100(ts_rank20(fa_ocf_yoy), ts_std60(barra_size))))))`
+  > 理由: 多层同源波动率嵌套+窗口堆砌，含尺度相减，经济含义拼凑难解释
+- KILL `max(barra_residual_volatility, div(cs_scale(ts_std100(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(barra_residual_volatility)))))), barra_liquidity))`
+  > 理由: 多层嵌套同源残差波动率自比，窗口60/100/200冗余，经济含义拼凑难解释
+- KILL `max(barra_residual_volatility, ts_rank60(ts_std200(div(barra_non_linear_size, barra_liquidity))))`
+  > 理由: 非线性市值除流动性再取波动率排名，含义拼凑，与残差波动率取max冗余，难解释
+- KILL `max(max(barra_residual_volatility, div(barra_residual_volatility, turnover)), ts_rank60(cs_scale(ts_std100(max(barra_residual_volatility, max(max(barra_residual_volatility, div(barra_residual_volatility, turnover)), ts_rank60(cs_scale(ts_std100(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(barra_residual_volatility)))))))))))))`
+  > 理由: 残差波动率与换手率多层嵌套自引用，窗口60/100/200堆叠，无清晰经济含义，过拟合冗余
+- KILL `max(max(barra_residual_volatility, div(barra_residual_volatility, turnover)), ts_rank60(cs_scale(barra_liquidity)))`
+  > 理由: 残差波动率除以换手率再取max，量纲拼凑无经济含义，且与流动性因子同源冗余
+
+
+**AI 审查(DeepSeek deepseek-v4-flash, 2s)**:
+
+> (1)病根:叶子被barra_residual_volatility单点垄断(占比100%),信号同质化导致L2普遍Calmar弱、换手高,而非稳定性不足。
+> 
+> (2)压权重到0.25对症;min_stab+0.10无效甚至有害——stab_med已0.906、stab_lt50=0,瓶颈是Calmar不是稳定度,加码只会误杀;交叉+15%与加深depth方向对但会放大同质叶子,需先破垄断;扰动/引导/随机固定15/20/15与"交叉≥10%合计50%"自洽,无冲突。
+> 
+> (3)mix=[0.25,0.35,0.15,0.15,0.10] depth=[3,4,4] min_stab=0.70 decorr=0.75。理由:提变异与decorr强制换字段破垄断,降min_stab避免误杀,交叉略降防同质放大。

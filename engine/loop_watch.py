@@ -84,7 +84,13 @@ def start_next_gen(g: int) -> bool:
         log(f"[SKIP] loop{g}C.log 已存在，疑似重复代，不启动")
         return False
     seed = g * 10 + 7
-    cmd = [PY, "-u", "loop_engine.py", f"--gen={g}", "--n=800", "--l2=30", f"--seed={seed}"]
+    # 附加参数透传(2026-09-11): 便于无人值守时启用批1 新开关而不改代码
+    #   例: set LOOP_EXTRA_ARGS=--min_mono=0.75 --score_mode=new
+    extra = (os.environ.get('LOOP_EXTRA_ARGS') or '').split()
+    cmd = [PY, "-u", "loop_engine.py", f"--gen={g}", "--n=800", "--l2=30",
+           f"--seed={seed}"] + extra
+    if extra:
+        log(f"[ARGS] 附加参数: {' '.join(extra)}")
     log(f"[START] gen{g} seed={seed}")
     out = open(log_p, "w", encoding="utf-8")
     err = open(err_p, "w", encoding="utf-8")

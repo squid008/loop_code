@@ -34,6 +34,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 from factor_miner import (load_panel, prepare, get_universe, cs_rank,
                           evaluate_real, START, FWD, COST_PRESETS)
+from cost_presets import DEFAULT_COST, cost_label      # 成本档单一事实源(2026-09-11)
+from loop_metrics import rank_rows, decile_shape, l1_score   # L1 指标层(2026-09-11, 含 rank_rows)
 
 STATE = os.path.join(HERE, 'loop_state.pkl')
 ARCHIVE = os.path.join(os.path.dirname(HERE), 'docs', 'loop_archive.csv')
@@ -464,8 +466,8 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd):
                 '\n### F%02d · gen%d 入库（引擎自动同步，家族命名待人工精炼）\n'
                 '```\n%s\n```\n'
                 '- 家族：%s（auto）\n- 叶子：%s\n- 骨架：`%s`\n'
-                '- 费后指标（full，成本 %.0fbp/边）：%s\n'
-                % (no, gen, expr, fam, leaf_s, skel, r['cost'] * 1000, met))
+                '- 费后指标（full，成本 %s）：%s\n'
+                % (no, gen, expr, fam, leaf_s, skel, cost_label(r['cost']), met))
             no += 1
         if not det_rows:
             return
@@ -693,14 +695,8 @@ def trim_cache(cache, cap):
             cache.pop(k, None)
 
 
-def rank_rows(X):
-    """逐行排名(0~1), NaN 置 NaN; 用两次 argsort"""
-    Xf = np.where(np.isfinite(X), X, np.inf)
-    order = np.argsort(np.argsort(Xf, axis=1), axis=1).astype(np.float32)
-    n = np.isfinite(X).sum(axis=1, keepdims=True)
-    r = order / np.maximum(n - 1, 1)
-    r[~np.isfinite(X)] = np.nan
-    return r
+# rank_rows 已移至 loop_metrics.py（单一事实源, 2026-09-11）; 顶部 import 引入,
+# 故本模块内 `rank_rows(...)` 与外部的 `loop_engine.rank_rows` 接口保持不变。
 
 
 def factor_stability(V, dates=None, start=START, fwd=FWD):
@@ -1019,6 +1015,15 @@ def run(args):
     Rsub = fwd_ret[np.ix_(L1_ROWS, L1_COLS)]
     print(f"L1 子面板 {len(L1_ROWS)}日 x {len(L1_COLS)}股 "
           f"(全量 {U.shape[0]}x{U.shape[1]}) -> 数据量约 1/{U.size/max(Usub.size,1):.0f}")
+    # ---- 形状量(十档单调性)所需的调仓日抽样视图: 只算一次 ----
+    # rank_rows 逐行独立 => rank_rows(F)[::FWD] ≡ rank_rows(F[::FWD])，抽样与不抽样等价(更快)
+    Rsub_s, Usub_s = Rsub[::FWD], Usub[::FWD]
+    _min_mono = float(getattr(args, 'min_mono', 0.0) or 0.0)      # 缺字段=关闭(默认行为)
+    _score_mode = getattr(args, 'score_mode', 'old') or 'old'
+    need_shape = (_min_mono > 0) or (_score_mode == 'new')
+    if need_shape:
+        print(f"  [形状] 已启用十档单调性计算 (min_mono={_min_mono:g}, "
+              f"score_mode={_score_mode}; 调仓日视图 {Rsub_s.shape[0]}期)")
     stats = []
     BATCH = args.batch
     n_eval = 0
@@ -1056,10 +1061,26 @@ def run(args):
         vals = [(-v if s < 0 else v) for v, s in zip(vals, sign)]
         mu, ir = np.abs(mu), np.abs(ir)
         stab = [factor_stability(v, None) for v in vals]
-        for m_, i_, s_, k_, sg in zip(mu, ir, stab, kidx, sign):
-            stats.append(dict(idx=int(k_), node=cands[int(k_)],
-                              expr=str(cands[int(k_)]), ic=float(m_),
-                              ic_ir=float(i_), stab=float(s_), sign=float(sg)))
+        # 形状量: 仅在需要时算(默认 --min_mono 0 + score_mode old -> 零额外开销)
+        # 防御: 单个候选形状计算异常不应拖垮整代(引擎常无人值守), 记 None 即等同"无形状值"
+        shp = []
+        for v in vals:
+            if not need_shape:
+                shp.append(None)
+                continue
+            try:
+                shp.append(decile_shape(rank_rows(v[::FWD]), Rsub_s, Usub_s))
+            except Exception:
+                shp.append(None)
+        for m_, i_, s_, k_, sg, sh in zip(mu, ir, stab, kidx, sign, shp):
+            d = dict(idx=int(k_), node=cands[int(k_)],
+                     expr=str(cands[int(k_)]), ic=float(m_),
+                     ic_ir=float(i_), stab=float(s_), sign=float(sg))
+            if sh is not None:
+                d['mono'] = sh['mono']
+                d['best_grp'] = sh['best_grp']
+                d['shape_pos'] = sh['shape_pos']
+            stats.append(d)
         n_eval += len(vals)
         del vals, IC
         gc.collect()
@@ -1080,6 +1101,17 @@ def run(args):
         print("L1 无候选通过, 退出")
         return
     l1 = l1[(l1['ic'] > args.min_ic) & (l1['stab'] > args.min_stab)]
+    # ---- 形状门槛(gen52+, 批1 P0; --min_mono 默认 0=关闭 -> 默认零行为变化) ----
+    # 标定(1150 条历史 L2 候选): L2 通过者 mono 中位 0.964 / 最小 0.770; 判死者中位 0.867。
+    # 故 `mono >= 0.75` 可拦下 ~27% 判死候选且对 19 个入库因子**零误杀**。
+    if _min_mono > 0 and 'mono' in l1.columns:
+        n_pre_mono = len(l1)
+        l1 = l1[np.isfinite(l1['mono']) & (l1['mono'] >= _min_mono)]
+        print(f"  [形状门槛] 十档单调性 mono>={_min_mono:g} 后剩 {len(l1)} 个 "
+              f"(原 {n_pre_mono}, 拦 {n_pre_mono - len(l1)})")
+        if not len(l1):
+            print("L1 形状门槛后无候选, 退出")
+            return
     # ★去相关: 与【已入库已知因子】相关性过高的丢弃, 强迫引擎探索新方向
     #   (中金的"IC相关性<0.70"; 否则引擎会反复重新发现 ln_mktcap / amt_log)
     if args.decorr > 0:
@@ -1126,7 +1158,15 @@ def run(args):
     # 关键: 不能只按 |IC_IR| 排! 低稳定性(高换手)因子费后必亏
     # L1评分 = |IC_IR| x 稳定性权重; 换手代理 turn_est = 1 - stab
     l1['turn_est'] = 1.0 - l1['stab']
-    l1['score'] = l1['ic_ir'].abs() * (0.25 + 0.75 * l1['stab'].clip(0, 1))
+    if _score_mode == 'new':
+        # 批1 P0(gen52+): score = stab × (0.5 + 0.5·shape_pos)，**去掉 |ic_ir|**
+        # 依据: 标定 1150 条历史 L2 候选, 与 L2 Calmar 的相关性 old +0.167 -> new +0.668;
+        #       ic_ir 本身与 L2 负相关(-0.317), 乘进去在稀释 stab 的正信号(stab 单独 +0.546)。
+        #       IC 仍由 `ic > min_ic` 当准入门槛, 只是不再当排序驱动。
+        l1['score'] = l1_score(l1['stab'], l1['ic_ir'],
+                               l1['shape_pos'] if 'shape_pos' in l1.columns else None, 'new')
+    else:
+        l1['score'] = l1['ic_ir'].abs() * (0.25 + 0.75 * l1['stab'].clip(0, 1))
     l1 = l1.sort_values('score', ascending=False)
     # 数值近重复去重(只对 TopN 做, 用采样指纹加速, 否则 O(n^2) 跑不动)
     # gen51: 阈值 0.99 -> args.dedup_corr(默认0.85)。0.99 过松: 实测同代 F20~F23 两两
@@ -1270,7 +1310,7 @@ def run(args):
               f"Calmar={rr['calmar'] if rr['calmar'] else 0:5.2f} "
               f"夏普={rr['sharpe']:5.2f} 换手={rr.get('turn', np.nan)*100:4.1f}% "
               f"负年{sum(1 for v in yr.values() if v <= 0)} "
-              f"[cost={args.cost*1000:.1f}bp/边 win={args.window}] "
+              f"[cost={cost_label(args.cost)} win={args.window}] "
               f"分段{seg_txt} "
               f"{'PASS' if ok else ''}")
     res = pd.DataFrame(rows)
@@ -1645,8 +1685,17 @@ if __name__ == '__main__':
                     help='同代数值近重复去重阈值: L1 TopN 内两两 rank|corr|>该值则丢弃后者; '
                          'gen51 由硬编码 0.99 放宽到此(0.99 拦不住 0.88~0.93 的近重复因子)')
     ap.add_argument('--decorr', type=float, default=-1,
-                    help='与已知因子(ln_mktcap/amt_log)的最大|corr|, 超过则丢弃; '
-                         '负数=跟随B角建议, 0=关闭')
+                    help='与已知因子(ln_mktcap/amt_log + 历代入库 bank)的最大|corr|, 超过则丢弃; '
+                         '负数=跟随B角建议(实际 0.65~0.75), 0=关闭。'
+                         '**这即是「反冗余闸门」**(2026-09-11 批1 结论: novelty 不进排序分, 反冗余靠它)')
+    ap.add_argument('--min_mono', type=float, default=0.0,
+                    help='L1 形状门槛(批1 P0, 2026-09-11): 十档单调性 mono 低于该值则丢弃; 0=关闭(默认)。'
+                         '标定(1150 条历史 L2 候选): 入库因子 mono 最小 0.770 -> 取 0.75 可拦下约 27%% '
+                         '被判死的候选, 且对入库因子零误杀')
+    ap.add_argument('--score_mode', choices=['old', 'new'], default='old',
+                    help='L1 排序分(批1 P0, 2026-09-11): old=|IC_IR|×(0.25+0.75·stab) (默认, 原行为); '
+                         'new=stab×(0.5+0.5·shape_pos)。标定: 与 L2 Calmar 的相关性 old +0.167 -> '
+                         'new +0.668; new 不含 ic_ir(IC 仅留作 ic>min_ic 准入门槛)')
     ap.add_argument('--fsa_th', type=float, default=-1,
                     help='FSA骨架冻结阈值: bank中同骨架占比超过该值即冻结该骨架, '
                          '后续候选不再生成/入库(中金>15%%冻结); 负数=跟随B角建议, 0=关闭')
@@ -1695,8 +1744,10 @@ if __name__ == '__main__':
                          '内层若只是某叶的单目变换(如 ts_min20(cs_rank(barra_leverage))≡leverage), '
                          '族键追加 |~<叶名> -> 同叶不同壳的代理候选判同族、按 fam_quota 拦重复; 0=关闭')
     ap.add_argument('--seed', type=int, default=42)
-    ap.add_argument('--cost', type=float, default=COST_PRESETS['单边千1.5'],
-                    help=f'往返成本, 默认单边千1.5=0.004; 档位: {COST_PRESETS}')
+    ap.add_argument('--cost', type=float, default=DEFAULT_COST,
+                    help='往返成本(扣在单向换手率上): 默认主用档 %.4f = 实盘(0.0046)略宽松取整; '
+                         '预设: 实盘(滑点千1.5)=0.0046 / 实盘(滑点千2)=0.0056 / 主用档=0.004 / '
+                         '压力档=0.007; 定义与构成见 engine/cost_presets.py' % DEFAULT_COST)
     ap.add_argument('--window', choices=['full', 'recent600'], default='full',
                     help='回测口径: full=2018起九年; recent600=最近600交易日(中金口径)')
     ap.add_argument('--seg_n', type=int, default=3,
