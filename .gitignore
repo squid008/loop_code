@@ -19,13 +19,24 @@ engine/loop_state.pkl
 # standard_test 运行产物（带时间戳的报告；只跟踪 standard_test.py 本身）
 standard/*_report.txt
 standard/*_report.png
+# pool_tags.py / obs_analysis.py 的生成报告（每次重跑覆盖）
+standard/pool_tags_report.md
+standard/obs_analysis_report.md
 
 # all04_f11_idx 运行输出（stdout/stderr 日志，可随时重跑）
 strategies/all04/f11_*.txt
 # Loop 每代 L2 明细流水（docs/ 下逐代累积的 CSV 档案，运行产物不上 git）
-docs/loop_archive.csv
+# ★ 用通配 `*` 而非精确名(2026-09-12 修): --mine_pool 会产出带池后缀的变体
+#   (loop_archive_300.csv 等), 精确名匹配不到 -> 会变成"未跟踪"甚至被误提交。
+docs/loop_archive*.csv
 # 风格暴露观测（--style_obs 的逐代累积产物：每代每个被求值候选一行）
-docs/loop_style_obs.csv
+docs/loop_style_obs*.csv
+# 剥风格明细（--strip_style 的逐代累积产物: 每个 L2 候选的剥风格前后指标）
+docs/loop_strip_style*.csv
+# 池内指标（--pool_obs 的逐代累积产物: 长表, 每候选 x 每池一行）
+docs/loop_pool_obs*.csv
+# 池标签导出（pool_tags.py 从上面两个文件派生, 可随时重算 -> 喂 PG 用）
+docs/pool_tags*.csv
 # gen16 前旧快照已归 docs/history/（停更，已 git 跟踪为归档，此处不再 ignore）
 
 # IDE / 系统
@@ -39,6 +50,10 @@ Thumbs.db
 
 # 临时诊断脚本/产物（可随时删）
 ai_test/
+
+# 外部参考项目（只读参考，非本项目代码；28MB/237 文件，勿混入版本）
+# 来源：D:\工作\QuantaAlpha-main.zip → 解压于此供查阅（roadmap §8.8）
+QuantaAlpha-main/
 
 # 本地密钥文件（不上传；DeepSeek API key，桌面 1.txt 删除后由此兜底）
 .deepseek_key

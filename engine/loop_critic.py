@@ -260,7 +260,10 @@ def report(diag, sug, reasons, path):
 # 2026-09-09: 底层客户端(api_key/chat_once)统一迁至 loop_llm.py(供 生成侧/审查侧/代末
 # 复盘 三角色共用, 各自独立 system prompt 做角色隔离); 本文件仅作封装避免重复实现。
 # =====================================================================
-_DEEPSEEK_MODEL = 'deepseek-v4-flash'
+# ★模型名不再本地硬编码(2026-09-12): 本文件曾有一份 'deepseek-v4-flash' 副本 —— 官方改名
+#  (-> `deepseek-flash`)后两处必然漂移。统一从 loop_llm 取(单一事实源, 与 loop_fields.py 同理)。
+#  loop_llm 只 import os/json/time, 无循环依赖, 模块级导入安全。
+from loop_llm import DEFAULT_MODEL as _DEEPSEEK_MODEL       # noqa: E402
 
 
 def _deepseek_key():

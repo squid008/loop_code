@@ -11,10 +11,17 @@
 
 运行: D:\\miniconda3\\envs\\rqdata\\python.exe D:\\loop_code\\engine\\loop_watch.py
 日志:  D:\\loop_code\\engine\\loop_watcher.log
+
+★ 三池并行挖掘(2026-09-12, roadmap §8.19): 加 `--pool=300|500` 即驱动对应池的**独立轨迹**
+  (journal/日志名加 `_<池>` 后缀、启动引擎时透传 `--mine_pool`、进程探测按池区分)。
+  三条轨迹**完全独立**, 可同时开三个 watcher(注意内存), 也可串行跑(见 ai_test/run_3pools.ps1)。
+  例: D:\\miniconda3\\envs\\rqdata\\python.exe D:\\loop_code\\engine\\loop_watch.py --pool=300
+  不带 --pool 时 = 'all'(全A轨迹, **完全向后兼容**原行为)。
 """
 import os
 import re
 import subprocess
+import sys
 import time
 from datetime import datetime
 
@@ -25,6 +32,19 @@ WATCH_LOG = os.path.join(ENGINE_DIR, "loop_watcher.log")
 POLL_S = 300          # 主轮询间隔
 LIFTOFF_S = 20        # 启动后确认存活间隔
 TARGET_GEN = int(os.environ.get("LOOP_TARGET_GEN", "70"))   # 目标代数(达此代即停)
+
+# ---- 三池并行挖掘(2026-09-12, roadmap §8.19) -----------------------------------
+# 非 all 时: ①journal / 日志文件名全部加 `_<池>` 后缀(否则三条轨迹**同名碰撞**, 互相覆盖);
+#            ②启动引擎时透传 --mine_pool; ③进程探测按池区分(否则三条 watch 互相误判)。
+_POOL = "all"
+for _a in sys.argv[1:]:
+    if _a.startswith("--pool="):
+        _POOL = _a.split("=", 1)[1].strip() or "all"
+    elif not _a.startswith("-"):
+        _POOL = _a.strip() or "all"
+_POOL = os.environ.get("LOOP_MINE_POOL", _POOL).strip() or "all"
+SFX = "" if _POOL == "all" else "_" + _POOL
+POOL_ARG = [] if _POOL == "all" else [f"--mine_pool={_POOL}"]
 
 _LOG_FD = open(WATCH_LOG, "a", encoding="utf-8", buffering=1)
 
@@ -46,11 +66,21 @@ def now_s() -> int:
 
 
 def is_engine_running() -> bool:
-    """WMI 查 loop_engine 进程。查不到时保守返回 True（宁可不启也不重复启）。"""
+    """WMI 查 loop_engine 进程。查不到时保守返回 True（宁可不启也不重复启）。
+
+    池轨迹下只认**本池**的引擎(命令含 `--mine_pool=<池>`); all 轨迹只认**不带**该参数的引擎
+    —— 否则三条轨迹会互相误判(一个在跑就都不启动 / 或不带池的会撞进池轨迹)。
+    """
+    if _POOL == "all":
+        cond = ("($_.CommandLine -match 'loop_engine') "
+                "-and ($_.CommandLine -notmatch '--mine_pool=(?!all)')")
+    else:
+        cond = (f"($_.CommandLine -match 'loop_engine') "
+                f"-and ($_.CommandLine -match '--mine_pool={_POOL}')")
     ps = (
         'powershell -NoProfile -Command "Get-CimInstance Win32_Process '
         "-Filter \\\"Name like 'python%'\\\" "
-        "| Where-Object { $_.CommandLine -match 'loop_engine' } "
+        f"| Where-Object {{ {cond} }} "
         '| Measure-Object | Select-Object -ExpandProperty Count"'
     )
     try:
@@ -62,9 +92,15 @@ def is_engine_running() -> bool:
         return True
 
 
+def log_paths(g: int):
+    """本池轨迹的 (log, err) 路径。加 SFX 防三条轨迹同名互相覆盖(§8.19)。"""
+    return (os.path.join(ENGINE_DIR, f"loop{g}C{SFX}.log"),
+            os.path.join(ENGINE_DIR, f"loop{g}C{SFX}_err.log"))
+
+
 def latest_done_gen():
-    """读 journal 找已完成代数 N（标题行 '## 第 N 代'），返回最大 N；无则 None。"""
-    jp = os.path.join(DOCS_DIR, "loop_journal.md")
+    """读**本池** journal 找已完成代数 N（标题行 '## 第 N 代'），返回最大 N；无则 None。"""
+    jp = os.path.join(DOCS_DIR, f"loop_journal{SFX}.md")
     if not os.path.exists(jp):
         return None
     text = open(jp, encoding="utf-8", errors="ignore").read()
@@ -73,22 +109,23 @@ def latest_done_gen():
 
 
 def err_nonempty(gen: int) -> bool:
-    p = os.path.join(ENGINE_DIR, f"loop{gen}C_err.log")
+    _, p = log_paths(gen)
     return os.path.exists(p) and os.path.getsize(p) > 0
 
 
 def start_next_gen(g: int) -> bool:
-    log_p = os.path.join(ENGINE_DIR, f"loop{g}C.log")
-    err_p = os.path.join(ENGINE_DIR, f"loop{g}C_err.log")
+    log_p, err_p = log_paths(g)
     if os.path.exists(log_p):
-        log(f"[SKIP] loop{g}C.log 已存在，疑似重复代，不启动")
+        log(f"[SKIP] {os.path.basename(log_p)} 已存在，疑似重复代，不启动")
         return False
     seed = g * 10 + 7
     # 附加参数透传(2026-09-11): 便于无人值守时启用批1 新开关而不改代码
     #   例: set LOOP_EXTRA_ARGS=--min_mono=0.75 --score_mode=new
     extra = (os.environ.get('LOOP_EXTRA_ARGS') or '').split()
     cmd = [PY, "-u", "loop_engine.py", f"--gen={g}", "--n=800", "--l2=30",
-           f"--seed={seed}"] + extra
+           f"--seed={seed}"] + POOL_ARG + extra
+    if _POOL != "all":
+        log(f"[POOL] 本 watcher 只驱动 **{_POOL}** 池轨迹(--mine_pool={_POOL})")
     if extra:
         log(f"[ARGS] 附加参数: {' '.join(extra)}")
     log(f"[START] gen{g} seed={seed}")
@@ -104,22 +141,30 @@ def liftoff_check(g: int) -> bool:
     if not is_engine_running():
         log(f"[FAIL] gen{g} 进程未存活")
         return False
-    err_p = os.path.join(ENGINE_DIR, f"loop{g}C_err.log")
+    log_p, err_p = log_paths(g)
     if os.path.exists(err_p) and os.path.getsize(err_p) > 0:
         log(f"[FAIL] gen{g} err 日志非空")
         return False
-    log_p = os.path.join(ENGINE_DIR, f"loop{g}C.log")
     head = open(log_p, encoding="utf-8", errors="ignore").read(300).replace("\n", " | ")
     log(f"[OK] gen{g} 已启动，日志头: {head[:220]}")
     return True
 
 
 def already_running() -> bool:
-    """防多实例：已有一个 loop_watch 进程则本实例退出。"""
+    """防多实例：**同一个池**已有一个 loop_watch 进程则本实例退出。
+
+    ★ 必须按池区分 —— 否则 300 轨迹的 watcher 会把 500 轨迹的当成自己、直接退出(静默停摆)。
+    """
+    if _POOL == "all":
+        cond = ("($_.CommandLine -match 'loop_watch') "
+                "-and ($_.CommandLine -notmatch '--pool=(?!all)')")
+    else:
+        cond = (f"($_.CommandLine -match 'loop_watch') "
+                f"-and ($_.CommandLine -match '--pool={_POOL}')")
     ps = (
         'powershell -NoProfile -Command "Get-CimInstance Win32_Process '
         "-Filter \\\"Name like 'python%'\\\" "
-        "| Where-Object { $_.CommandLine -match 'loop_watch' } "
+        f"| Where-Object {{ {cond} }} "
         '| Measure-Object | Select-Object -ExpandProperty Count"'
     )
     try:
@@ -137,7 +182,7 @@ def main():
         if already_running():
             log("检测到已有 watcher 实例，本实例退出")
             return
-    log("==== watcher 启动 ====")
+    log(f"==== watcher 启动 (池={_POOL}{' / 后缀=' + SFX if SFX else ''}) ====")
     quiet_skips = 0
     while True:
         if is_engine_running():

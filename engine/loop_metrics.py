@@ -121,6 +121,40 @@ def neutralize_rows(Y, F, min_n=50):
     return out
 
 
+def neutral_rank(X, Zs, min_n=100):
+    """逐行(截面)**秩中性化** —— 与 `standard_test.py`【6】`neutralize()` **逐位同口径**。
+
+    步骤（严格对齐 standard_test）：
+      1. `Y = rank_rows(X)`；`Zk = rank_rows(Zs[k])`
+      2. 逐行 OLS：`Y_t ≈ [1, Z_t]·β`  →  残差 `e_t = Y_t − Ŷ_t`
+      3. **对残差再 `rank_rows`**（★关键差别：本模块既有 `neutralize_rows` 不重排，
+         那是用于"中性化远期收益"；剥风格判据必须重排，否则与 standard_test 报告对不上）
+    某行有效样本 < `min_n` -> 该行留 NaN（standard_test 的 `continue` 行为）。
+
+    参数
+      X : (T,S) 因子值（**调用方须已方向对齐**；rank 后回归，故原尺度无影响）
+      Zs: [(T,S), ...] 风格特征（如 lncap / lnamt），同样 rank 化后作回归量
+    返回 (T,S) float32 —— 已重排的残差(0~1)，可直接喂回测/`evaluate_real`。
+    """
+    Y = rank_rows(np.asarray(X, dtype='float64')).astype('float64')
+    Zl = [rank_rows(np.asarray(z, dtype='float64')).astype('float64') for z in Zs]
+    out = np.full(Y.shape, np.nan)
+    for t in range(Y.shape[0]):
+        m = np.isfinite(Y[t])
+        for z in Zl:
+            m &= np.isfinite(z[t])
+        k = int(m.sum())
+        if k < min_n:
+            continue
+        A = np.column_stack([np.ones(k)] + [z[t][m] for z in Zl])
+        try:
+            coef, *_ = np.linalg.lstsq(A, Y[t][m], rcond=None)
+        except np.linalg.LinAlgError:
+            continue
+        out[t, m] = Y[t][m] - A @ coef
+    return rank_rows(out)
+
+
 def style_expo(RS, SS, min_n=30):
     """逐期截面秩相关(因子 vs 风格)的期均值 —— 与 `standard_test.py`【3】风格归因同口径。
 

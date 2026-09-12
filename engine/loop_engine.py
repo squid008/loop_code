@@ -37,14 +37,80 @@ from factor_miner import (load_panel, prepare, get_universe, cs_rank,
 from cost_presets import DEFAULT_COST, cost_label      # 成本档单一事实源(2026-09-11)
 from loop_metrics import (rank_rows, decile_shape, l1_score,   # L1 指标层(2026-09-11, 含 rank_rows)
                           style_expo, STYLE_KEYS,              # 风格暴露观测(2026-09-11, --style_obs)
-                          neutralize_rows)                     # 风格中性收益(2026-09-11, 仅观测)
+                          neutralize_rows,                     # 风格中性收益(2026-09-11, 仅观测)
+                          neutral_rank)                        # 秩中性化(2026-09-12, --strip_style)
+from loop_pools import (pool_mask, parse_pools,                 # 池成员PIT掩码(2026-09-12, --pool_obs)
+                        pool_gate_ok)                           # 池门槛纯函数(2026-09-12, --min_pool_calmar)
+
+# ★ 输出编码兜底(2026-09-12 实录): 中文 Windows 控制台/重定向默认 **GBK**, 而本项目注释/文案里
+#  常出现 GBK 编不出的字符(⚠ ✅ ⇒ − ² Ŷ 等)。一旦某个 print/help 带这类字符:
+#    · `--help` 直接抛 UnicodeEncodeError 全挂;
+#    · **更严重**: 无人值守跑到那个分支时抛错中断整代。
+#  errors='replace' 让这类字符退化为 '?' 而不是抛错 —— 是把"整轮跑挂"降级为"一个字显示不出"。
+#  同时新代码仍应尽量用 GBK 安全字符(见 ai_test/scan_non_gbk.py 与 qa_engine_cli.py)。
+try:
+    sys.stdout.reconfigure(errors='replace')
+    sys.stderr.reconfigure(errors='replace')
+except Exception:
+    pass
 
 STATE = os.path.join(HERE, 'loop_state.pkl')
 ARCHIVE = os.path.join(os.path.dirname(HERE), 'docs', 'loop_archive.csv')
 # 风格暴露观测独立成文件(2026-09-11): 不进 ARCHIVE 表头 —— 追加模式下加列会让历史行错位
 STYLE_OBS = os.path.join(os.path.dirname(HERE), 'docs', 'loop_style_obs.csv')
+# 剥风格入库判据的逐代明细(2026-09-12, --strip_style)。同样独立成文件, 理由同 STYLE_OBS。
+STRIP_OBS = os.path.join(os.path.dirname(HERE), 'docs', 'loop_strip_style.csv')
+# 池内指标(2026-09-12, --pool_obs)。**长表**(每候选 x 每池一行) —— 不用宽表是因为
+# 池集合由 --pools 决定, 宽表换池集合会导致追加时表头错位(与 archive 同一个坑)。
+POOL_OBS = os.path.join(os.path.dirname(HERE), 'docs', 'loop_pool_obs.csv')
 JOURNAL = os.path.join(os.path.dirname(HERE), 'docs', 'loop_journal.md')  # B角诊断日志(loop_code/docs)
 LIBRARY = os.path.join(os.path.dirname(HERE), 'docs', 'factor_library.md')  # 入库因子文档(代末自动同步新增)
+
+# ===================== 三池并行挖掘(2026-09-12, roadmap §8.19) =====================
+# 用户方案: 全A / 沪深300 / 中证500 三条**完全独立**的轨迹(各自 state/bank/种子/冻结/失败库)。
+# 依据: 全A 含微盘 -> "低流动性溢价"让风格因子轻松过关, 且 L1 的单一 IC 排序也奖励它
+#   (§8.13 实测 30/30 的 lnamt/lntr 全负、剥成交额后仅 3/30 为正; §8.19 实测 ic_all 与真信号
+#    **负相关 -0.317**)。在 300/500 池内挖, 该溢价不存在 -> 风格暴露自然挣不到分 -> 引擎必须
+#   去找真信号。(QuantaAlpha 正是如此: `market: csi300` + benchmark SH000300, §8.8/§8.19)
+# 实现: 'all' = 现状(不加后缀; 现有 loop_state.pkl / loop_archive.csv 即全A轨迹的既有历史);
+#       '300'/'500' = 全新独立轨迹(文件加 _300/_500 后缀)。可选池见 engine/loop_pools.py 的 POOLS。
+MINE_POOL = 'all'
+L1_POOL_MASK = None       # (len(L1_ROWS), len(L1_COLS)) bool; None = 不加池约束(全A现状)
+# 原始路径快照: set_mine_pool 永远**从快照派生** -> 重复调用不会叠后缀(_300_500)
+_ORIG_PATHS = {}
+
+
+def set_mine_pool(tag):
+    """把引擎切到指定池的**独立轨迹**。
+
+    ① 状态 / 输出文件全部加池后缀 -> 三条轨迹互不读写对方的 bank/archive/journal/library;
+    ② L1 子面板列 = 该池**并集**(历史上出现过的全部成分, 保证任一时点的成分都在面板里);
+    ③ L1 的 IC 按 **PIT 池掩码**算 -> 目标函数从"全A IC"变成"**池内 IC**"。
+
+    tag='all' 时**完全不动**(向后兼容)。幂等(可从原始路径重复派生)。返回实际生效的 tag。
+    """
+    global MINE_POOL, STATE, ARCHIVE, STYLE_OBS, STRIP_OBS, POOL_OBS, JOURNAL, LIBRARY
+    if not _ORIG_PATHS:                          # 首次调用时快照原始路径
+        _ORIG_PATHS.update(STATE=STATE, ARCHIVE=ARCHIVE, STYLE_OBS=STYLE_OBS,
+                           STRIP_OBS=STRIP_OBS, POOL_OBS=POOL_OBS,
+                           JOURNAL=JOURNAL, LIBRARY=LIBRARY)
+
+    def _apply(sfx):
+        for k in _ORIG_PATHS:
+            r, e = os.path.splitext(_ORIG_PATHS[k])   # 后缀加在扩展名前: a/b.md -> a/b_300.md
+            globals()[k] = r + sfx + e
+
+    if not tag or tag == 'all':
+        MINE_POOL = 'all'
+        _apply('')
+        return 'all'
+    import loop_pools as _LP
+    if tag not in _LP.POOLS:
+        raise SystemExit(f"[--mine_pool] 未知池 '{tag}'; 可选: all / {sorted(_LP.POOLS)}")
+    MINE_POOL = tag
+    _apply('_' + tag)
+    return tag
+
 
 # 默认搜索策略(B角可动态调整)
 # 中金五策略配比: 变异25 / 交叉25 / 扰动15 / 随机探索15 / LLM机制引导20
@@ -131,11 +197,25 @@ def base_fields():
     # ★L1 子面板: 粗筛不需要全样本(瓶颈是内存带宽, 不是计算)。
     #   时间只取 START 之后 + 截面随机抽样 -> 数据量降到 ~1/4, 实测整体提速 3~4 倍。
     #   L1 只是排序用, 抽样误差可接受; L2 精筛仍用全样本。
-    global L1_ROWS, L1_COLS
+    global L1_ROWS, L1_COLS, L1_POOL_MASK
     L1_ROWS = np.where(dates >= START)[0]
-    nsub = min(close.shape[1], L1_STOCKS)
-    L1_COLS = np.sort(np.random.default_rng(20240917).choice(
-        close.shape[1], nsub, replace=False))
+    if MINE_POOL != 'all':
+        # ★池内挖掘(§8.19): L1 列 = 池**并集**(不随机抽样 —— 必须保证任一时点的成分都在)。
+        #   掩码另按 PIT 生效, 故并集稍大不影响口径。
+        import loop_pools as _LP
+        uni = _LP.pool_union(MINE_POOL)
+        L1_COLS = np.array([i for i, c in enumerate(cols) if c in uni], dtype=np.int64)
+        if L1_COLS.size == 0:
+            raise SystemExit(f"[--mine_pool={MINE_POOL}] 池并集与面板列无交集, 检查股票代码格式")
+        L1_POOL_MASK = _LP.pool_mask(MINE_POOL, dates, cols)[np.ix_(L1_ROWS, L1_COLS)]
+        print(f"[--mine_pool={MINE_POOL}] L1 子面板列 = 池并集 {L1_COLS.size} 只; "
+              f"当期池成分中位 {int(np.median(L1_POOL_MASK.sum(1)))} 只 "
+              f"(面板共 {close.shape[1]} 列)")
+    else:
+        nsub = min(close.shape[1], L1_STOCKS)
+        L1_COLS = np.sort(np.random.default_rng(20240917).choice(
+            close.shape[1], nsub, replace=False))
+        L1_POOL_MASK = None
     B_sub = {k: v[np.ix_(L1_ROWS, L1_COLS)] for k, v in B.items()}
     _BASE = dict(B=B, B_sub=B_sub, dates=dates, cols=cols, close=close)
     return _BASE
@@ -832,9 +912,17 @@ def run(args):
     frozen = []                # FSA冻结骨架列表(中金: 超15%被禁止复用)
     fail_lib = {}              # 失败模式库(骨架级成败滚动统计, 中金: 生成阶段排除)
     cfg = dict(DEFAULT_CFG)
+    # ★ n_tested 的基准必须在**写盘之前**取好(2026-09-12 修 —— 这是一个崩在整代末尾的隐蔽 bug):
+    #   原写法 `n_tested=st.get('n_tested',0)+len(cands) if os.path.exists(STATE) else len(cands)`
+    #   的三元条件是在 `with open(STATE,'wb')` **之后**求值的 —— 而那一步已经把文件创建出来了
+    #   ⇒ 条件**恒为 True**; 全新轨迹(无既有 state)时 `st` 从未绑定 ⇒ UnboundLocalError
+    #   ⇒ 崩在**整代最后一行**(30 分钟计算白做, 且 state 被 0 字节覆盖)。
+    #   实录: `--mine_pool=300` 首次全新轨迹即崩(loop_state_300.pkl 被创建为 0 字节)。
+    n_tested_prev = 0
     if os.path.exists(STATE):
         with open(STATE, 'rb') as f:
             st = pickle.load(f)
+        n_tested_prev = st.get('n_tested', 0)
         seeds = st.get('seeds', [])
         fsa = st.get('fsa', {})
         if not fsa.pop('v2', False):
@@ -1041,6 +1129,10 @@ def run(args):
     # ---- L1 批量 IC(★分批处理 + 子面板 + 跨批LRU) ----
     Bsub = base['B_sub']
     Usub = U[np.ix_(L1_ROWS, L1_COLS)]
+    if L1_POOL_MASK is not None:
+        # ★池内挖掘(§8.19): L1 的 IC = **池内 IC**。这一步是"三池并行"起作用的核心 ——
+        #   目标函数里不再有全A 的小盘/低流动性溢价, 风格暴露因子在 L1 就挣不到分。
+        Usub = Usub & L1_POOL_MASK
     Rsub = fwd_ret[np.ix_(L1_ROWS, L1_COLS)]
     print(f"L1 子面板 {len(L1_ROWS)}日 x {len(L1_COLS)}股 "
           f"(全量 {U.shape[0]}x{U.shape[1]}) -> 数据量约 1/{U.size/max(Usub.size,1):.0f}")
@@ -1051,6 +1143,30 @@ def run(args):
     _score_mode = getattr(args, 'score_mode', 'old') or 'old'
     _style_obs = bool(getattr(args, 'style_obs', False))
     _shape_neutral = bool(getattr(args, 'shape_neutral', 0))   # 形状量用风格中性收益(§8.5.1 行动①)
+    # 剥风格入库判据(2026-09-12, 见 docs/factor_roadmap.md §8.13): L2 记录(可选门槛)
+    # 把因子对 lncap+lnamt 秩中性化后重跑回测 —— 判"超额是否只是市值/成交额风格暴露"。
+    _strip_style = bool(getattr(args, 'strip_style', False))
+    # 池内指标(2026-09-12, 见 docs/factor_roadmap.md §8.9 B+B′): L2 在**池内**重跑回测,
+    # 用于给入库因子打「300好用/300+500好用/全都好用/只有全A好用」标签, 供将来因子库 PG 筛选。
+    # ★关键: L2 用的是**全量面板**(5384列), 池股天然都在里面 -> **不需要扩 L1 子面板列**
+    #  (那是 L1 层池感知才需要的代价: 随机2000 ∪ 池union2701 ≈ 3700 列 = +85% 成本)。
+    _min_pool_calmar = float(getattr(args, 'min_pool_calmar', -1.0))
+    _pool_gate_mode = getattr(args, 'pool_gate_mode', 'any') or 'any'
+    _pool_gate_on = (_min_pool_calmar >= 0)      # 默认 -1 = 关; >=0 启用(0 是合法阈值)
+    _pool_obs = bool(getattr(args, 'pool_obs', False)) or _pool_gate_on
+    if _pool_gate_on and not getattr(args, 'pool_obs', False):
+        print(f"  [池门槛] 已启用(min_pool_calmar={_min_pool_calmar:g}, "
+              f"mode={_pool_gate_mode}) -> 自动打开池指标(否则门槛无从判定)")
+    _pools = []
+    if _pool_obs:
+        try:
+            _pools = parse_pools(getattr(args, 'pools', '300,500'))
+        except KeyError as e:
+            print(f"  [池指标] [!] --pools 非法({e}) -> 本代跳过池指标")
+            _pool_obs = False
+            if _pool_gate_on:
+                print("  [池门槛] [!] 池不可用 -> 本代池门槛失效(放行不误杀)")
+                _pool_gate_on = False
     _reuse_v = bool(getattr(args, 'reuse_v', 1))       # 跨阶段复用 L1 值(默认开, 行为等价)
     VCACHE.clear()
     _VREUSE_MB[0] = 0.0
@@ -1061,7 +1177,7 @@ def run(args):
     need_shape = ((_min_mono > 0) or (_score_mode == 'new')
                   or _style_obs or _shape_neutral)
     if _style_obs and _shape_neutral:
-        print("  ⚠ --style_obs 与 --shape_neutral 同时开: 观测文件里 shape_pos 与 shape_pos_n "
+        print("  [!] --style_obs 与 --shape_neutral 同时开: 观测文件里 shape_pos 与 shape_pos_n "
               "都会是中性化版(拿不到原始变体)。**做测量请只用 --style_obs**。")
     if need_shape:
         print(f"  [形状] 已启用十档单调性计算 (min_mono={_min_mono:g}, "
@@ -1073,16 +1189,27 @@ def run(args):
     #  (与 decile_shape 同视图 -> 两者共用一次 rank_rows); 快, 但只是"相对比较用代理",
     #  绝对值以 standard_test 全量报告为准。用途: 验证批1 是否让因子更往低换手/低成交额挤。
     STYLE_S, FEAT_S = {}, {}
-    if _style_obs or _shape_neutral:
+    # ★ L2 剥风格需要**全面板**风格值(§8.13): 与 L1 子面板版共用一次 `style_features`
+    #  (该函数两次 rolling 较贵 -> 一代只算一次)。只在 --strip_style 时保留全量
+    #  (lncap+lnamt 各 71MB) —— 不用时零额外开销。
+    STYLE_FULL = {}
+    if _style_obs or _shape_neutral or _strip_style:
         _sf = style_features(B)
         for _k in STYLE_KEYS:
-            FEAT_S[_k] = _sf[_k][np.ix_(L1_ROWS, L1_COLS)][::FWD]    # 原始值(供中性化)
-            if _style_obs:
-                STYLE_S[_k] = rank_rows(FEAT_S[_k])                  # 秩(供 style_expo)
+            if _strip_style and _k in ('lncap', 'lnamt'):
+                STYLE_FULL[_k] = _sf[_k]                             # 全面板(供 L2 剥除)
+            if _style_obs or _shape_neutral:
+                FEAT_S[_k] = _sf[_k][np.ix_(L1_ROWS, L1_COLS)][::FWD]    # 原始值(供中性化)
+                if _style_obs:
+                    STYLE_S[_k] = rank_rows(FEAT_S[_k])              # 秩(供 style_expo)
         del _sf
         if _style_obs:
             print(f"  [风格观测] 已启用 ({', '.join(STYLE_KEYS)}; 子面板[::FWD] "
                   f"{Rsub_s.shape[0]}期) -> {STYLE_OBS}")
+        if _strip_style:
+            print(f"  [剥风格] L2 将记录剥 lncap+lnamt 后的 IC/超额/Calmar -> {STRIP_OBS}"
+                  + (f"; **入库门槛 strip_calmar>{args.min_strip_calmar:g}**"
+                     if args.min_strip_calmar > 0 else "; 仅记录不设门槛(默认)"))
     # ★风格中性收益: 把远期收益对 lncap/lnamt 逐期回归取残差。两种用途——
     #   ① --style_obs:     只落观测(记 shape_pos_n), 供**离线**配对比较 old/new/new_n
     #   ② --shape_neutral: 作为**主形状量**的收益入参 -> shape_pos 即"风格中性后的档位单调性",
@@ -1231,7 +1358,7 @@ def run(args):
                           encoding='utf-8-sig')
             print(f"已存 {STYLE_OBS} (追加, 本代 {len(obs_df)} 条候选)")
             if obs_df['shape_pos'].isna().all():          # 自检: 见上方 need_shape 的踩坑注释
-                print("  [风格观测] ⚠ shape_pos 全为 NaN -> need_shape 未生效, "
+                print("  [风格观测] [!] shape_pos 全为 NaN -> need_shape 未生效, "
                       "本轮观测无法复算 score_new, 请检查 --score_mode/--min_mono/--style_obs")
         except Exception as e:
             obs_df = None
@@ -1297,8 +1424,9 @@ def run(args):
             v = rank_rows(v0)
             del v0
             mx = 0.0
+            fv = np.isfinite(v)          # ★ 提到循环外: 与 w 无关, 此前每个已知因子都重算一次
             for w in Kr.values():
-                m = np.isfinite(v) & np.isfinite(w)
+                m = fv & np.isfinite(w)
                 if m.sum() < 100:
                     continue
                 c = abs(np.corrcoef(v[m], w[m])[0, 1])
@@ -1433,11 +1561,34 @@ def run(args):
     top = l1.head(args.l2)
     _t_l2 = time.time()
     print(f"\nL2 费后精筛 {len(top)} 个 ...")
+    # 池成员 PIT 掩码(2026-09-12, --pool_obs; 见 docs/factor_roadmap.md §8.9 B+B′)
+    #  ★ 建在**全量面板**上(池股天然都在, 面板覆盖率 99.3%/99.8%) ⇒ **不需要扩 L1 子面板列**。
+    #   (L1 层池感知才需要"随机2000 ∪ 池union2701 ≈ 3700 列 = +85% 成本", 那是后续的事。)
+    POOL_M = {}
+    if _pool_obs:
+        try:
+            _t_pool = time.time()
+            for _tg in _pools:
+                POOL_M[_tg] = pool_mask(_tg, dates, cols)
+            _sz = ', '.join(f"{t}:{int(POOL_M[t].sum())}格" for t in _pools)
+            _gate_txt = (f"**入库门槛: {'任一' if _pool_gate_mode == 'any' else '全部'}池 "
+                         f"Calmar > {_min_pool_calmar:g}**"
+                         if _pool_gate_on else "仅记录不设门槛(默认)")
+            print(f"  [池指标] 已启用 池={_pools} (PIT掩码 {_sz}; "
+                  f"用时 {time.time() - _t_pool:.0f}s) -> {POOL_OBS}; {_gate_txt}")
+        except Exception as e:
+            print(f"  [池指标] [!] 掩码构建失败 -> 本代跳过池指标: {type(e).__name__}: {e}")
+            POOL_M = {}
     rows = []
     seg_ok_list = []   # 与 rows 同步, 供 critic 统计 seg_kill(不入 archive 表头)
+    strip_rows = []    # 剥风格明细(2026-09-12, --strip_style) -> 独立文件, 不进 archive 表头
+    pool_rows = []     # 池内明细(2026-09-12, --pool_obs) -> 独立文件(长表), 理由同上
+    n_pool_nogate = 0  # 池门槛"无池结果 -> 放行不误杀"的次数(代末上报, 防静默失效)
     for j, (_, r) in enumerate(top.iterrows(), 1):
         t_one = time.time()
         nd = r['node']
+        strip_rec = None
+        pool_rec = []      # 本候选的各池结果(供池门槛用; 同时 extend 进 pool_rows)
         try:
             v = eval_expr(nd, B, {})
             if r['sign'] < 0:
@@ -1446,6 +1597,52 @@ def run(args):
             f = cs_rank(fac.astype('float64'))
             rr = evaluate_real(f, close, str(nd), cost=args.cost,
                                window=args.window, with_ex=True)
+            # ---- 剥风格(2026-09-12, --strip_style; 见 docs/factor_roadmap.md §8.13) ----
+            #  口径与 standard_test.py【6】逐位一致: rank(因子) 对 rank(lncap)+rank(lnamt)
+            #  逐日截面 OLS 取残差 -> **再 rank** -> 重跑同一套费后回测。
+            #  为什么: 30 个入库因子剥成交额后**仅 3 个**超额仍为正、沪深300 内**仅 3/30** 有效
+            #  ⇒ "全A 超额"主要来自小市值+低成交额暴露, 不是独立 alpha。
+            #  口径微差(已知): 时间轴是**全样本**(L2 用 full panel), 与 standard_test 同;
+            #  但成本/窗口取 args 的设置, 故绝对数值与报告不一定逐位相同, 判"衰减"看相对。
+            if _strip_style and rr is not None:
+                try:
+                    _fn = neutral_rank(f.values.astype('float64'),
+                                       [STYLE_FULL['lncap'], STYLE_FULL['lnamt']])
+                    rr_s = evaluate_real(pd.DataFrame(_fn, index=dates, columns=cols),
+                                         close, str(nd) + '#strip',
+                                         cost=args.cost, window=args.window)
+                    if rr_s is not None:
+                        strip_rec = dict(
+                            gen=args.gen, expr=str(nd),
+                            ic=rr['ic'], calmar=rr['calmar'], ann_ex=rr['ann_ex'],
+                            strip_ic=rr_s['ic'], strip_calmar=rr_s['calmar'],
+                            strip_ann_ex=rr_s['ann_ex'], strip_sharpe=rr_s['sharpe'])
+                except Exception as e_s:
+                    # 无人值守铁律: 剥风格失败**不得**影响主流程, 也不得据此拦候选
+                    print(f"  [{j}] 剥风格失败(不影响主流程): {type(e_s).__name__}: {e_s}")
+            # ---- 池内指标(2026-09-12, --pool_obs; 见 roadmap §8.9 B+B′) ----
+            #  口径 = **池内排名**(对齐 standard_test 默认的 --pool_mode=A):
+            #    因子池外置 NaN -> cs_rank(逐行只在池内有效值上排名) -> 同一套费后回测。
+            #  ⚠ evaluate_real 选股是 `fac.loc[d][U].dropna()` ⇒ 池外 NaN 自动被排除;
+            #    且"池等权"基准随之变成**同池等权**(与 standard_test 口径一致, 不是全A等权)。
+            if POOL_M and rr is not None:
+                for _tg, _M in POOL_M.items():
+                    try:
+                        _vp = np.where(_M, fac.values, np.nan)
+                        _fp = cs_rank(pd.DataFrame(_vp, index=dates, columns=cols))
+                        _rp = evaluate_real(_fp, close, f"{nd}#pool{_tg}",
+                                            cost=args.cost, window=args.window)
+                        if _rp is not None:
+                            pool_rec.append(dict(
+                                gen=args.gen, expr=str(nd), pool=_tg,
+                                ic=_rp['ic'], ic_ir=_rp['ic_ir'], calmar=_rp['calmar'],
+                                ann_ex=_rp['ann_ex'], dd=_rp['dd'],
+                                sharpe=_rp['sharpe'], turn=_rp.get('turn', np.nan)))
+                        del _fp
+                    except Exception as e_p:
+                        print(f"  [{j}] 池 {_tg} 计算失败(不影响主流程): "
+                              f"{type(e_p).__name__}: {e_p}")
+                pool_rows.extend(pool_rec)
             del f
             gc.collect()
         except Exception as e:
@@ -1466,6 +1663,24 @@ def run(args):
             seg_ok, n_seg_pos, n_seg_k, seg_txt = seg_verify(
                 rr.get('ex'), args.seg_n, args.seg_need)
             ok = ok and seg_ok
+        # ---- 剥风格入库门槛(2026-09-12, 默认关) ----
+        #  args.min_strip_calmar <= 0 -> 只记录不拦(默认行为不变)。
+        #  ⚠ strip_rec is None(未开/计算失败)时**放行不误杀** —— 与 LLM 审查同一条铁律。
+        if _strip_style and args.min_strip_calmar > 0 and strip_rec is not None:
+            ok = ok and strip_rec['strip_calmar'] > args.min_strip_calmar
+        # ---- 池门槛(2026-09-12, 默认关; **用户选定 C** = 排除 csi_all_only) ----
+        #  语义: --pool_gate_mode=any(默认) 要求**至少一个池**达标(=C, 滤掉"只在全A有效");
+        #        all 要求**所有池**都达标(=更严, "真 alpha")。
+        #  口径: 池内 Calmar vs --min_pool_calmar(与 --min_calmar 同口径; Calmar>0 = 该池有效)。
+        #  ⚠ 无池结果(未开 --pool_obs / 计算失败) -> **放行不误杀**(与 strip/LLM 同一铁律),
+        #    但要计数并在代末上报, 否则门槛静默失效而无人察觉。
+        if _pool_gate_on:
+            _pok, _pv = pool_gate_ok([q.get('calmar') for q in pool_rec],
+                                     _min_pool_calmar, _pool_gate_mode)
+            if _pok is None:                 # 无从判定 -> 放行不误杀, 但计数上报
+                n_pool_nogate += 1
+            else:
+                ok = ok and _pok
         leaf_s, cat_s = leaf_parts(nd)
         rows.append(dict(expr=str(nd), cat=cat_s, leaf=leaf_s,
                          window=args.window, cost=args.cost,
@@ -1476,6 +1691,24 @@ def run(args):
                          neg_yr=sum(1 for v in yr.values() if v <= 0),
                          passed=ok))
         seg_ok_list.append(seg_ok)
+        if strip_rec is not None:
+            strip_rows.append(strip_rec)
+        _sstr = ''
+        if strip_rec is not None:
+            _sstr = (f" | 剥风格 IC={strip_rec['strip_ic']:+.4f} "
+                     f"超额={strip_rec['strip_ann_ex']*100:+6.2f}% "
+                     f"Calmar={strip_rec['strip_calmar']:5.2f}")
+        # 池内一行汇总(用本候选的 pool_rec: 便于肉眼对比 300/500, 并显示门槛判定)
+        _pstr = ''
+        if pool_rec:
+            _pstr = ' | 池内 ' + ' '.join(
+                f"{q['pool']}:{q['ann_ex']*100:+.2f}%/Cal{q['calmar']:+.2f}"
+                for q in pool_rec)
+            if _pool_gate_on:
+                _pok_, _pv_ = pool_gate_ok([q.get('calmar') for q in pool_rec],
+                                           _min_pool_calmar, _pool_gate_mode)
+                if _pv_ is not None:
+                    _pstr += f" [池门槛{'过' if _pok_ else '拦'}({_pv_:+.3f})]"
         print(f"  [{j}] IC={rr['ic']:+.4f} 费后超额={rr['ann_ex']*100:+6.2f}% "
               f"Calmar={rr['calmar'] if rr['calmar'] else 0:5.2f} "
               f"夏普={rr['sharpe']:5.2f} 换手={rr.get('turn', np.nan)*100:4.1f}% "
@@ -1483,8 +1716,41 @@ def run(args):
               f"[cost={cost_label(args.cost)} win={args.window}] "
               f"分段{seg_txt} "
               f"耗时{time.time() - t_one:.0f}s "
-              f"{'PASS' if ok else ''}")
+              f"{'PASS' if ok else ''}{_sstr}{_pstr}")
     print(f"  [计时] L2 费后精筛 {len(top)} 个 用时 {time.time() - _t_l2:.0f}s", flush=True)
+    if _pool_gate_on and n_pool_nogate:
+        # 门槛静默失效是"无人值守"最危险的失败模式 -> 必须上报(拿不到池结果就放行)
+        print(f"  [池门槛] [!] {n_pool_nogate} 个候选无池结果 -> 已放行(未参与门槛判定)")
+    # ---- 剥风格明细落盘(2026-09-12, --strip_style; 独立文件, 不进 archive 表头) ----
+    if _strip_style and strip_rows:
+        try:
+            _sd = pd.DataFrame(strip_rows)
+            _need_h = (not os.path.exists(STRIP_OBS)) or os.path.getsize(STRIP_OBS) == 0
+            _sd.to_csv(STRIP_OBS, index=False, mode='a', header=_need_h,
+                       encoding='utf-8-sig')
+            _n_pos = int((_sd['strip_ann_ex'] > 0).sum())
+            print(f"已存 {STRIP_OBS} (追加, 本代 {len(_sd)} 条 L2 候选; "
+                  f"剥风格后超额仍为正 {_n_pos}/{len(_sd)})")
+        except Exception as e:
+            print(f"  [剥风格] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
+    # ---- 池内指标落盘(2026-09-12, --pool_obs; **长表**, 独立文件) ----
+    #  为什么长表: 池集合由 --pools 决定, 宽表(ic_300/ic_500...)一旦换池集合就会
+    #  在追加时表头错位(与 loop_archive.csv 同一个坑)。长表 = (gen,expr,pool) 三键, schema 恒定。
+    #  `pool_tag`(300好用/300+500好用/全都好用/只有全A好用) 由**离线**派生(阈值可改后重算)。
+    if POOL_M and pool_rows:
+        try:
+            _pdd = pd.DataFrame(pool_rows)
+            _need_h = (not os.path.exists(POOL_OBS)) or os.path.getsize(POOL_OBS) == 0
+            _pdd.to_csv(POOL_OBS, index=False, mode='a', header=_need_h,
+                        encoding='utf-8-sig')
+            _n_cand = len(_pdd) // max(len(_pools), 1)
+            _msg = ', '.join(
+                f"{t}: 超额>0 {int((_pdd.loc[_pdd['pool'] == t, 'ann_ex'] > 0).sum())}"
+                f"/{int((_pdd['pool'] == t).sum())}" for t in _pools)
+            print(f"已存 {POOL_OBS} (追加, 本代 {len(_pdd)} 行 = {_n_cand} 候选 x "
+                  f"{len(_pools)} 池; 池内超额>0 -> {_msg})")
+        except Exception as e:
+            print(f"  [池指标] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
     res = pd.DataFrame(rows)
     # 失败模式库: L2 费后结果落地成败(中金: 失败表达式写入失败库, 生成阶段排除)
     top_node = {str(r['node']): r['node'] for _, r in top.iterrows()}
@@ -1588,16 +1854,28 @@ def run(args):
         next_cfg.setdefault(k, v)      # critic.suggest 重建dict可能丢键 -> 兜底补齐
     next_cfg.setdefault('bank_skel_max', args.bank_skel_max)
     fail_lib = fail_lib_cleanup(fail_lib, args.gen)
-    with open(STATE, 'wb') as f:
+    # ★ 原子写(2026-09-12 加固): 先写 .tmp 再 os.replace 原子替换。
+    #   原因: 原 `open(STATE,'wb')` 会**立刻把旧 state 截断成 0 字节**, 一旦 dump 中途异常
+    #   (或进程被杀), 就得到一个 0 字节坏状态 —— 而 journal 已写了"第 N 代完成"
+    #   ⇒ 下次续跑会拿坏状态接代数, 静默错乱。实录见 roadmap §8.23。
+    _tmp = STATE + '.tmp'
+    with open(_tmp, 'wb') as f:
         pickle.dump(dict(seeds=new_seeds[:60], fsa=fsa,
-                         bank=bank[-30:],
+                         # ★ 入库库**全量保存**(2026-09-12 去掉 `bank[-30:]` 上限, 用户选定):
+                         #  截断会丢掉最老的入库因子 -> ①--decorr 不再对照它们 ->
+                         #  引擎可能重新发现旧因子("打转"的隐藏成因); ②引擎 bank 与
+                         #  docs/factor_library.md(append-only) 数量不一致(实录 30 vs 32)。
+                         #  代价: --decorr 每候选要跟整库逐个比, 成本 O(len(bank)) ->
+                         #  若库显著增长, 见去相关段的计时输出(实测 30 库/432 候选 = 276s)。
+                         bank=bank,
                          frozen=frozen,
                          fail_lib=fail_lib,
-                         n_tested=st.get('n_tested', 0) + len(cands)
-                         if os.path.exists(STATE) else len(cands),
+                         n_tested=n_tested_prev + len(cands),
                          last_l1=l1, last_l2=res if len(res) else None,
                          cfg=next_cfg), f)
-    print(f"\n保存状态: 种子 {len(new_seeds[:60])} 个, 入库因子 {len(bank)} 个, "
+    os.replace(_tmp, STATE)        # 原子替换: 要么全新状态, 要么保持旧状态, 不会出现半成品
+    # ⚠ 日志口径: 打印的必须是**实际持久化**的数量(此前截断时打内存值 -> 与落盘不一致)
+    print(f"\n保存状态: 种子 {len(new_seeds[:60])} 个, 入库因子 {len(bank)} 个(全量), "
           f"冻结骨架 {len(frozen)} 个, 失败库 {len(fail_lib)} 条, "
           f"耗时 {time.time()-t0:.0f}s")
 
@@ -1899,11 +2177,56 @@ if __name__ == '__main__':
                          '上限 2GB)。存的是符号对齐后的同一数组 -> 结果**逐位不变**, 只省时间。'
                          '--reuse_v=0 可关闭(供对拍验证)')
     ap.add_argument('--shape_neutral', type=int, default=0,
-                    help='形状量改用风格中性收益(2026-09-12, 默认 0=关; roadmap §8.5.1 判定 ✅ 的行动①): '
+                    help='形状量改用风格中性收益(2026-09-12, 默认 0=关; roadmap §8.5.1 判定 [OK] 的行动①): '
                          '把 decile_shape 的收益入参换成**对 lncap/lnamt 逐期回归后的残差收益**, '
                          '于是 shape_pos 衡量"风格中性后的档位单调性"(同时影响 --min_mono)。'
-                         '实测(3 代/2137 候选): 可把 --score_mode=new 的市值暴露**增幅砍掉 69%**, '
-                         '而低换手下降的好处不变。⚠ 做测量时请只用 --style_obs(同时开会拿不到原始变体)')
+                         '实测(3 代/2137 候选): 可把 --score_mode=new 的市值暴露**增幅砍掉 69%%**, '
+                         '而低换手下降的好处不变。[!] 做测量时请只用 --style_obs(同时开会拿不到原始变体)')
+    ap.add_argument('--strip_style', action='store_true',
+                    help='剥风格入库判据(2026-09-12, 默认关; roadmap §8.13): L2 对每个候选额外'
+                         '计算"剥 lncap+lnamt 后"的 IC/超额/Calmar(口径与 standard_test【6】'
+                         '逐位一致: rank 对 rank 逐日截面 OLS 取残差 -> 再 rank -> 重跑回测), '
+                         '落 docs/loop_strip_style.csv(独立文件, 不进 archive 表头)。'
+                         '依据: 30 个历史入库因子剥成交额后**仅 3 个**超额仍为正、'
+                         '沪深300 成分内**仅 3/30** 有效 -> 原"全A 超额"主要来自小市值+低成交额暴露。'
+                         '[!] 只在开启时才有开销(每候选 +1 次回测)。')
+    ap.add_argument('--min_strip_calmar', type=float, default=-1.0,
+                    help='剥风格后 Calmar 的入库门槛(2026-09-12, 默认 -1=不设门槛): >0 时'
+                         'L2 要求 strip_calmar 超过该值才判 PASS(与现有门槛是 AND 关系)。'
+                         '[!] 需配合 --strip_style; 计算失败时放行不误杀(无人值守铁律)。'
+                         '先建议用 --strip_style 只记录一代, 看分布再定阈值。')
+    ap.add_argument('--mine_pool', default='all',
+                    help='三池并行挖掘(2026-09-12, roadmap §8.19; 默认 all = 不加后缀, 向后兼容): '
+                         '"all"=全A / "300"=沪深300 / "500"=中证500(可选池见 engine/loop_pools.py 的 POOLS)。'
+                         '非 all 时: ①状态/输出文件**全部加 _<池> 后缀** -> 与其它池完全独立'
+                         '(各自 state/bank/种子/冻结/失败库/archive/journal/library/观测表); '
+                         '②L1 子面板列 = 该池并集(不随机抽样); ③L1 的 IC 按 **PIT 池掩码**算 = 池内 IC。'
+                         '依据: 全A 含微盘 -> 低流动性溢价让风格因子轻松过关(§8.13: 30/30 的 lnamt/lntr'
+                         '全负、剥成交额后仅 3/30 为正; §8.19: ic_all 与真信号**负相关 -0.317**); '
+                         '池内不存在该溢价 -> 风格暴露自然挣不到分 -> 引擎必须去找真信号。'
+                         '[!] 池内 IC 的截面样本更少、且无小盘溢价 -> --min_ic 等门槛**需重新标定**, '
+                         '不要照搬全A 的取值。')
+    ap.add_argument('--pool_obs', action='store_true',
+                    help='池内指标(2026-09-12, 默认关; roadmap §8.9 的 B+B′): L2 在**指数成分内**'
+                         '重跑一遍费后回测(口径 = 池内排名, 对齐 standard_test 默认的 --pool_mode=A; '
+                         '基准随之变同池等权), 落 docs/loop_pool_obs.csv(**长表**: 每候选 x 每池一行)。'
+                         '用途: 给入库因子打标签(300好用/300+500好用/全都好用/只有全A好用), '
+                         '供将来因子库 PG 按标签筛选。'
+                         '[!] 零列扩张成本: L2 用全量面板, 池股天然都在; 只在开启时才有开销'
+                         '(每候选 x 每池 +1 次回测)。')
+    ap.add_argument('--pools', default='300,500',
+                    help='--pool_obs 要算哪些池(默认 300,500; 逗号分隔)。可选见 '
+                         'engine/loop_pools.py 的 POOLS(300/500/1000/50)。')
+    ap.add_argument('--min_pool_calmar', type=float, default=-1.0,
+                    help='★池门槛(2026-09-12, 默认 -1=关; **用户选定方案 C = 排除 csi_all_only**): '
+                         '>=0 时启用, 用池内 Calmar 与 --min_pool_calmar 比较(与 --min_calmar 同口径, '
+                         'Calmar>0 即"该池有效")。配合 --pool_gate_mode 决定语义。'
+                         '[!] 会自动打开 --pool_obs; 无池结果时放行不误杀并计数上报。'
+                         '实测基准(gen71): 池内 Calmar>0 仅 2/21 候选, 且这 2 个全A Calmar 都<0.5 '
+                         '-> 与 --min_calmar=0.5 叠加后**本代入库 0 个**(原为 2)。')
+    ap.add_argument('--pool_gate_mode', default='any', choices=['any', 'all'],
+                    help='池门槛语义: any(默认, =方案C) 要求**至少一个池**达标 —— 滤掉"只在全A有效"的; '
+                         'all 要求**所有池**达标 —— 更严, 要"真 alpha"(实测 gen71 下 all 会 0/21)。')
     ap.add_argument('--fsa_th', type=float, default=-1,
                     help='FSA骨架冻结阈值: bank中同骨架占比超过该值即冻结该骨架, '
                          '后续候选不再生成/入库(中金>15%%冻结); 负数=跟随B角建议, 0=关闭')
@@ -1929,8 +2252,8 @@ if __name__ == '__main__':
     ap.add_argument('--llm_max_calls', type=int, default=3,
                     help='每代最多A角LLM调用次数(超限回退本地 guided_expr, 防拖慢无人值守)')
     ap.add_argument('--llm_model', default=None,
-                    help='A角生成侧模型名(缺省与B角审查同款 loop_llm.DEFAULT_MODEL=deepseek-v4-flash; '
-                         '可选 deepseek-v4-pro/deepseek-reasoner 做物理隔离)')
+                    help='A角生成侧模型名(缺省与B角审查同款 loop_llm.DEFAULT_MODEL=deepseek-flash; '
+                         '可选 deepseek-v4-pro 做物理隔离。[!] 名单以 ai_test/probe_models.py 实测为准)')
     ap.add_argument('--ai_jury', default='auto', choices=['auto', 'on', 'off'],
                     help='B角候选级LLM审查(中金【审查】环节, L1硬滤后随机抽--jury_n深判, '
                          '与生成侧隔离防自证): KILL者剔除出L2; auto=找到DeepSeek key即启用; '
@@ -1938,7 +2261,7 @@ if __name__ == '__main__':
     ap.add_argument('--jury_n', type=int, default=5,
                     help='LLM候选精判每代抽样个数(中金随机抽5)')
     ap.add_argument('--ai_jury_model', default=None,
-                    help='审查侧模型名(缺省同loop_llm.DEFAULT_MODEL=deepseek-v4-flash; '
+                    help='审查侧模型名(缺省同loop_llm.DEFAULT_MODEL=deepseek-flash; '
                          '可选 deepseek-v4-pro 与生成侧做物理隔离)')
     ap.add_argument('--l2', type=int, default=40)
     ap.add_argument('--fam_quota', type=int, default=FAM_QUOTA,
@@ -1964,4 +2287,6 @@ if __name__ == '__main__':
     ap.add_argument('--seg_need', type=int, default=2,
                     help='分段独立验证: 至少几个子区间累计费后超额>0 才通过 '
                          '(默认2: 3段中≥2段为正, 拦"靠单段行情撑全样本"候选)')
-    run(ap.parse_args())
+    _args = ap.parse_args()
+    set_mine_pool(_args.mine_pool)   # ★必须在 run() 之前: 路径后缀 & L1 池掩码都在 run 内部生效
+    run(_args)

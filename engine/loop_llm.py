@@ -13,7 +13,7 @@ LLM 子代理(中金 Loop Engineering 对齐) —— 共享基础设施 + 双角
   * 两个子代理使用【各自独立 system prompt】(各自挂自己的 Skill, 职责与知识面刻意不同);
   * B角审查输入【只有候选表达式与结构统计】, 不知道候选来源 / A角生成假设 / 生成原因;
   * A角生成输入【只有搜索策略与失败统计】, 不知道 B角会如何否决 / 不知道审查口径细节;
-  * 可选 --ai_gen_model / --ai_jury_model 配不同模型(如 deepseek-v4-flash vs deepseek-v4-pro)
+  * 可选 --ai_gen_model / --ai_jury_model 配不同模型(如 deepseek-flash vs deepseek-v4-pro)
     进一步物理隔离; 缺省同模型时靠 system 角色隔离 + 输入隔离。
 无人值守铁律: key 缺失/调用失败/超时一律回退规则引擎, 绝不阻塞迭代(所有异常由调用方兜底)。
 """
@@ -23,8 +23,17 @@ import time
 
 # ---------------------------------------------------------------- 基础设施
 _DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
-DEFAULT_MODEL = 'deepseek-v4-flash'
-# 2026-09-09: deepseek-v4-flash 默认深度推理, max_tokens 会被 reasoning_content 吃光
+DEFAULT_MODEL = 'deepseek-flash'
+# ★模型名变更(2026-09-12): 官方名由 `deepseek-v4-flash` 改为 **`deepseek-flash`**。
+#   实测(ai_test/probe_models.py, GET /models + 逐个最小请求):
+#     /models 权威名单 = ['deepseek-flash', 'deepseek-v4-pro']  ← **只有这两个**
+#     deepseek-flash  OK / deepseek-v4-pro OK
+#     deepseek-v4-flash 仍可用(别名兼容, 但已不在名单 -> 随时可能下线, 不应再依赖)
+#     deepseek-pro   400: "The supported API model names are deepseek-flash, deepseek-v4-pro"
+#     deepseek-chat / deepseek-reasoner 能通但不在名单(legacy)
+#   ⚠ 换名/换模型后请重跑 `python ai_test/probe_models.py` 确认, 别照猜写(2026-09-09 曾因
+#     "deepseek-flash-v4" 被 400 拒)。
+# 2026-09-09: 该系列默认深度推理, max_tokens 会被 reasoning_content 吃光
 # 导致 content 恒为空(finish=length) —— 实测 6000 tok 仍全被推理占用。
 # 必须显式 reasoning_effort=none(实测 gen 长任务 3s 出完整 JSON / low 仍吃光 token)。
 _REASONING_EFFORT = 'none'   # 'none' | 'low' | 'medium' | 'high'

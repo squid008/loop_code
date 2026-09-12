@@ -8,7 +8,7 @@
 > 每代挖掘记录（诊断+B角建议）见 `docs/loop_journal.md`；每代 L2 费后明细流水（逐代累积、带 gen/cat/leaf 列，自 gen16 起）见 `docs/loop_archive.csv`；gen16 前旧快照已归 `docs/history/loop_archive.legacy_pre_gen16.csv`。
 > **本文件只收录入库因子**，预计每数十轮才 +1 个，文件不会膨胀；round 流水永不并入本文件。
 >
-> 当前 **30 个入库**（截至 gen51，2026-09-10；gen8×1 / gen10×3 / gen11×4 / gen14×1 / gen23×2 / gen31×1 / gen33×1 / gen43×3 / gen45×3 / gen50×4 / gen51×1）。
+> 当前 **32 个入库**（截至 gen51，2026-09-10；gen8×1 / gen10×3 / gen11×4 / gen14×1 / gen23×2 / gen31×1 / gen33×1 / gen43×3 / gen45×3 / gen50×4 / gen51×1）。
 > 运行期起：引擎在每代入库（`state.bank` append）时**自动同步追加**新因子条目（gen24 后的入库代次生效），家族/一句话命名随时可人工精炼覆盖。
 
 ---
@@ -47,6 +47,8 @@
 | F28 | gen67 | 风格、风格、风格 | max(max(barra_residual_volatility, ts_ran… | 已入库(auto) |
 | F29 | gen69 | 风格、风格、风格 | max(max(barra_residual_volatility, corr60… | 已入库(auto) |
 | F30 | gen70 | 风格、风格、风格 | sub(mul(barra_residual_volatility, barra_… | 已入库(auto) |
+| F31 | gen71 | 风格、风格、风格 | mul(max(barra_residual_volatility, ts_ran… | 已入库(auto) |
+| F32 | gen71 | 风格、风格、风格、风格 | add(barra_residual_volatility, div(sub(ba… | 已入库(auto) |
 
 > 标记 `⚠️冗余①~⑤` = 库内近重复组成员（口径与明细见下方「库内冗余对清单」）；**每组按 1 个独立因子计**。
 
@@ -366,6 +368,27 @@ sub(mul(barra_residual_volatility, barra_liquidity), corr100(barra_non_linear_si
 - 叶子：barra_residual_volatility、barra_liquidity、barra_non_linear_size
 - 骨架：`sub(mul(barra_residual_volatility,barra_liquidity),corr(barra_non_linear_size,abs(max(barra_residual_volatility,barra_liquidity))))`
 - 费后指标（full，成本 4bp/边）：IC 0.0538 / IC_IR 0.622 / 年化超额 +5.1% / 回撤 -9.7% / Calmar 0.527 / Sharpe 0.984 / 最近年 +0.6% / 单期换手 16.9% / 负年 1
+
+---
+
+
+### F31 · gen71 入库（引擎自动同步，家族命名待人工精炼）
+```
+mul(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(barra_non_linear_size)))), max(barra_residual_volatility, div(min(barra_non_linear_size, barra_liquidity), barra_liquidity)))
+```
+- 家族：风格、风格、风格（auto）
+- 叶子：barra_residual_volatility、barra_non_linear_size、barra_liquidity
+- 骨架：`mul(max(barra_residual_volatility,ts_rank(ts_std(cs_rank(barra_non_linear_size)))),max(barra_residual_volatility,div(min(barra_non_linear_size,barra_liquidity),barra_liquidity)))`
+- 费后指标（full，成本 0.004往返(主用档)）：IC 0.0583 / IC_IR 0.718 / 年化超额 +8.1% / 回撤 -15.6% / Calmar 0.519 / Sharpe 1.258 / 最近年 +1.2% / 单期换手 20.8% / 负年 1
+
+### F32 · gen71 入库（引擎自动同步，家族命名待人工精炼）
+```
+add(barra_residual_volatility, div(sub(barra_non_linear_size, barra_comovement), barra_liquidity))
+```
+- 家族：风格、风格、风格、风格（auto）
+- 叶子：barra_residual_volatility、barra_non_linear_size、barra_comovement、barra_liquidity
+- 骨架：`add(barra_residual_volatility,div(sub(barra_non_linear_size,barra_comovement),barra_liquidity))`
+- 费后指标（full，成本 0.004往返(主用档)）：IC 0.0588 / IC_IR 0.700 / 年化超额 +8.0% / 回撤 -9.4% / Calmar 0.851 / Sharpe 1.261 / 最近年 +1.4% / 单期换手 19.9% / 负年 1
 
 ---
 
