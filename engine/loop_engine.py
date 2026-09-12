@@ -36,7 +36,8 @@ from factor_miner import (load_panel, prepare, get_universe, cs_rank,
                           evaluate_real, START, FWD, COST_PRESETS)
 from cost_presets import DEFAULT_COST, cost_label      # 成本档单一事实源(2026-09-11)
 from loop_metrics import (rank_rows, decile_shape, l1_score,   # L1 指标层(2026-09-11, 含 rank_rows)
-                          style_expo, STYLE_KEYS)              # 风格暴露观测(2026-09-11, --style_obs)
+                          style_expo, STYLE_KEYS,              # 风格暴露观测(2026-09-11, --style_obs)
+                          neutralize_rows)                     # 风格中性收益(2026-09-11, 仅观测)
 
 STATE = os.path.join(HERE, 'loop_state.pkl')
 ARCHIVE = os.path.join(os.path.dirname(HERE), 'docs', 'loop_archive.csv')
@@ -1054,14 +1055,27 @@ def run(args):
     #  口径 = standard_test【3】风格归因的四项特征定义; 取 **L1 子面板 + [::FWD] 调仓日视图**
     #  (与 decile_shape 同视图 -> 两者共用一次 rank_rows); 快, 但只是"相对比较用代理",
     #  绝对值以 standard_test 全量报告为准。用途: 验证批1 是否让因子更往低换手/低成交额挤。
-    STYLE_S = {}
+    STYLE_S, FEAT_S = {}, {}
     if _style_obs:
         _sf = style_features(B)
         for _k in STYLE_KEYS:
-            STYLE_S[_k] = rank_rows(_sf[_k][np.ix_(L1_ROWS, L1_COLS)][::FWD])
+            FEAT_S[_k] = _sf[_k][np.ix_(L1_ROWS, L1_COLS)][::FWD]    # 原始值(供中性化)
+            STYLE_S[_k] = rank_rows(FEAT_S[_k])                      # 秩(供 style_expo)
         del _sf
         print(f"  [风格观测] 已启用 ({', '.join(STYLE_KEYS)}; 子面板[::FWD] "
               f"{Rsub_s.shape[0]}期) -> {STYLE_OBS}")
+    # ★风格中性收益(仅 --style_obs 时算, **只用于观测, 不参与选择**):
+    #   把远期收益对 lncap/lnamt 逐期回归取残差, 再用它算第二套 shape_pos_n。
+    #   用途: 检验 roadmap §8.5 给出的下一步 —— 若 shape_pos 改用"风格中性后的档位单调性",
+    #   --score_mode=new 是否就不再奖励小市值暴露。一次跑即可三公式(旧/新/新+中性)配对比较。
+    Rsub_s_n = None
+    if _style_obs:
+        try:
+            Rsub_s_n = neutralize_rows(Rsub_s, [FEAT_S['lncap'], FEAT_S['lnamt']], min_n=50)
+            print("  [风格观测] 已算风格中性收益(对 lncap/lnamt 逐期回归残差) -> 记 shape_pos_n")
+        except Exception as e:
+            Rsub_s_n = None
+            print(f"  [风格观测] 中性收益失败(仅缺 shape_pos_n): {type(e).__name__}: {e}")
     stats = []
     BATCH = args.batch
     n_eval = 0
@@ -1103,11 +1117,12 @@ def run(args):
         # 防御: 单个候选形状计算异常不应拖垮整代(引擎常无人值守), 记 None 即等同"无形状值"
         # 形状量 / 风格暴露: 仅在需要时算(默认 --min_mono 0 + score_mode old + 无 --style_obs
         # -> 零额外开销)。防御: 单个候选异常不应拖垮整代(引擎常无人值守), 记 None 即等同"无值"
-        shp, sty = [], []
+        shp, sty, shn = [], [], []
         for v in vals:
             if not need_shape and not _style_obs:
                 shp.append(None)
                 sty.append(None)
+                shn.append(None)
                 continue
             # 秩视图只算一次: decile_shape 与风格观测共用(两者都基于 [::FWD] 调仓日视图)
             try:
@@ -1115,6 +1130,7 @@ def run(args):
             except Exception:
                 shp.append(None)
                 sty.append(None)
+                shn.append(None)
                 continue
             if need_shape:
                 try:
@@ -1123,6 +1139,14 @@ def run(args):
                     shp.append(None)
             else:
                 shp.append(None)
+            # 第二套形状量: 收益换成"风格中性后的残差收益"(仅 --style_obs, 只落观测不影响选择)
+            if _style_obs and Rsub_s_n is not None:
+                try:
+                    shn.append(decile_shape(rs, Rsub_s_n, Usub_s))
+                except Exception:
+                    shn.append(None)
+            else:
+                shn.append(None)
             if _style_obs:
                 try:
                     sty.append({k: style_expo(rs, STYLE_S[k]) for k in STYLE_KEYS})
@@ -1130,7 +1154,7 @@ def run(args):
                     sty.append(None)
             else:
                 sty.append(None)
-        for m_, i_, s_, k_, sg, sh, sy in zip(mu, ir, stab, kidx, sign, shp, sty):
+        for m_, i_, s_, k_, sg, sh, sy, sn in zip(mu, ir, stab, kidx, sign, shp, sty, shn):
             d = dict(idx=int(k_), node=cands[int(k_)],
                      expr=str(cands[int(k_)]), ic=float(m_),
                      ic_ir=float(i_), stab=float(s_), sign=float(sg))
@@ -1138,6 +1162,9 @@ def run(args):
                 d['mono'] = sh['mono']
                 d['best_grp'] = sh['best_grp']
                 d['shape_pos'] = sh['shape_pos']
+            if sn is not None:                      # 风格中性后的第二套形状量(仅观测)
+                d['mono_n'] = sn['mono']
+                d['shape_pos_n'] = sn['shape_pos']
             if sy is not None:                      # 风格观测(仅 --style_obs 时非空)
                 for _k in STYLE_KEYS:
                     d['st_' + _k] = sy[_k]
@@ -1163,6 +1190,7 @@ def run(args):
                 gen=args.gen, expr=d_['expr'], sign=d_['sign'],
                 ic=d_['ic'], ic_ir=d_['ic_ir'], stab=d_['stab'],
                 mono=d_.get('mono', np.nan), shape_pos=d_.get('shape_pos', np.nan),
+                mono_n=d_.get('mono_n', np.nan), shape_pos_n=d_.get('shape_pos_n', np.nan),
                 **{'st_' + k: d_['st_' + k] for k in STYLE_KEYS})
                 for d_ in stats if ('st_' + STYLE_KEYS[0]) in d_])
             need_h = (not os.path.exists(STYLE_OBS)) or os.path.getsize(STYLE_OBS) == 0

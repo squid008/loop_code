@@ -90,6 +90,37 @@ def l1_score(stab, ic_ir, shape_pos=None, mode='old'):
     return np.abs(np.asarray(ic_ir, dtype='float64')) * (0.25 + 0.75 * st)
 
 
+def neutralize_rows(Y, F, min_n=50):
+    """逐行(截面)对风格做 OLS 回归取残差：`Y - X·β`，`X = [1, F...]`。
+
+    参数
+      Y : (T,S) 被中性化的量（如**远期收益**，原始值）
+      F : (T,S) 或 [F1, F2, ...]，风格暴露（如 lncap / lnamt）
+    返回 (T,S) 残差；NaN 位置仍为 NaN。
+
+    退化处理：某行有效样本 < `min_n`、或设计矩阵奇异 -> **该行保留原值**（退化为原始口径），
+    而不是返回 NaN —— 否则会连带丢掉 `decile_shape` 的整期样本。"""
+    Y = np.asarray(Y, dtype='float64')
+    Fs = [np.asarray(f, dtype='float64') for f in
+          (F if isinstance(F, (list, tuple)) else [F])]
+    out = Y.copy()
+    for t in range(Y.shape[0]):
+        cols = [Y[t]] + [f[t] for f in Fs]
+        m = np.isfinite(cols[0])
+        for c in cols[1:]:
+            m &= np.isfinite(c)
+        if m.sum() < min_n:
+            continue
+        X = np.column_stack([np.ones(int(m.sum()))] + [c[m] for c in cols[1:]])
+        y = cols[0][m]
+        try:
+            beta, *_ = np.linalg.lstsq(X, y, rcond=None)
+        except np.linalg.LinAlgError:
+            continue
+        out[t, m] = y - X @ beta
+    return out
+
+
 def style_expo(RS, SS, min_n=30):
     """逐期截面秩相关(因子 vs 风格)的期均值 —— 与 `standard_test.py`【3】风格归因同口径。
 
