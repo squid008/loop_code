@@ -69,6 +69,14 @@ LRU_MAX = 400             # L1 每批结束把 _LRU 裁到该条数上限(防 L1
 CACHE2_MAX = 150          # 去相关/去重阶段 cache2 的子树缓存上限
                           # (该段每候选只需算1次、无跨批复用, 缓存仅服务邻近候选共享,
                           #  故宜小; 实测 gen37 该段无界累积导致内存从9G单调涨到20G+)
+# ★跨阶段复用缓存(2026-09-12): L1 已算过的因子值, 供**去相关/去重**直接取用, 免二次 eval。
+#   实测依据: 一代 52min 里 L1 占 44%、去相关+去重占 **43%**(499 个候选各重算约 2.7s),
+#   而 L2 只占 10%(evaluate_real 单次仅 ~7s) -> **重复 eval 才是最大浪费**, 不是 L2。
+#   只存"过 ic/stab 门槛"的候选, 且只存 [::FWD] 调仓日视图(419×2000 float32 ≈ 3.35MB/个);
+#   存的是**符号对齐后**的同一数组 -> 下游 rank_rows 结果逐位不变(行为等价, 非近似)。
+VCACHE = {}
+_VREUSE_MB = [0.0]        # 已占用 MB(list 便于就地累加)
+_VREUSE_CAP_MB = 2000.0   # 上限 2GB; 超了就不再存(未命中者在去相关/去重处回退为现场 eval)
 
 
 def base_fields():
@@ -1042,40 +1050,54 @@ def run(args):
     _min_mono = float(getattr(args, 'min_mono', 0.0) or 0.0)      # 缺字段=关闭(默认行为)
     _score_mode = getattr(args, 'score_mode', 'old') or 'old'
     _style_obs = bool(getattr(args, 'style_obs', False))
-    # ★need_shape 必须把 --style_obs 也算进来(2026-09-11 实测踩坑):
+    _shape_neutral = bool(getattr(args, 'shape_neutral', 0))   # 形状量用风格中性收益(§8.5.1 行动①)
+    _reuse_v = bool(getattr(args, 'reuse_v', 1))       # 跨阶段复用 L1 值(默认开, 行为等价)
+    VCACHE.clear()
+    _VREUSE_MB[0] = 0.0
+    # ★need_shape 必须把 --style_obs / --shape_neutral 也算进来(2026-09-11 实测踩坑):
     #  否则单独开 --style_obs(默认 old 排序)时 mono/shape_pos 不计算 -> 观测文件这两列全 NaN,
     #  离线就无法复算 score_new = stab×(0.5+0.5·shape_pos), 整轮观测作废。
-    #  这**不改变选择压力**(need_shape 只管"算不算"), 只是让观测自足。
-    need_shape = (_min_mono > 0) or (_score_mode == 'new') or _style_obs
+    #  这**不改变选择压力**(need_shape 只管"算不算"), 只是让观测/中性化自足。
+    need_shape = ((_min_mono > 0) or (_score_mode == 'new')
+                  or _style_obs or _shape_neutral)
+    if _style_obs and _shape_neutral:
+        print("  ⚠ --style_obs 与 --shape_neutral 同时开: 观测文件里 shape_pos 与 shape_pos_n "
+              "都会是中性化版(拿不到原始变体)。**做测量请只用 --style_obs**。")
     if need_shape:
         print(f"  [形状] 已启用十档单调性计算 (min_mono={_min_mono:g}, "
-              f"score_mode={_score_mode}, style_obs={_style_obs}; "
+              f"score_mode={_score_mode}, style_obs={_style_obs}, "
+              f"shape_neutral={_shape_neutral}; "
               f"调仓日视图 {Rsub_s.shape[0]}期)")
     # ---- 风格暴露观测(2026-09-11, --style_obs 默认关) ----
     #  口径 = standard_test【3】风格归因的四项特征定义; 取 **L1 子面板 + [::FWD] 调仓日视图**
     #  (与 decile_shape 同视图 -> 两者共用一次 rank_rows); 快, 但只是"相对比较用代理",
     #  绝对值以 standard_test 全量报告为准。用途: 验证批1 是否让因子更往低换手/低成交额挤。
     STYLE_S, FEAT_S = {}, {}
-    if _style_obs:
+    if _style_obs or _shape_neutral:
         _sf = style_features(B)
         for _k in STYLE_KEYS:
             FEAT_S[_k] = _sf[_k][np.ix_(L1_ROWS, L1_COLS)][::FWD]    # 原始值(供中性化)
-            STYLE_S[_k] = rank_rows(FEAT_S[_k])                      # 秩(供 style_expo)
+            if _style_obs:
+                STYLE_S[_k] = rank_rows(FEAT_S[_k])                  # 秩(供 style_expo)
         del _sf
-        print(f"  [风格观测] 已启用 ({', '.join(STYLE_KEYS)}; 子面板[::FWD] "
-              f"{Rsub_s.shape[0]}期) -> {STYLE_OBS}")
-    # ★风格中性收益(仅 --style_obs 时算, **只用于观测, 不参与选择**):
-    #   把远期收益对 lncap/lnamt 逐期回归取残差, 再用它算第二套 shape_pos_n。
-    #   用途: 检验 roadmap §8.5 给出的下一步 —— 若 shape_pos 改用"风格中性后的档位单调性",
-    #   --score_mode=new 是否就不再奖励小市值暴露。一次跑即可三公式(旧/新/新+中性)配对比较。
+        if _style_obs:
+            print(f"  [风格观测] 已启用 ({', '.join(STYLE_KEYS)}; 子面板[::FWD] "
+                  f"{Rsub_s.shape[0]}期) -> {STYLE_OBS}")
+    # ★风格中性收益: 把远期收益对 lncap/lnamt 逐期回归取残差。两种用途——
+    #   ① --style_obs:     只落观测(记 shape_pos_n), 供**离线**配对比较 old/new/new_n
+    #   ② --shape_neutral: 作为**主形状量**的收益入参 -> shape_pos 即"风格中性后的档位单调性",
+    #                       直接进入 --min_mono 与 l1_score(new)。§8.5.1 判定 ✅ 后的行动①。
     Rsub_s_n = None
-    if _style_obs:
+    if _style_obs or _shape_neutral:
         try:
             Rsub_s_n = neutralize_rows(Rsub_s, [FEAT_S['lncap'], FEAT_S['lnamt']], min_n=50)
-            print("  [风格观测] 已算风格中性收益(对 lncap/lnamt 逐期回归残差) -> 记 shape_pos_n")
+            print(f"  [形状] 已算风格中性收益(对 lncap/lnamt 逐期回归残差) -> "
+                  f"{'★参与选择(--shape_neutral)' if _shape_neutral else '仅观测(shape_pos_n)'}")
         except Exception as e:
             Rsub_s_n = None
-            print(f"  [风格观测] 中性收益失败(仅缺 shape_pos_n): {type(e).__name__}: {e}")
+            print(f"  [形状] 中性收益失败(仅缺中性化能力): {type(e).__name__}: {e}")
+    # 主形状量用哪套收益(原始 / 中性化)
+    R_SHAPE = Rsub_s_n if (_shape_neutral and Rsub_s_n is not None) else Rsub_s
     stats = []
     BATCH = args.batch
     n_eval = 0
@@ -1134,7 +1156,7 @@ def run(args):
                 continue
             if need_shape:
                 try:
-                    shp.append(decile_shape(rs, Rsub_s, Usub_s))
+                    shp.append(decile_shape(rs, R_SHAPE, Usub_s))
                 except Exception:
                     shp.append(None)
             else:
@@ -1169,6 +1191,17 @@ def run(args):
                 for _k in STYLE_KEYS:
                     d['st_' + _k] = sy[_k]
             stats.append(d)
+        # ---- 跨阶段复用 L1 值(2026-09-12): 只存**过 ic/stab 门槛**候选的 [::FWD] 视图。
+        #  存的是符号对齐后的同一数组 -> 去相关/去重的 rank_rows 结果逐位不变(行为等价)。
+        #  成本仅一次 memcpy(~3.35MB/个); 省下的是一次完整 eval_expr + rank_rows(~2.5s/个)。
+        if _reuse_v and vals:
+            for _d_, _v in zip(stats[-len(vals):], vals):
+                if _VREUSE_MB[0] >= _VREUSE_CAP_MB:
+                    break
+                if _d_['ic'] > args.min_ic and _d_['stab'] > args.min_stab:
+                    _arr = np.ascontiguousarray(_v[::FWD])
+                    VCACHE[_d_['expr']] = _arr
+                    _VREUSE_MB[0] += _arr.nbytes / 1e6
         n_eval += len(vals)
         del vals, IC
         gc.collect()
@@ -1229,6 +1262,7 @@ def run(args):
     # ★去相关: 与【已入库已知因子】相关性过高的丢弃, 强迫引擎探索新方向
     #   (中金的"IC相关性<0.70"; 否则引擎会反复重新发现 ln_mktcap / amt_log)
     if args.decorr > 0:
+        _t_dec = time.time()
         # 对比对象 = 人工基准 + 【历代入库因子(state.bank)】 —— 对齐中金
         # "与已入库因子IC相关<0.70"的结果闸门: 不是固定两个基准, 库扩大后
         # 与新入库因子相似的候选会被拦在L2外(不靠禁叶子字段)
@@ -1249,11 +1283,18 @@ def run(args):
             except Exception:
                 pass
         keep_rows = []
+        n_hit = 0
         for _, r in l1.iterrows():
-            v0 = eval_expr(r['node'], Bsub, cache2)
-            if r['sign'] < 0:
-                v0 = -v0
-            v = rank_rows(v0[::FWD])
+            # ★复用 L1 已算的 [::FWD] 值视图(命中则完全跳过 eval_expr, 结果逐位不变)
+            v0 = VCACHE.get(r['expr']) if _reuse_v else None
+            if v0 is not None:
+                n_hit += 1
+            else:
+                v0 = eval_expr(r['node'], Bsub, cache2)
+                if r['sign'] < 0:
+                    v0 = -v0
+                v0 = v0[::FWD]
+            v = rank_rows(v0)
             del v0
             mx = 0.0
             for w in Kr.values():
@@ -1267,6 +1308,8 @@ def run(args):
             trim_cache(cache2, CACHE2_MAX)             # 去相关缓存容量控制(防OOM)
         print(f"去相关(|corr|<={args.decorr} vs {len(Kr)}个已知因子) 后剩 "
               f"{len(keep_rows)} 个 (原 {len(l1)})")
+        print(f"  [计时] 去相关 用时 {time.time() - _t_dec:.0f}s "
+              f"(复用 L1 值 {n_hit}/{len(l1)} 个, 缓存 {_VREUSE_MB[0]:.0f}MB)", flush=True)
         if keep_rows:
             l1 = pd.DataFrame(keep_rows)
     # 关键: 不能只按 |IC_IR| 排! 低稳定性(高换手)因子费后必亏
@@ -1286,16 +1329,23 @@ def run(args):
     # gen51: 阈值 0.99 -> args.dedup_corr(默认0.85)。0.99 过松: 实测同代 F20~F23 两两
     # |corr| 0.93/0.88 全数放行(4 个近重复因子同代入库)。标定: 全库 23 因子在此口径下
     # 仅这两对>0.85(其余<=0.744) -> 0.85 既能拦下两对、又不误杀历史入库因子。
+    _t_dd = time.time()
     TOPN = min(len(l1), args.dedup_n)
     dedup, seen_v = [], []
     n_dup = 0
     samp = slice(None, None, max(1, 418 // args.dedup_days))   # 抽样调仓日
     cache2 = {}
+    n_hit2 = 0
     for _, r in l1.head(TOPN).iterrows():
-        v = eval_expr(r['node'], Bsub, cache2)
-        if r['sign'] < 0:
-            v = -v
-        v = rank_rows(v[::FWD])[samp]
+        vc = VCACHE.get(r['expr']) if _reuse_v else None
+        if vc is not None:                              # 复用 L1 值, 免二次 eval
+            v = rank_rows(vc)[samp]
+            n_hit2 += 1
+        else:
+            v = eval_expr(r['node'], Bsub, cache2)
+            if r['sign'] < 0:
+                v = -v
+            v = rank_rows(v[::FWD])[samp]
         dup = False
         for w in seen_v:
             m = np.isfinite(v) & np.isfinite(w)
@@ -1312,6 +1362,10 @@ def run(args):
         trim_cache(cache2, CACHE2_MAX)                 # 去重缓存容量控制(防OOM)
     print(f"\nL1 通过 {len(l1)} 个, 取Top{TOPN}近重复去重(|corr|>{args.dedup_corr:g})"
           f"拦 {n_dup} -> 剩 {len(dedup)} 个")
+    print(f"  [计时] 近重复去重 用时 {time.time() - _t_dd:.0f}s "
+          f"(复用 L1 值 {n_hit2}/{TOPN} 个)", flush=True)
+    VCACHE.clear()                                      # 去相关/去重用完即释放(防与 L2 叠加占内存)
+    _VREUSE_MB[0] = 0.0
     l1 = pd.DataFrame(dedup) if dedup else l1.head(TOPN)
     print(l1[['expr', 'ic', 'ic_ir', 'stab']].head(15).round(4).to_string(index=False))
     # ---- 结构族配额(QuantaAlpha 冗余检测移植, gen31) ----
@@ -1377,10 +1431,12 @@ def run(args):
 
     # ---- L2 费后精筛 ----
     top = l1.head(args.l2)
+    _t_l2 = time.time()
     print(f"\nL2 费后精筛 {len(top)} 个 ...")
     rows = []
     seg_ok_list = []   # 与 rows 同步, 供 critic 统计 seg_kill(不入 archive 表头)
     for j, (_, r) in enumerate(top.iterrows(), 1):
+        t_one = time.time()
         nd = r['node']
         try:
             v = eval_expr(nd, B, {})
@@ -1426,7 +1482,9 @@ def run(args):
               f"负年{sum(1 for v in yr.values() if v <= 0)} "
               f"[cost={cost_label(args.cost)} win={args.window}] "
               f"分段{seg_txt} "
+              f"耗时{time.time() - t_one:.0f}s "
               f"{'PASS' if ok else ''}")
+    print(f"  [计时] L2 费后精筛 {len(top)} 个 用时 {time.time() - _t_l2:.0f}s", flush=True)
     res = pd.DataFrame(rows)
     # 失败模式库: L2 费后结果落地成败(中金: 失败表达式写入失败库, 生成阶段排除)
     top_node = {str(r['node']): r['node'] for _, r in top.iterrows()}
@@ -1835,6 +1893,17 @@ if __name__ == '__main__':
                          '是否进 L2/通过 L2 可与 loop_archive.csv 按 (gen, expr) 离线 join。'
                          '用途: 验证 --score_mode=new / --min_mono 是否让因子更往'
                          '「低换手/低成交额」挤(stab 即低换手代理)。关闭时零额外开销')
+    ap.add_argument('--reuse_v', type=int, default=1,
+                    help='跨阶段复用 L1 已算的因子值(2026-09-12, 默认 1=开): 去相关/去重不再'
+                         '重复 eval_expr, 直接取 L1 缓存(只存过 ic/stab 门槛者的 [::FWD] 视图,'
+                         '上限 2GB)。存的是符号对齐后的同一数组 -> 结果**逐位不变**, 只省时间。'
+                         '--reuse_v=0 可关闭(供对拍验证)')
+    ap.add_argument('--shape_neutral', type=int, default=0,
+                    help='形状量改用风格中性收益(2026-09-12, 默认 0=关; roadmap §8.5.1 判定 ✅ 的行动①): '
+                         '把 decile_shape 的收益入参换成**对 lncap/lnamt 逐期回归后的残差收益**, '
+                         '于是 shape_pos 衡量"风格中性后的档位单调性"(同时影响 --min_mono)。'
+                         '实测(3 代/2137 候选): 可把 --score_mode=new 的市值暴露**增幅砍掉 69%**, '
+                         '而低换手下降的好处不变。⚠ 做测量时请只用 --style_obs(同时开会拿不到原始变体)')
     ap.add_argument('--fsa_th', type=float, default=-1,
                     help='FSA骨架冻结阈值: bank中同骨架占比超过该值即冻结该骨架, '
                          '后续候选不再生成/入库(中金>15%%冻结); 负数=跟随B角建议, 0=关闭')

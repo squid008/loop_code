@@ -19,6 +19,7 @@
   - `standard_test.py` 因子检验模板：一次跑齐「引擎指标复现校验 + 全A宽池频率扫描 + 沪深300/中证500 成分内 + 风格归因 + 分段独立验证」，含 `--pool_mode=A|B|S`、`--cost-name`；成本口径取自 `engine/cost_presets.py`
   - `style_paired_analysis.py` 排序分**配对**风格暴露比较（old / new / new+mono / new_n）→ 写 `docs/loop_style_paired.md`
   - `qa_style_obs.py` 风格观测链路自检（18 项：向量化 vs 朴素对拍、退化安全、20 日滚动轴、`--help` 冒烟）
+  - `prof_evalreal.py` 单点耗时剖析（cProfile + 合成因子跑真实 panel）→ 定位相位瓶颈，不用"总时长减法"猜
 - `docs/` — 结论文档/档案：`factor_roadmap.md`（**研发档案主入口**：Round 叙事 + 附录A Loop gen1~22 整体复盘 + 附录B 扩叶落地）/ `factor_library.md`（**Loop 入库因子**，引擎代末自动同步新增）/ `loop_journal.md`（B角代际诊断）/ `loop_archive.csv`（Loop 每代 L2 明细流水，逐代累积）/ `history/`（**归档区**：factor_miner Round1~7 旧档案 factor_archive.md/.csv，已停更）
 - `strategies/` — 定稿 rqalpha 回测策略：`all01/`（all00/01/03 + factor_snapshot 数据）、`all04/`（barra 落地 + g6 数据）、`vol/`、`big_small/`，共享 `bt_utils.py`
 - `research/` — 早期挖掘轮次 `round*.py` 与专题研究脚本（方法留档；运行需与 `engine` 同目录或放回原 `ai_test` 全套依赖）
