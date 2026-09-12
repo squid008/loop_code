@@ -328,7 +328,7 @@ KNOWN = {'ln_mktcap': log(mktcap), 'amt_log': -log(ts_mean(turnover, 20) + 1)}
 ```powershell
 # 只跑 L1(--l2=0) + 观测; ~30min/代（形状量让 L1 从 23min 涨到 ~30min）
 D:\miniconda3\envs\rqdata\python.exe engine\loop_engine.py --gen=71 --n=800 --l2=0 --style_obs
-D:\miniconda3\envs\rqdata\python.exe ai_test\style_paired_analysis.py   # 离线配对 -> docs/loop_style_paired.md
+D:\miniconda3\envs\rqdata\python.exe standard\style_paired_analysis.py   # 离线配对 -> docs/loop_style_paired.md
 ```
 
 > **为什么这比"跑两轮"更好**：两轮的**代数不同 ⇒ 种子不同（`gen*10+7`）⇒ 候选集不同**，
@@ -354,7 +354,7 @@ D:\miniconda3\envs\rqdata\python.exe ai_test\style_paired_analysis.py   # 离线
 
 > 方法：`--style_obs` **单臂** + 离线配对（见 §8.4）。样本 = **2125 个候选 / gen71~73**，
 > 门槛与引擎 L1 同口径（`ic>0.02` + `stab>=0.75`，**三代均从日志核对一致**）。
-> 报告全文 `docs/loop_style_paired.md`；脚本 `ai_test/style_paired_analysis.py`（可复跑复核）。
+> 报告全文 `docs/loop_style_paired.md`；脚本 **`standard/style_paired_analysis.py`**（可复跑复核）。
 
 **Top-30 池化（每代取前 30、三组合并 90 个）**
 
