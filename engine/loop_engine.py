@@ -479,6 +479,32 @@ def _e(x, w):
     return fastops.ts_ema(x, w)
 
 
+# ★ 回归/矩算子（2026-09-15, loop_todo §1.26 ②③）—— 5 个 helper 与 `_m`/`_s` 同风格
+def _sl(x, w):
+    import fastops
+    return fastops.ts_slope(x, w)
+
+
+def _rq(x, w):
+    import fastops
+    return fastops.ts_rsqr(x, w)
+
+
+def _rs(x, w):
+    import fastops
+    return fastops.ts_resi(x, w)
+
+
+def _sk(x, w):
+    import fastops
+    return fastops.ts_skew(x, w)
+
+
+def _ku(x, w):
+    import fastops
+    return fastops.ts_kurt(x, w)
+
+
 UNARY = {
     # 短中窗口(原)
     'ts_mean5': lambda x: _m(x, 5),
@@ -523,6 +549,32 @@ UNARY = {
     'ema20': lambda x: _e(x, 20),
     'ema26': lambda x: _e(x, 26),
     'ema60': lambda x: _e(x, 60),
+    # ★★★ 回归类（2026-09-15, loop_todo §1.26 ③；用户点名 slope + R²）
+    #   为什么值得加：`ts_mean` 说"**水平**多少"，回归三件套说"**趋势**" —— 是**不同信息通道** ✓
+    #     `ts_slope` = 趋势方向+强度 · `ts_rsqr` = 趋势"干净度"（路径多接近直线）·
+    #     `ts_resi`  = 趋势之外的偏移（最后一点相对趋势线）
+    #   ★★ `ts_rsqr` 的用户理由：「R方高线性度好，说明**涨得稳**」—— 方向对 ✓
+    #      但要注意：**R² 不含方向**（涨得稳 / 跌得稳 都是高 R²）⇒ 必须配合 `ts_slope` 的符号
+    #      （如 `mul(ts_rsqr20(close), ts_slope20(close))` = 干净度 × 方向）✓
+    #   ★ 三者出自**同一次回归** ⇒ 几乎零额外成本（前缀和可解，实测 0.42s/3309×2000）✓
+    #   ⚠ **满窗**语义（回归要求同一批点）⇒ 前 w-1 期 NaN（同 `ts_ema`）
+    #   ⚠ 窗口只取 3 档（5/20/60）：算子越多搜索空间越大 ⇒ 克制（见 docs 的复杂度门提醒）
+    'ts_slope5': lambda x: _sl(x, 5),
+    'ts_slope20': lambda x: _sl(x, 20),
+    'ts_slope60': lambda x: _sl(x, 60),
+    'ts_rsqr5': lambda x: _rq(x, 5),
+    'ts_rsqr20': lambda x: _rq(x, 20),
+    'ts_rsqr60': lambda x: _rq(x, 60),
+    'ts_resi5': lambda x: _rs(x, 5),
+    'ts_resi20': lambda x: _rs(x, 20),
+    'ts_resi60': lambda x: _rs(x, 60),
+    # ★★ 高阶矩（§1.26 ②）—— 分布**形状**通道：偏度=尾巴往哪边 · 峰度=极端值密度
+    #   ★ 与波动率**不等价**：同样 σ，厚尾的尾部风险更大 ⇒ 是独立信息 ✓
+    #   ★ 也走前缀和（3~4 个 cumsum）⇒ 便宜 ✓
+    'ts_skew20': lambda x: _sk(x, 20),
+    'ts_skew60': lambda x: _sk(x, 60),
+    'ts_kurt20': lambda x: _ku(x, 20),
+    'ts_kurt60': lambda x: _ku(x, 60),
     'log': lambda x: np.log(np.maximum(x, 1e-9)),
     'abs': np.abs,
     'neg': lambda x: -x,

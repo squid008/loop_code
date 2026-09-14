@@ -34,8 +34,9 @@ KNOWN_HINT = ['ln_mktcap', 'ln_volume', 'turnover', 'mktcap', 'amt']
 # 长周期算子(稳定性友好) / 短周期算子(换手高)
 # 长周期算子(稳定性友好) —— ★ 2026-09-15 加 `ema60`：EMA 是**指数平滑**，
 #   对近期加权但尾部衰减 ⇒ 天然**低换手/高稳定**，正是这一档想要的 ✓
+#   ★ 同批加 `ts_slope60`/`ts_rsqr60`：60 日**趋势**量本身变化慢 ⇒ 低换手 ✓
 SLOW_OPS = ['ts_mean20', 'ts_mean10', 'ts_rank60', 'ts_std60', 'ts_max20', 'ts_min20',
-            'ema60']
+            'ema60', 'ts_slope60', 'ts_rsqr60']
 FAST_OPS = ['ts_mean5', 'ts_delay1', 'ts_delta5']
 
 # =====================================================================

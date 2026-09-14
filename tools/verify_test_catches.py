@@ -64,11 +64,25 @@ def main():
     print('=' * 96)
     print('负向验证：证明 {} 真的抓得到 bug'.format(a.test))
     print('=' * 96)
+    # ★★★★ 防护 A（2026-09-15 血的教训）：**并发守卫**。
+    #   本工具会**临时改写源码** —— 若两个实例同时跑（或上一次没还原干净），
+    #   后启动的那个会把前一个的"**错误源码**"当作自己的"原始快照" ⇒
+    #   它"还原"时**把错误公式写回去** ⇒ **源码被静默改坏** ✗✗
+    #   ★ 实录：我在同一轮**并行**发了两个负向验证（改同一文件）⇒ 正是这个场景 ⇒
+    #     `fastops.py` 的 `rsqr` 公式被留成了 `Sxy / Sxx` ✗（测试才发现）
+    #   ⇒ 用 `.verifybak` 的存在当**互斥锁**：存在 ⇒ 拒绝启动 ✓
+    bak = path + '.verifybak'
+    if os.path.exists(bak):
+        print('  [✗] 发现 {} 已存在 ⇒ **拒绝执行**'.format(os.path.basename(bak)))
+        print('      含义：上一次验证**没还原干净**，或**另一个实例正在跑**。')
+        print('      ⇒ 请先确认（`git diff {}`），再删除该备份后重试。'.format(a.file))
+        print('      ⚠ **绝不要并行跑两个负向验证**（会互相污染源码）。')
+        return 3
     src = io.open(path, encoding='utf-8').read()
     if a.frm not in src:
         print('  [!] 在 {} 里找不到 --from 片段 ⇒ 无法验证'.format(a.file))
         return 2
-    io.open(path + '.verifybak', 'w', encoding='utf-8').write(src)
+    io.open(bak, 'w', encoding='utf-8').write(src)
     caught = False
     try:
         io.open(path, 'w', encoding='utf-8').write(src.replace(a.frm, a.to))
@@ -85,10 +99,22 @@ def main():
             if 'FAIL' in l:
                 print('       ' + l.strip()[:134])
     finally:
+        # ★★★★ 防护 B：还原**必须逐字节验证**（不能只 write 了就当成功）。
+        #   2026-09-15 实录：旧版 `write(src)` 后直接宣布"已还原"，但若 `src` 本身
+        #   就是被污染的（并发场景），它写回去的还是错的 ⇒ **谎报成功** ✗
+        #   ⇒ 现在：写回后用 `.verifybak`（**真正的原始快照**）**读回比对**；
+        #     不一致 ⇒ **用备份强制恢复** + **大声报错**（不再静默）✓
         io.open(path, 'w', encoding='utf-8').write(src)
         if a.regen:
             run(a.regen)
-        print('  ④ 已还原 {} 并重新生成'.format(a.file))
+        back = io.open(path, encoding='utf-8').read()
+        if back != src:
+            io.open(path, 'w', encoding='utf-8').write(
+                io.open(bak, encoding='utf-8').read())
+            print('  [✗✗] 还原后内容与原始快照**不一致** ⇒ 已用备份强制恢复')
+            print('        ☞ 说明有其他进程改过该文件（**不要并行跑本工具**）')
+            return 4
+        print('  ④ 已还原 {}（**逐字节校验通过**）并重新生成'.format(a.file))
     r = run(a.test)
     restored = (r.returncode == 0)
     print('  ⑤ 再跑 {} -> 退出码 {} ⇒ {}'.format(

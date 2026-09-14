@@ -183,6 +183,167 @@ def ts_delta(x, n):
     return out
 
 
+def _cum_w(x, w):
+    """窗口和（前缀和技巧）：`out[t] = Σ x[t-w+1 .. t]`。
+
+    与 `_win_sum` 的区别：这里 `out` 的前 `w-1` 行是 **NaN**（不是"不足窗的部分和"）。
+    ⇒ 回归类算子的**正确性要求"同一批点"** ⇒ 必须**满窗**，不能让窗口长度随位置变化
+      （否则 `n` 变了，`Su`/`Suu` 常数就错了）✓
+    """
+    c = np.cumsum(x, axis=0)
+    out = np.full_like(c, np.nan)
+    out[w - 1] = c[w - 1]
+    if c.shape[0] > w:
+        out[w:] = c[w:] - c[:-w]
+    return out
+
+
+def ts_slope(x, w):
+    """滚动线性回归**斜率** `slope(y ~ t)`（对齐 QuantAlpha `Slope(A, N)` / qlib `BETA*`）。
+
+    ## 2026-09-15 新增（`loop_todo §1.26` ③ 回归类）—— 用户点名
+
+    **为什么值得加**：`slope` 是「**趋势方向 + 强度**」，与 `ts_mean`（水平）是**不同的信息通道**：
+      `ts_mean20(x)` 说"x 最近平均多少"，`ts_slope20(x)` 说"x 正在以多快速度往哪个方向走" ✓
+      ⇒ 一条**独立的平滑/趋势通道**（正对 §1.20 铁律「瓶颈是信号源多样性」）。
+
+    ## 数学（满窗 `n = w`，`u = 0..w-1` 为窗口内位置）
+
+    ```
+    Su  = Σu   = w(w-1)/2                 ← 常数（满窗 ⇒ 只算一次）
+    Suu = Σu²  = (w-1)w(2w-1)/6           ← 常数
+    Sxx = Suu - Su²/w                     ← 常数
+    T1  = Σy ·  T2 = Σu·y ·  T3 = Σy²     ← 3 个前缀和
+    Sxy = T2 - Su·T1/w
+    slope = Sxy / Sxx
+    ```
+    ⇒ **只需 3 个前缀和**（`Σy` / `Σu·y` / `Σy²`）⇒ 实测 **0.42s**（3309×2000）✓
+
+    ★★ **满窗语义**（`n = w` 固定）：回归必须用**同一批点**，缺一个点 `Su`/`Suu` 就变
+      ⇒ 前 `w-1` 期 + 窗口内含 NaN 的期 ⇒ **输出 NaN** ✓（与 `ts_ema` 的满窗一致）
+    ★ **`Sxx` 恒 > 0**（`w≥2`），无需除零保护；但 `x` 全 NaN 时 `T1..T3` 是 0 ⇒ 会被满窗检查挡掉 ✓
+    """
+    return _linreg(x, w)[0]
+
+
+def ts_rsqr(x, w):
+    """滚动线性回归**拟合度 R²**（对齐 QuantAlpha `Rsquare(A, N)` / qlib `RSQR*`）。
+
+    ## 2026-09-15 新增（用户点名）—— 用户的理由与我的补充
+
+    **用户原话**：「还有线性回归**拟合度 R方**也很重要，**R方高线性度好，说明涨得稳**，你觉得呢？」
+    **判断：方向对 ✓，但要补三点**：
+      ① ★ **R² 不含方向** —— 「涨得稳」和「**跌得稳**」都是高 R²
+         ⇒ **必须配合 `ts_slope` 的符号**用（如 `mul(ts_rsqr20(close), ts_slope20(close))`
+            = "趋势干净度 × 方向"，或让引擎按 IC 自己定 `sign`）✓
+      ② ★ **`R² = Sxy²/(Sxx·SS_tot)`，当 `SS_tot → 0`（价格几乎不动）时是 0/0** ⇒
+         数值不稳定 ⇒ 本实现用 `EPS` 兜底：`SS_tot < EPS` 处**输出 NaN**（**不臆造**）✓
+      ③ ★★ **`R²` 是尺度无关的**（乘任何正常数不变）⇒ 对"波动大小"不敏感
+         ⇒ 它捕捉的是「**路径有没有单边趋势**」，不是「涨得多不多」✓
+
+    ## 数学
+    `R² = 1 - SS_res/SS_tot = Sxy²/(Sxx · SS_tot)`，`SS_tot = T3 - T1²/w`
+    """
+    return _linreg(x, w)[1]
+
+
+def ts_resi(x, w):
+    """滚动线性回归的**残差**（对齐 QuantAlpha `Resi(A, N)`）—— **最后一点相对趋势线的偏离**。
+
+    ★ 与 `ts_slope` / `ts_rsqr` 出自**同一次回归** ⇒ 几乎零额外成本（同一份前缀和）✓
+    **语义**：趋势之外的"意外"部分 ⇒ `+` 表示**冲高偏离**，`-` 表示**超跌偏离** ✓
+    """
+    return _linreg(x, w)[2]
+
+
+def _linreg(x, w):
+    """一次算出 `(slope, rsqr, resi)` —— 三个算子共用，避免重复前缀和。
+
+    :return: 三个 `(T,S)` float32 数组
+    """
+    x = _prep(x)
+    T, S = x.shape
+    y = np.where(np.isfinite(x), x, 0.0)
+    m = np.isfinite(x)
+    cnt = _cum_w(m.astype(np.float64), w)                 # 满窗有效计数
+    T1 = _cum_w(y, w)                                     # Σy
+    T3 = _cum_w(y * y, w)                                 # Σy²
+    # Σu·y：u 是**窗口内位置**(0..w-1) ⇒ Σ(u·y) = Σ(j·y) - a·Σy，a = 窗口起点 = t-w+1
+    #   这里用**全局索引** j 的前缀和；一次性乘上列向量索引即可（O(T·S)）
+    j = np.arange(T, dtype=np.float64)[:, None]
+    T2 = _cum_w(j * y, w) - (j - (w - 1)) * T1            # = Σu·y ✓
+    n = float(w)
+    Su = n * (n - 1.0) / 2.0
+    Suu = (n - 1.0) * n * (2.0 * n - 1.0) / 6.0
+    Sxx = Suu - Su * Su / n                               # 常数 > 0（w>=2）
+    mean = T1 / n
+    Sxy = T2 - Su * T1 / n
+    slope = Sxy / Sxx
+    SS_tot = T3 - T1 * T1 / n
+    with np.errstate(invalid='ignore', divide='ignore'):
+        rsqr = (Sxy * Sxy) / (Sxx * SS_tot)
+    # ★ 数值保护：SS_tot≈0（几乎不动）⇒ R² 是 0/0 ⇒ **NaN**（不臆造，也不给假 1.0）
+    rsqr = np.where(SS_tot > 1e-12, rsqr, np.nan)
+    rsqr = np.clip(rsqr, 0.0, 1.0)                        # 浮点误差可能让它微超 1
+    # 残差：最后一个有效点相对趋势线 ⇒ intercept = (T1 - slope·Su)/n，u_last = n-1
+    resi = y - ((T1 - slope * Su) / n + slope * (n - 1.0))
+    ok = np.isfinite(cnt) & (cnt >= n)                    # ★ 满窗（cnt==w，NaN 处 cnt 为 nan）
+    f = lambda a: np.where(ok, a, np.nan).astype(np.float32)
+    return f(slope), f(rsqr), f(resi)
+
+
+def ts_skew(x, w):
+    """滚动**偏度**（三阶矩，对齐 QuantAlpha `TS_SKEW` / qlib `SKEW*`）。
+
+    **为什么值得加**：均值/标准差描述"水平和波动"，**偏度描述"尾巴往哪边"** ——
+      收益分布右偏（正偏）常伴随"慢跌急涨"，左偏反之 ⇒ **独立的分布形状通道** ✓
+    **数学**：`skew = m3 / m2^1.5`，`m2 = E[y²]-E[y]²`，
+      `m3 = E[y³] - 3·E[y]·E[y²] + 2·E[y]³`（中心矩展开，避免两次循环）⇒ 3 个前缀和 ✓
+    ⚠ 与 `ts_ema` 一致采用**满窗**（矩估计对缺失敏感）⇒ 前 `w-1` 期 NaN。
+    """
+    x = _prep(x)
+    y = np.where(np.isfinite(x), x, 0.0)
+    m = np.isfinite(x)
+    cnt = _cum_w(m.astype(np.float64), w)
+    T1 = _cum_w(y, w)
+    T2 = _cum_w(y * y, w)
+    T3 = _cum_w(y * y * y, w)
+    n = float(w)
+    mu = T1 / n
+    m2 = T2 / n - mu * mu
+    m3 = T3 / n - 3.0 * mu * (T2 / n) + 2.0 * mu ** 3
+    with np.errstate(invalid='ignore', divide='ignore'):
+        out = m3 / np.power(np.maximum(m2, 1e-12), 1.5)
+    ok = np.isfinite(cnt) & (cnt >= n) & (m2 > 1e-12)
+    return np.where(ok, out, np.nan).astype(np.float32)
+
+
+def ts_kurt(x, w):
+    """滚动**超额峰度**（四阶矩，对齐 QuantAlpha `TS_KURT` / qlib `KURT*`）。
+
+    **为什么值得加**：峰度刻画"**极端值密度**" —— 高峰度 = 厚尾（暴涨暴跌多），
+      低峰度 = 温和 ⇒ 与波动率**不等价**（同样是 σ，厚尾的尾部风险更大）✓
+    **数学**：`kurt = m4/m2² - 3`（**超额**，正态为 0 ⇒ 便于比较），
+      `m4 = E[y⁴] - 4·E[y]·E[y³] + 6·E[y]²·E[y²] - 3·E[y]⁴` ⇒ 4 个前缀和 ✓
+    """
+    x = _prep(x)
+    y = np.where(np.isfinite(x), x, 0.0)
+    m = np.isfinite(x)
+    cnt = _cum_w(m.astype(np.float64), w)
+    T1 = _cum_w(y, w)
+    T2 = _cum_w(y * y, w)
+    T3 = _cum_w(y * y * y, w)
+    T4 = _cum_w(y * y * y * y, w)
+    n = float(w)
+    mu = T1 / n
+    m2 = T2 / n - mu * mu
+    m4 = (T4 / n - 4.0 * mu * (T3 / n) + 6.0 * mu * mu * (T2 / n) - 3.0 * mu ** 4)
+    with np.errstate(invalid='ignore', divide='ignore'):
+        out = m4 / np.maximum(m2 * m2, 1e-24) - 3.0
+    ok = np.isfinite(cnt) & (cnt >= n) & (m2 > 1e-12)
+    return np.where(ok, out, np.nan).astype(np.float32)
+
+
 def ts_ema(x, w):
     """指数移动平均 EMA —— 衰减因子 `α = 2/(w+1)`（对齐 QuantaAlpha `EMA` / 通达信 `EMA`）。
 
