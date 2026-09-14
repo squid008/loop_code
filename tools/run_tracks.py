@@ -18,6 +18,15 @@
   python tools/run_tracks.py                      # 默认 300,500,1000 × 3 轮
   python tools/run_tracks.py --pools=300,500,1000,all --rounds=1
   python tools/run_tracks.py --dry                # 只打印"将跑哪些代"，不执行
+  python tools/run_tracks.py --pools=all --inject_pools=300,500,1000   # 显式指定注入
+  python tools/run_tracks.py --pools=all --inject_pools=none           # 关掉注入
+
+★★ `--inject_pools`（2026-09-14, loop_todo §1.8）：给 `all` 轨道**注入池库作对照集**。
+   默认（不传）= **自动给 `all` 注入本次要跑的其它池**；池轨道**不注入**（理由见 `inject_for`）。
+   为什么：`--decorr`/`--dup_ex_corr` 的对照集原本只是本轨道自己的 bank ⇒ 跑全A 时不知道
+   池库挖到了什么 ⇒ 重挖（实测池因子 vs 全A 库 收益流最大 |相关| **中位 0.767**、>0.7 占 82%，
+   而 `--dup_ex_corr=0.90` 只挡得住 18%）。
+   ⚠ 外部池库只作**对照** —— **不会**写回本轨道的 state / `docs/factor_library*.md`。
 """
 import io
 import os
@@ -89,11 +98,38 @@ def next_gen(pool):
     return ((max(gens) + 1) if gens else 1), (max(gens) if gens else 0)
 
 
+def inject_for(pool, pools, spec):
+    """该轨道要注入哪些**其它池**的库作对照集（2026-09-14, `loop_todo §1.8`）。
+
+    :param spec: `--inject_pools=` 的值
+        · `''`（默认）⇒ **自动**：只给 `all` 轨道注入"本次要跑的其它池"；池轨道不注入
+        · `'none'`     ⇒ 全关（行为回到注入功能之前）
+        · `'300,500'`  ⇒ 显式指定（对所有轨道都用这套，自动去掉自己）
+
+    ★★ 为什么**默认只给 `all` 轨道注入**（不对称是刻意的）：
+      - `all` 轨道的痛点是"**重挖池库**"（实测收益流 |相关| 中位 0.767、>0.7 占 82%）⇒ 必须注入；
+      - **池轨道的产出不是"新因子"，而是"有效域标签"** —— 同一个式子（或已被全A 库
+        高相关因子覆盖的式子）全A 库可能早就有了，池轨道真正的新增信息是
+        「它在 300/500/1000 上分别有没有效」。
+      ⇒ 若给池轨道也注入全A 库，那些"已存在但没打过池标签"的式子会被**对照集挡在门外**
+        ⇒ **池轨道就没产出了** ✗（把它的唯一价值掐掉）
+      ⇒ 所以：**只给 all 注入**。
+    """
+    if spec.strip().lower() == 'none':
+        return []
+    if spec.strip():
+        return [x.strip() for x in spec.split(',') if x.strip() and x.strip() != pool]
+    if pool != 'all':
+        return []
+    return [x for x in pools if x != 'all']
+
+
 def main():
     pools = ['300', '500', '1000']
     rounds = 3
     n, l2 = 800, 30
     dry = False
+    inject_spec = ''       # ★ §1.8：外部池库对照集注入（默认自动：只给 all 轨道）
     # ★★ 池内挖掘的**必要参数组**（2026-09-13 实测；不传 = 白跑一整夜）
     #   300/500 gen6~8 六代全部 `fail_calmar = 1.000`（**100%** 因全A Calmar 不足被砍），
     #   B角原话:「L2中100%因Calmar不足(信号弱)」。根因：我只传了 `--pool_obs`，
@@ -122,6 +158,8 @@ def main():
             n = int(a.split('=', 1)[1])
         elif a.startswith('--l2='):
             l2 = int(a.split('=', 1)[1])
+        elif a.startswith('--inject_pools='):
+            inject_spec = a.split('=', 1)[1].strip()
         elif a == '--dry':
             dry = True
         elif a.startswith('--extra='):
@@ -134,7 +172,20 @@ def main():
     for p in pools:
         g0, done = next_gen(p)
         plan.append((p, g0, done))
-        log('  [PLAN] pool={:<5s} 既有 {} 代 -> 从第 {} 代起跑 {} 轮'.format(p, done, g0, rounds))
+        _inj = inject_for(p, pools, inject_spec)
+        log('  [PLAN] pool={:<5s} 既有 {} 代 -> 从第 {} 代起跑 {} 轮{}'.format(
+            p, done, g0, rounds,
+            ('   [注入对照集] {}'.format(','.join(_inj)) if _inj else '')))
+    _n_all = sum(1 for p, _, _ in plan if inject_for(p, pools, inject_spec))
+    if _n_all:
+        log('  ★ 注入外部池库对照集（loop_todo §1.8）：为什么 —— `--decorr`/`--dup_ex_corr` '
+            '的对照集原本只是本轨道自己的 bank')
+        log('     ⇒ 跑全A 时**不知道池库挖到了什么** ⇒ 重挖。实测池因子 vs 全A 库 的收益流最大 |相关| '
+            '**中位 0.767**、>0.7 占 82%，而 --dup_ex_corr=0.90 只挡得住 18%')
+        log('     ⇒ 不注入 ≈ **把 82% 的算力花在重挖上**。语义：外部池库只作**对照**，'
+            '**不会**写回本轨道的 state/因子库。')
+        log('     ⚠ 只给 `all` 轨道注入（池轨道的价值是"给式子打池内标签"，注入全A 库会让它无产出）；'
+            '`--inject_pools=none` 可关。')
     log('=' * 76)
     if dry:
         log('（--dry：只列计划，不执行）')
@@ -149,6 +200,10 @@ def main():
             errf = os.path.join(LOGD, 'pool{}_gen{}_err.log'.format(sfx, gen))
             cmd = [PY, '-u', 'engine/loop_engine.py', '--gen={}'.format(gen),
                    '--n={}'.format(n), '--l2={}'.format(l2), '--seed={}'.format(seed)] + extra
+            # ★ 2026-09-14（loop_todo §1.8）：给 `all` 轨道注入池库作对照集（避免重挖）。
+            _inj = inject_for(p, pools, inject_spec)
+            if _inj:
+                cmd.append('--inject_pools={}'.format(','.join(_inj)))
             if p != 'all':
                 cmd.append('--mine_pool={}'.format(p))
             log('[START] pool={} gen={} seed={} -> {}'.format(

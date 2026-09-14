@@ -287,6 +287,26 @@ def append_csv_schema_safe(path, df=None, new_cols=None):
     return (msg, len(out))
 
 
+def _cmp_lib(bank_ex, bank_ex_ext):
+    """对照集 = **外部池库** + 自己的库（2026-09-14, `loop_todo §1.8`）。
+
+    :param bank_ex:     自己的收益流库（`loop_state*.pkl` ⇒ **会被持久化**）
+    :param bank_ex_ext: 从**其它池** state 注入的对照集（**只读，绝不持久化**）
+    :return: 供 `ex_max_corr` 用的对照视图（浅拷贝，value 是同一个对象 ⇒ 开销可忽略）
+
+    ★★ 为什么要分开存而不是直接并进 `bank_ex`：
+      本循环会往 `bank_ex[expr] = _ex` 写（入库即进对照集），而 state 只保存 `bank_ex`
+      ⇒ 若把外部池的 47 条并进去，它们会被**当成"全A 自己入库的因子"写进 `loop_state.pkl`
+      和 `docs/factor_library.md`** ⇒ **污染因子库** ✗（库里会凭空多出一批不是它挖的因子）
+    ★ 语义：外部池库只能"**告诉我这些已经挖过了**"，不能"算我的产出"。
+    """
+    if not bank_ex_ext:
+        return bank_ex
+    d = dict(bank_ex_ext)
+    d.update(bank_ex)          # 自己的优先（同 expr 时以自己为准）
+    return d
+
+
 def ex_max_corr(ex_new, bank_ex, min_overlap=30):
     """新因子的**费后超额序列** vs 库内全部收益流的**最大 |Spearman 相关|**。
 
@@ -1216,6 +1236,14 @@ def run(args):
     #   缺它的旧 state 也能跑(只与"本次运行新入库的"比), 但要立即见效请先跑
     #   `tools/backfill_bank_ex.py` 补齐历史。
     bank_ex = {}
+    # ★★ 外部池库对照集（2026-09-14, `loop_todo §1.8`）—— **只读，绝不写回 state / 因子库**。
+    #   为什么需要：`--decorr`/`--dup_ex_corr` 的对照集原本只是"**本轨道自己的 bank**"
+    #   ⇒ 跑全A 时它不知道池库挖到了什么 ⇒ 把同一批重挖一遍（实测收益流 |相关| 中位 0.767、>0.7 占 82%）。
+    #   ★ 与 `bank`/`bank_ex` 的区别：那两个是**本轨道的产出**（会持久化 + 进 `docs/factor_library*.md`）；
+    #     这两个只是"**告诉我这些已经挖过了**"的对照来源。
+    bank_ext, bank_ex_ext = [], {}
+    _inject_tags = [x.strip() for x in
+                    str(getattr(args, 'inject_pools', '') or '').split(',') if x.strip()]
     frozen = []                # FSA冻结骨架列表(中金: 超15%被禁止复用)
     fail_lib = {}              # 失败模式库(骨架级成败滚动统计, 中金: 生成阶段排除)
     cfg = dict(DEFAULT_CFG)
@@ -1252,6 +1280,45 @@ def run(args):
         print(f"载入上一代种子 {len(seeds)} 个, 入库因子 {len(bank)} 个, "
               f"冻结骨架 {len(frozen)} 个, 失败库 {len(fail_lib)} 条, "
               f"已测 {st.get('n_tested', 0)} 个候选")
+        # ★★★ 外部池库注入对照集（2026-09-14, `loop_todo §1.8`）----
+        #   问题：`--decorr` / `--dup_ex_corr` 的对照集是**各自轨道自己的 bank**
+        #   ⇒ 跑全A 时它**根本不知道池库挖到了什么** ⇒ 会把同一批重挖一遍。
+        #   实测（`tools/check_pool_vs_allA.py`）：池因子 vs 全A 库(41) 的收益流最大 |相关|
+        #   **中位 0.767**，>0.7 占 **82%**，而 `--dup_ex_corr=0.90` 只挡得住 18%
+        #   ⇒ **不做注入 ≈ 把 82% 的算力花在重挖上**。
+        #   ★ 语义：外部池库只能"**告诉我这些已经挖过了**"，**不能算我的产出**
+        #     ⇒ 单独存 `bank_ext`/`bank_ex_ext`，**绝不写回自己的 state / 因子库** ✓
+        if _inject_tags:
+            _n_bi, _n_be, _srcs = 0, 0, []
+            for _tp in _inject_tags:
+                _sp = os.path.join(HERE, 'loop_state{}.pkl'.format(
+                    '' if _tp == 'all' else '_' + _tp))
+                if not os.path.exists(_sp):
+                    print(f"  [外部库] [!] 池 {_tp} 无 state（{os.path.basename(_sp)}），跳过")
+                    continue
+                try:
+                    with open(_sp, 'rb') as _f:
+                        _stp = pickle.load(_f)
+                except Exception as _e:
+                    print(f"  [外部库] [!] 池 {_tp} state 读取失败（不影响主流程）: "
+                          f"{type(_e).__name__}: {_e}")
+                    continue
+                _bp = _stp.get('bank', []) or []
+                _bep = _stp.get('bank_ex', {}) or {}
+                if not isinstance(_bep, dict):
+                    _bep = {}
+                bank_ext.extend(_bp)
+                for _k, _v in _bep.items():
+                    if _k not in bank_ex:            # 自己已有的优先
+                        bank_ex_ext.setdefault(_k, _v)
+                _n_bi += len(_bp)
+                _n_be += len(_bep)
+                _srcs.append('{}={}(收益流{})'.format(_tp, len(_bp), len(_bep)))
+            print(f"  [外部库] 已注入对照集: {', '.join(_srcs) if _srcs else '（无）'}"
+                  f" ⇒ 对照集 node {len(bank)}+{_n_bi}={len(bank)+len(bank_ext)} 个, "
+                  f"收益流 {len(bank_ex)}+{len(bank_ex_ext)}={len(bank_ex)+len(bank_ex_ext)} 条")
+            print("  [外部库] ⚠ 仅作**对照**；**不会**写回本轨道的 state / 因子库 "
+                  "（外部池库不算本轨道的产出）")
 
     # ---- B角: 先审查上一代, 再据此定本代搜索策略 ----
     import loop_critic as critic
@@ -1737,7 +1804,9 @@ def run(args):
         for k, v in KNOWN.items():
             vs = v[np.ix_(L1_ROWS, L1_COLS)]
             Kr[k] = rank_rows(vs[::FWD])
-        for bi, bnd in enumerate(bank):
+        # ★ 2026-09-14（§1.8）：对照集 = 自己的 bank **+ 外部池库**（`bank_ext`，只读注入）
+        #   不注入的话，跑全A 时这一层"看不见池库" ⇒ 重挖。
+        for bi, bnd in enumerate(bank + bank_ext):
             try:
                 vb = eval_expr(bnd, Bsub, cache2)
                 Kr[f'bank{bi}'] = rank_rows(vb[::FWD])
@@ -2131,7 +2200,7 @@ def run(args):
         _mec, _mew = None, None
         _ex = rr.get('ex') if isinstance(rr, dict) else None
         if _dup_ex_corr > 0 and _ex is not None:
-            _mec, _mew = ex_max_corr(_ex, bank_ex)
+            _mec, _mew = ex_max_corr(_ex, _cmp_lib(bank_ex, bank_ex_ext))   # ★ 含外部池库(§1.8)
         if _ex is not None:
             _ex_by_expr[str(nd)] = _ex
         leaf_s, cat_s = leaf_parts(nd)
@@ -2332,7 +2401,7 @@ def run(args):
             #   ⚠ 拿不到收益流(旧 state / 回测失败)则**放行不误杀**(与本项目其它闸门同一铁律)。
             _ex_i = _ex_by_expr.get(expr)
             if _dup_ex_corr > 0 and _ex_i is not None:
-                _mc2, _mw2 = ex_max_corr(_ex_i, bank_ex)
+                _mc2, _mw2 = ex_max_corr(_ex_i, _cmp_lib(bank_ex, bank_ex_ext))   # ★ 含外部池库(§1.8)
                 if _mc2 is not None and _mc2 > _dup_ex_corr:
                     _n_dup_ex += 1
                     print(f"  [收益流去重] 不入库: 与库内收益流相关 {_mc2:.3f} > "
@@ -2751,6 +2820,20 @@ if __name__ == '__main__':
     ap.add_argument('--pools', default='300,500',
                     help='--pool_obs 要算哪些池(默认 300,500; 逗号分隔)。可选见 '
                          'engine/loop_pools.py 的 POOLS(300/500/1000/50)。')
+    # ⚠⚠ argparse 的 help 会走 `help_string % params` 插值 ⇒ **任何字面百分号必须写 `%%`**。
+    #   2026-09-14 实录：初版写了裸 `82%` ⇒ `--help` 与 `parse_args` **双双崩溃**
+    #   （`ValueError: unsupported format character`）⇒ **引擎完全起不来**。
+    #   冒烟测试（`--help`）抓到了它 —— 这就是"每次改动都跑一次 --help"的价值。
+    ap.add_argument('--inject_pools', default='',
+                    help='★★ 注入**其它池的库**作为对照集（2026-09-14, loop_todo §1.8；默认空=行为不变）。'
+                         '逗号分隔池名，如 `--inject_pools=300,500,1000`（跑全A 轨道时用）。'
+                         '为什么需要：`--decorr`/`--dup_ex_corr` 的对照集原本只是**本轨道自己的 bank** '
+                         '⇒ 跑全A 时**不知道池库挖到了什么** ⇒ 把同一批重挖一遍。'
+                         '实测（tools/check_pool_vs_allA.py）：池因子 vs 全A 库(41) 的收益流最大 |相关| '
+                         '**中位 0.767**、>0.7 占 **82%%**，而 `--dup_ex_corr=0.90` 只挡得住 18%% '
+                         '⇒ 不注入 ≈ **把 82%% 的算力花在重挖上**。'
+                         '★ 语义：外部池库只作**对照**（"这些已经挖过了"），'
+                         '**不会**写回本轨道的 state / `docs/factor_library*.md` —— 外部池库不算本轨道的产出。')
     ap.add_argument('--dup_ex_corr', type=float, default=0.0,
                     help='★ 收益流去重阈值(2026-09-13, roadmap §8.34; 0=关, 默认关=行为不变)：'
                          '候选的**每期费后超额序列**与库内任一因子收益流的 |Spearman 相关| '
