@@ -1,6 +1,6 @@
 # loop_code — Loop 式因子自动挖掘引擎
 
-> **当前版本 `v0.8.0`**（2026-09-14）— 池化挖掘闭环 + B角「诊断→决策」链条修复 + 收尾提速 + 管线迁入 `tools/` + **修 `--pool_gate_or_all` 静默绕过硬门槛**
+> **当前版本 `v0.9.0`**（2026-09-14）— 池化挖掘闭环 + B角「诊断→决策」链条修复 + 收尾提速 + 管线迁入 `tools/` + **修 `--pool_gate_or_all` 静默绕过硬门槛**
 > · 变更全文见 **[`change_log.md`](change_log.md)** · 研发档案见 `docs/factor_roadmap.md`
 > · 版本历史与回退见下方「[版本与回退](#版本与回退2026-09-11-起)」
 
@@ -24,7 +24,11 @@
   - `cross_pool_review.py` 收尾② L2 跨池审查 + L3 精选池 · `critic_sensor_report.py` B角 传感器审计
   - `fix_csv_schema.py` / `backfill_library_pool.py` / `tracks_status.py` / `journal_view.py`（journal 倒序查看）
   - `build_crosspool_view.py` / `add_quant_copy.py` / `backfill_bank_ex.py` 等（被 `engine/` 代码引用的脚本）
-  - `_test_critic_sensor.py`（32 项）· `_test_build_facs_merge.py`（11 项）回归测试 · `_check_quotes.py` 质检
+  - `_test_critic_sensor.py`（32 项）· `_test_build_facs_merge.py`（11 项）· `_test_inject_pools.py`（17 项）
+    · `_test_parent_sel.py`（20 项）回归测试 · `_check_quotes.py` 质检
+  - ★ **`smoke_gen_only.py`** — **引擎改动后的几十秒真机冒烟**（用引擎自带的 `--gen_only`：
+    「只跑候选生成段、不跑 L1/L2、**不写状态**」）⇒ 断言行真的打印了 + 无 `Traceback`/`NameError`
+    + **全部 `loop_state*.pkl` SHA256 未变**。★ 意义：**把"改引擎要等 50 分钟才知道崩没崩"降到 30 秒**
   - ⚠ **为什么迁**：`ai_test/` 长期被 `.gitignore` 整个忽略，但收尾管线住在里面
     ⇒ `git checkout v0.x` 回退代码时**整条管线会消失**（回退点不完整）。
 - `ai_test/` — **草稿区 + 运行产物（按 `.gitignore` 忽略，可随时删）**：一次性诊断/探索脚本、
@@ -108,7 +112,8 @@ git tag -a v0.2 -F <说明文件>               # 建新版（说明按上表四
 
 | tag | 日期 | 提交 | 一句话内容 |
 |---|---|---|---|
-| **v0.8.0** | 2026-09-14 | `tag 自身` | **第二批 ①：给全A 轨道注入池库对照集**（`--inject_pools`，`bank_ext`/`bank_ex_ext` **只读注入**，**绝不写回** state/因子库 —— 否则因子库会凭空多出一批不是它挖的因子）⇒ 治「跑全A 会把池库重挖一遍」（实测收益流 \|相关\| 中位 **0.767**、>0.7 占 **82%**）· ★ **只给 `all` 注入**（池轨道的产出是"有效域标签"，注入全A 库会让它无产出）· `run_tracks.py` 默认自动 + `--inject_pools=none` 可关 · ⚠ 顺带修：**argparse help 里的裸 `%` 会让引擎完全起不来** |
+| **v0.9.0** | 2026-09-14 | `tag 自身` | **第二批 ②：亲本选择策略 `--parent_sel`**（`uniform` 默认=不变 / `best` / **`top_percent_plus_random`**）—— 治「**当前 `rng.choice(seeds)` 把排名信息全丢了**：L1 第 1 名和第 30 名被选中概率完全一样」，补上 QuantaAlpha 的**显式探索/利用配比**（我们原来只有「堵」的手段：`fam_quota`/`fam_block_thr`/`--decorr`，**没有「疏」**）· ★ 头号坑：`top_percent_plus_random` 的「否则」分支**必须从全池随机**（写成"只从 rest 随机"会**正好抵消、退化成 uniform**）⇒ 已用**统计检验**守护（比值 **2.42** vs 理论 2.43）· **新增 `tools/smoke_gen_only.py`**（用 `--gen_only` 做**几十秒的真机冒烟** + 断言 state SHA256 未变 —— 把"改引擎要等 50 分钟才知道有没有 `NameError`"降到 **30 秒**）· ⚠ 效果**尚未 A/B 实测** |
+| **v0.8.0** | 2026-09-14 | `b1c6333` | **第二批 ①：给全A 轨道注入池库对照集**（`--inject_pools`，`bank_ext`/`bank_ex_ext` **只读注入**，**绝不写回** state/因子库 —— 否则因子库会凭空多出一批不是它挖的因子）⇒ 治「跑全A 会把池库重挖一遍」（实测收益流 \|相关\| 中位 **0.767**、>0.7 占 **82%**）· ★ **只给 `all` 注入**（池轨道的产出是"有效域标签"，注入全A 库会让它无产出）· `run_tracks.py` 默认自动 + `--inject_pools=none` 可关 · ⚠ 顺带修：**argparse help 里的裸 `%` 会让引擎完全起不来** |
 | **v0.7.1** | 2026-09-14 | `499c85a` | **PATCH / 纯文档**：落**第二批改造清单**（`loop_todo §1.21`：`§1.15` 动作有效性 · `§1.1` 参数棘轮 · `§1.8` 池库对照集 · `§1.3-C` 亲本策略）+ 分批理由（一次改 5 处无法归因）|
 | **v0.7.0** | 2026-09-14 | `6474965` | **第一批改造（判据与口径族）**：`strip_grade` 改**日频** + 新增 **A 档回撤上限 `dd_d > -0.20`**（回撤超限**只降 B 不判 C**）· 新增 `TAG_POOL_FLOOR_CAL=0.15` **修判据不对称**（原来池内只要超额>0 ⇒ `all3` 名不副实）· L2 三处回测开 `with_daily` · `loop_pool_obs` 加 `pools_scope`（§1.5）· **验证：`F10_1000` 标签 `all3`→`csi1000_only`，与外部审查闭环** |
 | **v0.6.1** | 2026-09-14 | `59e9ac4` | **PATCH**：全库 50 因子日频实测后**更正 v0.6.0 的过度陈述** —— 「期频**系统性**低估 3.6pp」是 `F10` 极端个案，**全库折算比中位 0.928**（回撤平均只放大 ~1.08×）⇒ 日频的价值在**揪出个别高回撤因子**（`F03_1000` 日 dd **−35%**、`F11` **−23%**）· 新增 `tools/calib_daily_threshold.py`（**阈值敏感度表**：日频 0.25 ⇒ A 档 17 个 **与现状相同**）|

@@ -35,6 +35,72 @@
 
 ---
 
+## [0.9.0] — 2026-09-14
+
+> 主题：**第二批改造 ② 亲本选择策略 `top_percent_plus_random`**（治 `loop_todo §1.3-C`）
+> 用户指令：「**接着做 §1.3-C**」
+
+### Added
+- **`engine/loop_engine.py`: `--parent_sel {uniform,best,top_percent_plus_random}`**
+  （**默认 `uniform` = 行为不变**）+ `--parent_top_pct`（默认 `0.30`）
+- 纯函数 **`pick_parent(rng, seeds, mode, thr)`** + 模式表 `PARENT_SEL_MODES`
+- 两处亲本抽取（**变异的第一亲本** + **交叉的第二亲本**）都改走 `pick_parent`
+- `tools/_test_parent_sel.py`（**20 项**）
+
+### Why（为什么值得做）
+
+原来两处抽取都是 `rng.choice(seeds)`（**全池均匀随机**）
+⇒ ★★ **L1 里第 1 名和第 30 名被选中的概率完全一样 —— 排名信息一点没用上**。
+我们只有「**堵**」的手段（`--fam_quota` 配额 / `fam_block_thr` 黑名单 / `--decorr`），
+**没有「疏」**（显式的探索/利用配比）—— 正是 roadmap §8.21-⑥ #5 指出的缺口。
+
+依据：QuantaAlpha `configs/experiment.yaml:83-92` + `pipeline/evolution/crossover.py:423-437`。
+它是**批量选名额**（top 30%% 保底 + 从 rest 随机补齐）；
+**我们是逐个抽亲本** ⇒ 等价实现 = **以 `thr` 概率取 top 段、否则从全池随机**。
+
+### ★★★ 头号坑：一个"写错就静默失效"的实现细节
+
+「否则」分支**必须是「从全池随机」**，**不能**写成「只从 rest 随机」：
+```python
+# ✗ 错：rng.choice(seeds[:n_top] if rng.random() < thr else seeds[n_top:])
+#   n=20, n_top=6：P(某个 top)=0.3/6=0.05, P(某个 rest)=0.7/14=0.05 **完全相同** ⇒ 退化成 uniform
+# ✓ 对：rng.choice(seeds[:n_top]) if rng.random() < thr else rng.choice(seeds)
+#   P(某个 top)=0.3/6+0.7/20=0.085, P(某个 rest)=0.7/20=0.035 ⇒ **2.43×**
+```
+> QuantaAlpha 的 `rest_candidates` 只是"**补剩余名额**"的来源，**不是唯一来源**。
+> ⇒ 已写成回归测试 **统计检验**（`比值 ≈1.0 会 FAIL`）✓ ⇒ 实测 **2.416**（理论 2.429）✓
+
+### Changed
+- 新增**可审计**输出（这是 §1.1/§1.15 的教训：**动作必须可见，否则无法归因**）：
+  - `本代参数:` 旁 → `本代亲本策略: parent_sel=... 种子池=N个(按score降序)`
+  - 生成段 → `[亲本] 策略=...（top 30%% 保底 + 余量随机；种子池 N 个 ⇒ top 段 M 个）`
+  - **A角 LLM 上下文**里也写（让它知道亲本怎么挑的，好补上策略造成的多样性缺口）
+  - ⚠ **不改 journal 格式**（会打断下游解析）
+- `tools/run_tracks.py` 文档补：用 `--extra=--parent_sel=top_percent_plus_random` 透传
+  （`--extra=` 机制已存在，**无需改代码**；`透传引擎参数:` 那行已把它记进 driver 日志 ✓）
+
+### ⚠ Notes：效果**尚未测量**
+
+本次交付 = **实现 + 测试 + 接线**；**"换策略后产出是否变好"没有 A/B 实测** ⚠
+（§1.1/§1.15 的教训正是「**动作施加了但完全无效**」⇒ 不能假设"抄了对的东西就有效"）。
+A/B 方法已写进 `loop_todo §1.3-C ⑤`。
+
+### 验证
+- `--help` 13,067 字符、**无 Traceback**（⚠ 本次特意全程用 `%%` —— v0.8.0 刚被裸 `%` 坑过）
+- ★ **真机冒烟**（用 `--gen_only`：`只跑候选生成段、不跑 L1/L2、**不写状态**`）：
+  ```
+  本代亲本策略: parent_sel=top_percent_plus_random(top_pct=0.30)  种子池=20个(按score降序)
+  [亲本] 策略=top_percent_plus_random（种子池 20 个 ⇒ top 段 6 个）
+  退出码=0 · 无 NameError/Traceback · loop_state.pkl SHA256 未变 ✓
+  ```
+- 回归 **20/20**：★ `uniform` 与旧写法 `rng.choice(seeds)` **逐位计数完全相同**（⇒ 默认行为真没变）·
+  `top_percent_plus_random` **比值 2.416**（理论 2.429）· 边界（空池/单元素/未知模式/`thr=1.0`）·
+  静态断言（两处接线 + `pick_parent` 外无遗留直抽）
+- 其余回归：`_test_inject_pools` 17/17 · `_test_daily_dd` 15/15 · `_test_ok_gate` 22/22 ·
+  `_test_critic_sensor` 32/32 · `_test_build_facs_merge` 11/11 · 引号检查全绿
+
+---
+
 ## [0.8.0] — 2026-09-14
 
 > 主题：**第二批改造 · ① 给全A 轨道注入池库对照集**（治 `loop_todo §1.8`）

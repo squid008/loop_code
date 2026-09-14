@@ -216,7 +216,7 @@ python tools/tracks_status.py                   # 核对各池 bank
 |---|---|---|---|---|
 | **A** | **组合构建约束**：市值/行业中性 + 权重上限 + 换手约束 | ✅ **首版已完成**（2026-09-14，见下） | ✅ 组合层，**不动引擎** | 1~2 天 |
 | **B** | **引擎改造 §8.21-⑥ #2：质量门前移到「生成后、L1 前」** | 复杂度/冗余不合格就不进 L1/L2 ⇒ **省预算**（QuantaAlpha `FactorQualityGate`） | ✅ | 中 |
-| **C** | **补 `top_percent_plus_random` 亲本选择策略** | top 30% 保底 + 余量随机 = 显式探索/利用配比（§8.21-⑥ #4） | ✅ | 小 |
+| ~~**C**~~ | ✅ **已完成**（v0.9.0）：`--parent_sel=uniform\|best\|top_percent_plus_random` | top 30% 保底 + 余量随机 = 显式探索/利用配比（§8.21-⑥ #5） | ✅ | 小 |
 | **D** | **补 Novelty 度量：与因子库的最长公共子树** | QuantaAlpha `duplicated_subtree_size`（阈值 5）——⚠ **本项目阈值必须先离线标定，勿照抄** | ✅ | 中 |
 | **E** | **换手优化**（组合层顺手做） | `corr(换手, 费后超额)` 全A Spearman **−0.242**；最低换手档费后 +1.97%/Calmar 0.149 最好。成本约 1.3%/年 ⇒ **不是主因但值得做**（持仓缓冲 `n_drop`、拉长持有期） | ✅ | 小 |
 
@@ -306,6 +306,67 @@ python tools/tracks_status.py                   # 核对各池 bank
 
 **待续**：① 换手优化（`--buffer` 已实现，待测）；② 与 `evaluate_real` 数值对拍；
 ③ 把 1000 池的结论用到**合成因子重建**（现在 `_combo_all_neu_B` 是**全A 池**的合成）。
+
+---
+
+### 1.3-C ✅ 亲本选择策略 `top_percent_plus_random`（2026-09-14, v0.9.0）
+
+**① 问题：我们的亲本抽取**丢掉了排名信息**
+
+原来两处亲本抽取都是 `rng.choice(seeds)`（**全池均匀随机**）：
+```python
+s = rng.choice(seeds)                                     # 变异的第一亲本
+node = crossover(node, clone(rng.choice(seeds)), rng)     # 交叉的第二亲本
+```
+⇒ ★★ **L1 里第 1 名和第 30 名被选中的概率完全一样**。
+而我们只有「**堵**」的手段（`--fam_quota` 配额 / `fam_block_thr` 黑名单 / `--decorr`），
+**没有「疏」** —— 即**没有显式的"探索/利用配比"**（roadmap §8.21-⑥ #5）。
+
+**② 依据（照抄语义，不照抄代码形状）**
+
+QuantaAlpha `configs/experiment.yaml:83-92` + `pipeline/evolution/crossover.py:423-437`：
+```python
+top_n = max(1, int(len(candidates) * top_percent_threshold))   # top 30%
+top_candidates  = sorted_candidates[:top_n]
+rest_candidates = sorted_candidates[top_n:]
+... "从 rest 里随机补齐剩余名额" ...
+```
+⇒ 它是**批量选名额**、语义是「一批名额里 ~30% 给 top 段、其余随机」。
+**我们是逐个抽亲本** ⇒ 等价实现 = **以 `thr` 概率取 top 段、否则从全池随机**。
+
+**③ ★★★ 一个"写错就静默失效"的细节（本次的头号坑）**
+
+「否则」分支**必须是「从全池随机」**，**不能**是「只从 rest 随机」：
+```python
+# ✗ 错：rng.choice(seeds[:n_top] if rng.random() < thr else seeds[n_top:])
+#   n=20, n_top=6 时 P(某个 top)=0.3/6=0.05, P(某个 rest)=0.7/14=0.05 **完全相同** ✗ 退化
+# ✓ 对：rng.choice(seeds[:n_top]) if rng.random() < thr else rng.choice(seeds)
+#   P(某个 top)=0.3/6 + 0.7/20 = 0.085, P(某个 rest)=0.7/20 = 0.035 ⇒ **2.43×** ✓
+```
+> QuantaAlpha 的 `rest_candidates` 只是"**补剩余名额**"的来源，**不是唯一来源** ✓
+> ⇒ 已写成回归测试 `tools/_test_parent_sel.py` 的 `[3]`（统计检验，**比值 ≈1.0 会 FAIL**）✓
+
+**④ 实现**
+
+| 项 | 内容 |
+|---|---|
+| 纯函数 | `pick_parent(rng, seeds, mode, thr)`（`seeds` 必须按 score 降序 —— 由 `l1.sort_values('score', ascending=False)` + `head(30)` 保证，state 存取保留顺序 ✓）|
+| CLI | `--parent_sel {uniform,best,top_percent_plus_random}`（**默认 uniform = 行为不变**）+ `--parent_top_pct`（默认 0.30）|
+| 接线 | 2 处抽取（变异 + 交叉第二亲本）|
+| 可审计 | **`本代参数:` 旁**打印 `本代亲本策略: parent_sel=... 种子池=N个` + 生成段打印 `[亲本] 策略=...` + **A角 LLM 上下文**里也写（让它知道亲本怎么挑的，好补多样性缺口）。**不改 journal 格式**（那会打断下游解析）。|
+
+**⑤ ⚠⚠ 诚实说明：效果尚未测量**
+
+本次做的是「**实现 + 测试 + 接线**」——
+**"换成 `top_percent_plus_random` 后产出是否变好"还没有 A/B 实测** ⚠
+（§1.1/§1.15 的教训正是「**动作施加了但完全无效**」⇒ 不能假设"抄了对的东西就有效"）。
+**A/B 方法**（下一步）：
+```
+python tools/run_tracks.py --pools=1000 --rounds=3 --extra=--parent_sel=top_percent_plus_random
+# 对照: 同池同轮数但不传 --parent_sel（= uniform）
+# 比: 入库数 / 剥风格后 Calmar>0 比例 / L1 n_pass / 重复率
+```
+★ 换策略 = **换搜索行为**；`seeds` 用同一份的话可做到**同起点对照** ✓
 
 ---
 
@@ -809,7 +870,7 @@ gen61  叶子[barra_residual_volatility]占比67%过高  -> 权重压到0.25
 | **§1.15** | 规则1 的「**动作有效性**」检测（现在只记"施加次数"，不记"施加后指标变好没"）| `engine/loop_critic.py`：施加时登记基线指标，冷却解禁时比对，无效则标记/降权 | 中（与 §1.1 参数棘轮同族，建议一起做）|
 | **§1.1 遗留** | **参数棘轮**（只停手不回退）：`depth` 被推到 `[3,4,5]` 后，即使永久闭嘴也停在原地 | `loop_critic`：施加时记改前基线 `_base`，**永久闭嘴时恢复到基线** | 中（有风险：可能误撤事后证明有用的调整）|
 | ~~**§1.8**~~ | ✅ **已完成**（v0.8.0）：给全A 轨道注入池库对照集 | `--inject_pools` + `bank_ext`/`bank_ex_ext`（**只读**）+ `_cmp_lib()` + `run_tracks.py` 默认自动 | — |
-| **§1.3-C** | 补 `top_percent_plus_random` 亲本选择策略（top 30% 保底 + 余量随机）| 生成端 | 低 |
+| ~~**§1.3-C**~~ | ✅ **已完成**（v0.9.0）：`--parent_sel` 三策略（`uniform` 默认=不变 / `best` / `top_percent_plus_random`）| 生成端 | — |
 
 ★ **建议顺序**：`§1.8`（低风险高收益）→ `§1.3-C`（小）→ `§1.15 + §1.1`（同族，一起做一起验）
 
@@ -1544,7 +1605,7 @@ python ai_test/cleanup_repo.py --apply # ③ 执行（先写清单；归档可�
 | 1.5 | 池轨道换 L2 门槛（`--min_pool_calmar`） | ✅ 完成（0.15 + OR 语义） |
 | 2 | 质量门前移到 L1 前 | ⏳ **未做** → 移到 §1.3-B |
 | 3 | Novelty（最长公共子树） | ⏳ **未做** → 移到 §1.3-D |
-| 4 | `top_percent_plus_random` | ⏳ **未做** → 移到 §1.3-C |
+| 4 | `top_percent_plus_random` | ✅ **已完成**（v0.9.0, §1.3-C）|
 | 5 | 语义单元 + 方向 + 跨方向交叉 | ⛔ **暂缓** → §1.5 |
 
 ### R4. 【已完成】原「下一步」四条（2026-09-13）

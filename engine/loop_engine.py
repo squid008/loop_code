@@ -1105,6 +1105,66 @@ def crossover(n1, n2, rng):
     return n1
 
 
+# ===================== 亲本选择策略（2026-09-14, loop_todo §1.3-C）=====================
+# ★ 为什么值得抄（roadmap §8.21-⑥ #5）：我们原来只有「**堵**」的手段
+#   （`--fam_quota` 配额、`fam_block_thr` 黑名单、`--decorr` 去相关），**没有「疏」** ——
+#   即**没有显式的"探索/利用配比"**。而当前亲本抽取是 `rng.choice(seeds)`（**全池均匀随机**）
+#   ⇒ ★★ **L1 里第 1 名和第 30 名被选中的概率完全一样，排名信息一点没用上**。
+#   QuantaAlpha 的 `parent_selection_strategy` 族（`configs/experiment.yaml:83-92`）
+#   补的正是这一层：`best`(纯利用) / `random`(纯探索) / `weighted` / `weighted_inverse` /
+#   **`top_percent_plus_random`(top30% 保底 + 余量随机)**。
+PARENT_SEL_MODES = ('uniform', 'best', 'top_percent_plus_random')
+
+
+def pick_parent(rng, seeds, mode='uniform', thr=0.30):
+    """从亲本池里挑**一个**亲本。
+
+    :param seeds: 亲本池 —— ★ **必须按 score 降序**（引擎里由
+        `l1.sort_values('score', ascending=False)`(L1859) -> `l1.head(30)['node']` 保证，
+        且 state 存取都保留顺序）。
+    :param mode:  `uniform`（默认 = 现状，行为不变）/ `best` / `top_percent_plus_random`
+    :param thr:   仅 `top_percent_plus_random` 用；top 段比例（对齐 QuantaAlpha 的
+        `top_percent_threshold: 0.3`）
+
+    **`top_percent_plus_random` 的实现依据**（照抄语义，不照抄代码形状）：
+    QuantaAlpha `pipeline/evolution/crossover.py:423-437` 是**批量选名额**：
+    ```python
+    top_n = max(1, int(len(candidates) * top_percent_threshold))   # top 30%
+    top_candidates  = sorted_candidates[:top_n]
+    rest_candidates = sorted_candidates[top_n:]
+    still_needed = num_needed - len(top_candidates)
+    ... "从 rest 里随机补齐" ...
+    ```
+    ⇒ 它的语义是「**一批名额里 ~30% 给 top 段、其余随机**」。
+    我们这里是**逐个抽亲本**，等价实现 = **以 `thr` 的概率取 top 段、否则从全池随机**。
+
+    ★★ 一个**容易写错的关键细节**：「否则」必须是**从全池随机**，**不能**是"只从 rest 随机"：
+    ```python
+    # ✗ 错的写法（退化成 uniform，功能白做）：
+    #     return rng.choice(seeds[:n_top] if rng.random() < thr else seeds[n_top:])
+    #   n=30, n_top=9 时 P(某个 top)=0.3/9=0.0333, P(某个 rest)=0.7/21=0.0333 ⇒ **完全相同** ✗
+    # ✓ 正确（全池）：P(某个 top)=0.3/9 + 0.7/30=0.0567, P(某个 rest)=0.7/30=0.0233
+    #   ⇒ top 段权重是 rest 的 **2.43×** ✓ 这才有"利用"的意思。
+    ```
+    （QuantaAlpha 的 `rest_candidates` 只是"**补剩余名额**"用的来源，不是唯一来源 ✓）
+
+    ★ **诚实说明一处口子差异**：QuantaAlpha 的 `candidates` 是**全部轨迹**；我们的 `seeds`
+      已经是 `l1.head(30)`（**已截断到 L1 前 30**）⇒ 我们的 `top 30%` 是
+      **"种子池内的前 30%"**（30 个里的 9 个），**两级截断 = 更偏利用**。
+      想更偏探索就调大 `--parent_top_pct`（→1.0 即退化成 `uniform`）。
+    """
+    if not seeds:
+        return None
+    if mode == 'best':
+        return seeds[0]
+    if mode == 'top_percent_plus_random':
+        n_top = max(1, int(len(seeds) * float(thr)))
+        if len(seeds) <= n_top or rng.random() < float(thr):
+            return rng.choice(seeds[:n_top])
+        return rng.choice(seeds)          # ★ 全池（含 top 段）—— 见上面「容易写错」那段
+    return rng.choice(seeds)              # uniform：默认 = 现状，行为不变
+
+
 def perturb(node, rng):
     """参数扰动: 换一个同族算子(如 ts_mean20 -> ts_mean60)"""
     nodes = collect(node)
@@ -1365,6 +1425,13 @@ def run(args):
     print(f"  本代参数: min_stab={args.min_stab:.2f}  decorr={args.decorr:.2f}  "
           f"fsa_th={args.fsa_th:.2f}  bank同骨架上限={args.bank_skel_max}  "
           f"depth={cfg['depth']}")
+    # ★ 亲本策略必须**可审计**（2026-09-14, §1.3-C）：它改变的是"**从哪些亲本出发**"，
+    #   一旦候选质量变化，没有这行就**无法归因**是策略换了还是别的原因。
+    #   （写进**本代日志** + LLM 上下文；**不改 journal 格式** —— 那会打断下游解析）
+    print(f"  本代亲本策略: parent_sel={getattr(args, 'parent_sel', 'uniform')}"
+          + (f"(top_pct={getattr(args, 'parent_top_pct', 0.30):.2f})"
+             if getattr(args, 'parent_sel', 'uniform') == 'top_percent_plus_random' else '')
+          + f"  种子池={len(seeds)}个(上一代L1头部, 按score降序)")
     if frozen:
         print(f"  [FSA] 本代生效冻结骨架 {len(frozen)} 个(生成时禁止复用)")
 
@@ -1405,6 +1472,19 @@ def run(args):
     # 代代只在seeds内打转 -> 重复爆炸。 现改回 r<cut[2](seed三操作) / r<cut[3](引导) / 否则随机。
     m = cfg['mix']
     cut = [m[0], m[0] + m[1], m[0] + m[1] + m[2], m[0] + m[1] + m[2] + m[3]]
+    # ★ 亲本选择策略（2026-09-14, §1.3-C）—— `uniform` 是默认 = **现状行为不变**
+    _psel = getattr(args, 'parent_sel', None) or 'uniform'
+    if _psel not in PARENT_SEL_MODES:
+        print(f"  [亲本] [!] 未知 --parent_sel={_psel!r} -> 回退 uniform（可选: "
+              f"{'/'.join(PARENT_SEL_MODES)}）")
+        _psel = 'uniform'
+    _ptop = float(getattr(args, 'parent_top_pct', 0.30) or 0.30)
+    if _psel != 'uniform':
+        print(f"  [亲本] 策略={_psel}"
+              + (f"（top {_ptop:.0%} 保底 + 余量随机；种子池 {len(seeds)} 个"
+                 f" ⇒ top 段 {max(1, int(len(seeds) * _ptop))} 个）"
+                 if _psel == 'top_percent_plus_random' else "（纯取第 1 名）")
+              + " —— ⚠ 与 `uniform` 是**不同搜索行为**，跨代对比时勿混用")
     # ---- 生成侧 LLM 引导(A角子代理, 中金"生成预算~20%语义引导"): ----
     # 引导位 r∈[cut2,cut3) 的候选来源 = LLM 解析池; 池空且调用未超限则按需补一次;
     # 无 key/超时/解析失败/超限 -> 回退本地 guided_expr。LLM 候选与规则候选走
@@ -1438,14 +1518,14 @@ def run(args):
         else:
             r = rng.random()
             if seeds and r < cut[2]:
-                s = rng.choice(seeds)
+                s = pick_parent(rng, seeds, _psel, _ptop)     # ★ §1.3-C（原 rng.choice(seeds)）
                 node = clone(s)
                 q = rng.random()
                 den = max(m[0] + m[1] + m[2], 1e-9)
                 if q < m[0] / den:
                     node = mutate(node, rng)
                 elif q < (m[0] + m[1]) / den:
-                    node = crossover(node, clone(rng.choice(seeds)), rng)
+                    node = crossover(node, clone(pick_parent(rng, seeds, _psel, _ptop)), rng)
                 else:
                     node = perturb(node, rng)
             elif r < cut[3]:
@@ -2619,6 +2699,13 @@ def llm_fetch(args, cfg, seeds, bank, frozen, fail_lib, fam_black=''):
             f"本代策略: mix(变异/交叉/扰动/引导/随机)={cfg['mix']}, depth={cfg['depth']}, "
             f"min_stab={cfg.get('min_stab')}, decorr={cfg.get('decorr')}, "
             f"fsa_th={cfg.get('fsa_th')}。\n"
+            # ★ 让 A角 知道"亲本是怎么挑的"（2026-09-14, §1.3-C）：
+            #   top_percent_plus_random 时亲本偏向前几名 ⇒ LLM 提的新方向宜**离这些远一点**
+            #   才能补上策略本身造成的多样性缺口。
+            f"亲本选择: parent_sel={getattr(args, 'parent_sel', 'uniform')}"
+            + (f"（top {getattr(args, 'parent_top_pct', 0.30):.0%} 保底 + 余量随机）"
+               if getattr(args, 'parent_sel', 'uniform') == 'top_percent_plus_random' else '')
+            + "。\n"
             f"叶子权重: {cfg.get('leaf_w') or '(均匀)'}。")
     hint = ("请避开易重复结构: 纯市值/成交额/换手率的旧故事表达、同骨架只换窗口的参数变体"
             "都算重复; 优先给出有独立金融机制的表达式(跳空溢价/价量背离/波动结构/日内形态/"
@@ -2834,6 +2921,21 @@ if __name__ == '__main__':
                          '⇒ 不注入 ≈ **把 82%% 的算力花在重挖上**。'
                          '★ 语义：外部池库只作**对照**（"这些已经挖过了"），'
                          '**不会**写回本轨道的 state / `docs/factor_library*.md` —— 外部池库不算本轨道的产出。')
+    # ⚠ argparse help 走 `%` 插值 ⇒ 字面百分号写 `%%`（2026-09-14 踩过，见 `--inject_pools`）
+    ap.add_argument('--parent_sel', choices=list(PARENT_SEL_MODES), default='uniform',
+                    help='★ 亲本选择策略（2026-09-14, loop_todo §1.3-C；默认 uniform = **行为不变**）：'
+                         'uniform=亲本池内均匀随机（**现状**）· best=恒取第 1 名 · '
+                         'top_percent_plus_random=**top 30%% 保底 + 余量随机**。'
+                         '为什么要有：当前 uniform **丢掉了排名信息** —— L1 里第 1 名和第 30 名'
+                         '被选中的概率**完全一样**；我们原来只有"**堵**"的手段'
+                         '（`--fam_quota` 配额 / `fam_block_thr` 黑名单 / `--decorr`），'
+                         '**没有"疏"**（显式的探索/利用配比）。对齐 QuantaAlpha '
+                         '`parent_selection_strategy` 族（`configs/experiment.yaml:83-92`）。'
+                         '⚠ 换策略 = **换搜索行为**，跨代对比时勿混用。')
+    ap.add_argument('--parent_top_pct', type=float, default=0.30,
+                    help='仅 `--parent_sel=top_percent_plus_random` 用：top 段比例'
+                         '（默认 0.30，对齐 QuantaAlpha `top_percent_threshold: 0.3`）。'
+                         '调大更偏探索（→1.0 退化成 uniform）；建议 0.2~0.5 之间试。')
     ap.add_argument('--dup_ex_corr', type=float, default=0.0,
                     help='★ 收益流去重阈值(2026-09-13, roadmap §8.34; 0=关, 默认关=行为不变)：'
                          '候选的**每期费后超额序列**与库内任一因子收益流的 |Spearman 相关| '

@@ -27,7 +27,14 @@
    池库挖到了什么 ⇒ 重挖（实测池因子 vs 全A 库 收益流最大 |相关| **中位 0.767**、>0.7 占 82%，
    而 `--dup_ex_corr=0.90` 只挡得住 18%）。
    ⚠ 外部池库只作**对照** —— **不会**写回本轨道的 state / `docs/factor_library*.md`。
-"""
+
+   ★ 亲本选择策略（2026-09-14, loop_todo §1.3-C）也走 `--extra=` 透传，**无需本文件加参数**：
+    python tools/run_tracks.py --pools=1000 --rounds=3 \
+           --extra=--parent_sel=top_percent_plus_random
+    # 引擎侧：--parent_sel {uniform|best|top_percent_plus_random}（默认 uniform = 行为不变）
+    #        --parent_top_pct（默认 0.30）
+    # ⚠ 换策略 = **换搜索行为** ⇒ A/B 对比时同池同轮数、只有这一个参数不同。
+   """
 import io
 import os
 import re
