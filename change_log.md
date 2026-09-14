@@ -35,6 +35,57 @@
 
 ---
 
+## [0.11.3] — 2026-09-15
+
+> 主题：**特征/算子盘点** —— 回答「有四价一量吗？MA/MACD/EMA/HHV/LLV 有吗？」
+> （对照对象：**本地 `QuantaAlpha-main` 源码**，不凭记忆）
+
+### 结论（`docs/loop_todo.md §1.25`）
+
+| | 我们 | QuantaAlpha（qlib Alpha158）|
+|---|---|---|
+| **四价一量** | ✅ **`close`/`open`/`high`/`low`/`volume`**（**基础 7 叶子，直接可用**）| ✅（要从 OHLC 构造函数）|
+| 派生价量 | ✅ **12 个** | ✅（K 线 9 + 归一化 4）|
+| **MA** | ✅ `ts_mean` × **8 档** | ✅ `Mean`/`MA*` × 5 档 |
+| **HHV/LLV** | ✅ `ts_max`/`ts_min`（**只 2 档**）| ✅ + **`HIGHDAY`/`LOWDAY`** |
+| **EMA** | ❌ **没有** | ✅ `EMA`/`SMA`/`WMA`/`DECAYLINEAR` |
+| **MACD** | ❌ **没有** | ✅ `MACD` |
+| RSI | 🟡 **间接有**（`ts_rank` ≡ qlib 的 `RSV`）| ✅ |
+| BOLL / ATR | 🟡 **可组合**（原料已有）| ✅ 预计算列 |
+| K 线形态 | ✅ **等价物齐**（`intraday`↔`KMID` · `amplitude`↔`KLEN` · 影线↔`KUP/KLOW`）| ✅ |
+| **资金流 / BARRA / 财报 PIT** | ✅ **16 / 11 / 8**（**他们都没有**）| ❌ |
+| 统计算子 | 🟡 8 个 | ✅ **20+**（偏度/峰度/分位/回归/argmax…）|
+
+### ★★ 关键结论：**"缺"的只有一类 —— 加权均线族**
+
+- ✅ **四价一量**：**有**（且是**基础叶子**，比"从 OHLC 构造函数"更灵活）
+- ✅ **MA / HHV / LLV**：**有**（= `ts_mean` / `ts_max` / `ts_min`）
+- ❌ **EMA / MACD**：**真缺** —— ★ 因为 `ts_mean` 是**等权**、EMA 是**指数加权**
+  ⇒ **是不同算子，组合不出来** ✗（**唯一补不回来的**）
+- 🟡 **RSI / BOLL / ATR**：**能用现有算子组合出来**（`ts_rank` / `ts_mean`±`ts_std` / `ts_mean(true_range)`）✓
+- ★★★ 而且这正是项目文档里的**既定"三期"项**（`roadmap` 文末：
+  `三期：技术指标（EMA/MACD/RSI 等预计算列）与分钟频聚合`）⇒ **已知缺口，非遗漏** ✓
+
+### 建议（若补）
+- ★★ **只加 `ema` 一个算子** ⇒ 加了就能组合出 MACD（`sub(ema(x,12), ema(x,26))`），
+  **不必专门加 `MACD`** ✓
+- ★ **RSI / BOLL / ATR 不用加**（都能组合）✓
+- 可选按价值排序：`wma` · `highday`/`lowday` · `skew`/`kurt` · `regbeta`
+- ⚠ **风险**：加算子会**扩大搜索空间** ⇒ 同预算下有效候选密度下降；
+  且候选更冗长 ⇒ **必须配套**复杂度门（§1.3-B 的 `Base Features ≤ 5`）
+  ⇒ 但**方向对**：**EMA 是"新信号源"（不同平滑方式）**，正对 §1.20 铁律「瓶颈是**信号源多样性**」✓
+- ⚠ **实现坑**：EMA 是**递归量** ⇒ ① 起点依赖需 warm-up；② 现有 `ts_*` 的
+  `min_periods=max(2, w//2)` **语义不同**，得单独定义；③ `pd.ewm` 与 `rolling` 的
+  **NaN 传播规则不同**，要与 `rank_rows` 对齐
+
+### Notes
+- **纯盘点 + 记待办**（`loop_todo §1.25`）—— **未改代码**
+- 做法上特意**读本地 `QuantaAlpha-main` 源码**（`backtest/factor_loader.py` 的
+  `ALPHA158_FACTORS`/`ALPHA158_20_FACTORS` + `factors/coder/function_lib.py` 的 **83 个算子**）
+  ⇒ **不凭记忆**
+
+---
+
 ## [0.11.2] — 2026-09-15
 
 > 主题：**更正 v0.11.1 的建议 —— 不要扩到 11 个 BARRA 风格，应扩到 4 个**

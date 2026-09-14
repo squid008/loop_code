@@ -935,6 +935,58 @@ gen61  叶子[barra_residual_volatility]占比67%过高  -> 权重压到0.25
 
 ---
 
+### 1.25 【待办·用户 2026-09-15 问起】技术指标族：**只有 `EMA` 真正缺**，其余能组合出来
+
+**用户之问**：「咱们的特征**有四价一量**吗？像中金、QuantaAlpha 那样，另外还有
+**MA/MACD/EMA/HHV/LLV** 这些特征有吗？」
+
+#### ① 权威对照（**直接读本地 `QuantaAlpha-main` 源码**，不凭记忆）
+
+| | 我们 | QuantaAlpha（qlib Alpha158 + `function_lib.py`）|
+|---|---|---|
+| **四价一量** | ✅ **`close`/`open`/`high`/`low`/`volume`**（**基础 7 叶子，直接可用**）| ✅（但要从 OHLC **构造函数**）|
+| 派生价量 | ✅ **12 个**（`vwap`/`overnight`/`intraday`/`amplitude`/`up_shadow`/`down_shadow`/`hl_ratio`/`true_range`/`turn_ratio`/`ret`/`ln_mktcap`/`ln_volume`）| ✅（K 线 9 + 归一化 4）|
+| **MA** | ✅ **`ts_mean` × 8 档**（5/10/20/60/100/120/150/200）| ✅ `Mean`/`MA*` × 5 档 |
+| **HHV / LLV** | ✅ **`ts_max`/`ts_min`（但只 2 档：20/100）** | ✅ `Max/Min` + `TS_MAX/TS_MIN` + **`HIGHDAY`/`LOWDAY`**（距高低点天数）|
+| **EMA** | ❌ **没有** | ✅ `EMA`/`SMA`/`WMA`/`DECAYLINEAR` |
+| **MACD** | ❌ **没有**（且依赖 EMA）| ✅ `MACD` |
+| RSI | 🟡 **间接有**（`ts_rank` 就是它的泛化；qlib 的 `RSV` ≡ 我们的 `ts_rank`）| ✅ `RSI` |
+| BOLL | 🟡 **可组合**（`ts_mean` ± k·`ts_std`）| ✅ `BB_MIDDLE/UPPER/LOWER` |
+| ATR | 🟡 **可组合**（`ts_mean(true_range)`，原料已有）| ✅ `ATR` |
+| K 线形态 | ✅ **等价物齐**：`intraday`↔`KMID` · `amplitude`↔`KLEN` · `up/down_shadow`↔`KUP/KLOW`；`KSFT`/`SHADOW_RATIO`/`BODY_RATIO` 可组合 | ✅ `KMID/KLEN/KUP/KLOW/KSFT` 及 `*2` 归一化版 |
+| **资金流** | ✅ **16 列**（`mf_{s,m,l,x}_{buy,sell,bqty,sqty}`）| ❌ 无 |
+| **BARRA 风格** | ✅ **11 个叶子** | ❌ 无 |
+| **财报 PIT** | ✅ **8 个** | ❌ 无 |
+| 统计算子 | 🟡 **8 个**（`ts_std`/`corr`/`cs_rank`/`ts_rank`/`cs_scale`/`cs_demean`/`log`/`sign` + `ts_delta`/`ts_sum`/`ts_delay`）| ✅ **20+**（`SKEW`/`KURT`/`MEDIAN`/`PERCENTILE`/`TS_ARGMAX`/`TS_ARGMIN`/`REGBETA`/`REGRESI`/`ZSCORE`/`MAD`/`TS_COVAR` ...）|
+
+#### ② 结论：**"缺"的只有一类 —— 加权均线族**
+
+- ✅ **四价一量**：**有**（且是**基础叶子**，比"从 OHLC 构造函数"更灵活）✓
+- ✅ **MA / HHV / LLV**：**有**（= `ts_mean` / `ts_max` / `ts_min`）✓
+- ❌ **EMA / MACD**：**真缺** —— 因为 `ts_mean` 是**等权**、EMA 是**指数加权**
+  ⇒ **是不同算子，组合不出来** ✗（这是唯一"补不回来"的）
+- 🟡 **RSI / BOLL / ATR**：**能用现有算子组合出来**，只是没有"预计算列" ✓
+
+> ★★★ **这条正是项目文档里的既定"三期"项**（`roadmap` 文末：
+> `- 三期：技术指标（EMA/MACD/RSI 等预计算列）与分钟频聚合；`）⇒ **已知缺口，非遗漏** ✓
+
+#### ③ 建议（若要补）：**只加 `ema` 一个算子**，别逐个加指标
+
+- ★★ **加了 `ema` 就能组合出 MACD**（`sub(ema(x,12), ema(x,26))`）⇒ **不必专门加 `MACD`** ✓
+- ★ **RSI / BOLL / ATR 不用加**（`ts_rank` / `ts_mean`±`ts_std` / `ts_mean(true_range)` 都能表达）✓
+- 可选（按价值排序）：`wma`（线性加权）· `highday`/`lowday`（距高低点天数）·
+  `skew`/`kurt`（偏度/峰度）· `regbeta`（回归斜率，他们 `BETA5~60` 用的就是它）
+- ⚠ **风险提示**：**加算子会扩大搜索空间** ⇒ 同预算下**有效候选密度下降**；
+  且候选可能更冗长 ⇒ **必须配套**复杂度门（§1.3-B 的"`Base Features ≤ 5`"）
+  ⇒ ★ 但我们判断**方向是对的**：**EMA 是"新信号源"（不同平滑方式）**，
+    正对 §1.20 铁律「瓶颈是**信号源多样性**」✓
+- ⚠ **实现坑（真做时要处理）**：EMA 是**递归量**（`ema_t = αx_t + (1-α)ema_{t-1}`）⇒
+  ① 起点依赖 ⇒ 需要 warm-up（前几十期不可靠）；
+  ② 现有 `ts_*` 都用 `min_periods=max(2, w//2)` ⇒ **语义不同**，得单独定义；
+  ③ `pd.ewm` 与 `rolling` 的 **NaN 传播规则不同** ⇒ 要和 `rank_rows` 的 NaN 处理对齐
+
+---
+
 ### 1.24 【待办】核对「外部独立审查」7 个精选因子时发现的 5 条（2026-09-15）
 
 **背景**：用户让一位外部同事**独立重测**了精选池 7 个因子（并行 3 路 / 314s），
