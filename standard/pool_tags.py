@@ -39,7 +39,18 @@ ARCHIVE = os.path.join(ROOT, 'docs', 'loop_archive.csv')
 OUT_CSV = os.path.join(ROOT, 'docs', 'pool_tags.csv')
 OUT_MD = os.path.join(HERE, 'pool_tags_report.md')
 
-CAL_MIN, POOL_FLOOR = 0.30, 0.0
+def _ensure_engine_on_path():
+    """把 engine/ 加进 sys.path（`loop_pools` 在那边）。幂等。"""
+    eng = os.path.join(ROOT, 'engine')
+    if eng not in sys.path:
+        sys.path.insert(0, eng)
+
+
+# ★ 阈值**取自单一事实源** `engine/loop_pools.py`（2026-09-13）：引擎入库时也要用同一套规则，
+#   两份各自写死必然漂移。仍可用 --cal-min/--pool-floor 覆盖（覆盖后的标签只影响本脚本输出）。
+_ensure_engine_on_path()
+import loop_pools as LP                                   # noqa: E402
+CAL_MIN, POOL_FLOOR = LP.TAG_CAL_MIN, LP.TAG_POOL_FLOOR
 for a in sys.argv[1:]:
     if a.startswith('--cal-min='):
         CAL_MIN = float(a[10:])
@@ -52,19 +63,15 @@ for a in sys.argv[1:]:
 
 
 def tag_of(ok_all, ok_by_pool, pools):
-    """由"哪些池通过"派生标签。命名约定见 roadmap §8.9-④。"""
-    passed = [p for p in pools if ok_by_pool.get(p)]
-    if not passed and not ok_all:
-        return 'none'
-    if ok_all and len(passed) == len(pools):
-        return 'all3'                                   # 全都好用
-    if ok_all and not passed:
-        return 'csi_all_only'                           # ★只有全A好用(小盘/流动性溢价嫌疑)
-    if ok_all:
-        return 'csi' + '_'.join(passed) + '_all'        # 全A + 部分池
-    if len(passed) == 1:
-        return f'csi{passed[0]}_only'                   # 单池好用
-    return 'csi' + '_'.join(passed)                     # 多池好用(不含全A)
+    """由"哪些池通过"派生标签。
+
+    ★ 2026-09-13 改为**转发到单一事实源** `engine/loop_pools.derive_tag`
+      （原先这里有一份独立实现，而引擎入库时也要写标签 ⇒ 两份必然漂移）。
+      保留本函数名只是兼容旧调用；新代码请直接用 `loop_pools.derive_tag`。
+    """
+    _ensure_engine_on_path()
+    import loop_pools as LP
+    return LP.derive_tag(ok_all, ok_by_pool, pools)
 
 
 def main():

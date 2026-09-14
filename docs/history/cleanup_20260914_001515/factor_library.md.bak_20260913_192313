@@ -101,8 +101,6 @@
 ```
 add(ts_std20(cs_demean(log(turnover))), ts_std60(cs_rank(cs_demean(add(mul(ret, ts_std20(volume)), log(cs_demean(turn_ratio)))))))
 ```
-- 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
-  （全A 超额 +3.37% / Calmar +0.302；300 -7.76%；500 -5.50%；1000 +1.44%）
 - 家族：换手-量联动波动（ret×volume 交互 + 换手双对数）
 - 费后明细指标：见 gen8 时代历史 journal/日志（本档建立前未归档）
 
@@ -110,8 +108,6 @@ add(ts_std20(cs_demean(log(turnover))), ts_std60(cs_rank(cs_demean(add(mul(ret, 
 ```
 ts_std20(mul(cs_demean(hl_ratio), ts_mean100(cs_demean(turn_ratio))))
 ```
-- 池标签：**`csi_all_only`** —— **只有全A通过** ⇒ 小盘/流动性溢价嫌疑，**指数增强不可用**
-  （全A 超额 +2.19% / Calmar +0.318；300 -5.97%；500 -3.80%；1000 -0.06%）
 - 家族 A：hl_ratio×turn_ratio 稳定度（F05~F08 同骨架）
 - 备注：decorr 0.70 时代入库
 
@@ -119,48 +115,36 @@ ts_std20(mul(cs_demean(hl_ratio), ts_mean100(cs_demean(turn_ratio))))
 ```
 add(ts_std60(cs_demean(log(turnover))), add(ts_sum20(cs_demean(ts_std20(cs_demean(log(turn_ratio))))), cs_demean(log(turnover))))
 ```
-- 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
-  （全A 超额 +5.18% / Calmar +0.386；300 -4.85%；500 -4.74%；1000 +0.98%）
 - 家族：换手波动叠加（turnover 60 波动 + turn_ratio 短期波动）
 
 ### F04 · gen10 入库
 ```
 add(ts_sum20(ts_std20(cs_demean(log(turn_ratio)))), cs_demean(log(ts_mean5(ts_std20(volume)))))
 ```
-- 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
-  （全A 超额 +4.02% / Calmar +0.484；300 -6.90%；500 -4.50%；1000 +1.23%）
 - 家族：turn_ratio 波动 + volume 波动组合
 
 ### F05 · gen11 入库
 ```
 ts_std60(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
 ```
-- 池标签：**`csi500_1000_all`** —— 全A + **500/1000** 池通过
-  （全A 超额 +4.86% / Calmar +0.589；300 -4.51%；500 +0.08%；1000 +5.86%）
 - 家族 A 窗口变体（std60 / mean5）
 
 ### F06 · gen11 入库
 ```
 ts_std150(mul(cs_demean(hl_ratio), ts_mean100(cs_demean(turn_ratio))))
 ```
-- 池标签：**`csi500_1000_all`** —— 全A + **500/1000** 池通过
-  （全A 超额 +3.62% / Calmar +1.146；300 -0.02%；500 +0.84%；1000 +4.08%）
 - 家族 A 窗口变体（std150 / mean100）
 
 ### F07 · gen11 入库
 ```
 ts_std100(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
 ```
-- 池标签：**`csi500_1000_all`** —— 全A + **500/1000** 池通过
-  （全A 超额 +5.38% / Calmar +0.709；300 -2.65%；500 +3.43%；1000 +6.11%）
 - 家族 A 窗口变体（std100 / mean5）
 
 ### F08 · gen11 入库
 ```
 ts_std150(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
 ```
-- 池标签：**`csi500_1000_all`** —— 全A + **500/1000** 池通过
-  （全A 超额 +3.78% / Calmar +0.506；300 -3.65%；500 +2.24%；1000 +3.13%）
 - 家族 A 窗口变体（std150 / mean5）
 - F05~F08 备注：decorr 0.70 拦不住同骨架换窗口（当时 bank 5/8 同骨架）→ 触发 Round24 FSA 冻结
 
@@ -168,8 +152,6 @@ ts_std150(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
 ```
 neg(log(ts_mean60(div(add(mul(mul(turn_ratio, ts_mean5(ts_std20(cs_rank(log(turnover))))), ts_std20(add(mul(turn_ratio, ts_mean5(ts_mean20(volume))), mul(turn_ratio, corr20(log(cs_demean(turn_ratio)), mktcap))))), close), ts_std60(cs_rank(open))))))
 ```
-- 池标签：**`csi300_1000_all`** —— 全A + **300/1000** 池通过
-  （全A 超额 +8.02% / Calmar +0.806；300 +0.38%；500 -0.10%；1000 +3.38%）
 - 家族：换手×量×价格 深度 5 交叉（不再是纯量/换手族窗口变体，混入 mktcap/close/open）
 - 费后指标（full，成本 0.004）：IC 0.0484 / IC_IR 0.454 / 年化超额 +8.85% / 回撤 −9.7% /
   **Calmar 0.914 / Sharpe 1.256** / 最近年 +5.1% / 单期换手 15.7% / 负年 0
@@ -179,8 +161,6 @@ neg(log(ts_mean60(div(add(mul(mul(turn_ratio, ts_mean5(ts_std20(cs_rank(log(turn
 ```
 sub(add(sub(div(corr100(up_shadow, ln_volume), turnover), corr60(true_range, turn_ratio)), neg(log(corr100(amplitude, intraday)))), ln_volume)
 ```
-- 池标签：**`csi_all_only`** —— **只有全A通过** ⇒ 小盘/流动性溢价嫌疑，**指数增强不可用**
-  （全A 超额 +5.30% / Calmar +0.459；300 -4.09%；500 -3.03%；1000 -0.57%）
 - 家族：量价背离·影线强度综合（up_shadow 与 ln_volume 的 100 日相关 ÷ turnover，叠加真实波幅/换手/日内波幅的对数合成）
 - 叶子：up_shadow、ln_volume、turnover、true_range、turn_ratio、amplitude、intraday
 - 费后指标（full，成本 0.004）：IC 0.0637 / IC_IR 0.577 / 年化超额 +6.7% / 回撤 −10.7% / **Calmar 0.624 / Sharpe 0.989** / 最近年 +1.5% / 单期换手 27.1% / 负年 0
@@ -190,8 +170,6 @@ sub(add(sub(div(corr100(up_shadow, ln_volume), turnover), corr60(true_range, tur
 ```
 ts_mean60(mul(div(hl_ratio, low), mul(mul(intraday, ret), intraday)))
 ```
-- 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
-  （全A 超额 +5.11% / Calmar +0.405；300 -3.15%；500 -2.72%；1000 +0.29%）
 - 家族：日内强度密度（隔夜区间相对低点 hl_ratio/low × 日内动量² × 收益，60 日均值）
 - 叶子：hl_ratio、low、intraday、ret
 - 费后指标（full，成本 0.004）：IC 0.0588 / IC_IR 0.569 / 年化超额 +6.4% / 回撤 −12.1% / **Calmar 0.528 / Sharpe 0.790** / 最近年 +2.9% / 单期换手 24.9% / 负年 2
@@ -579,7 +557,6 @@ neg(corr100(true_range, mf_x_bqty))
 | 文件 | 内容 |
 |---|---|
 | `docs/factor_library.md`（本文件） | 只收入库因子；引擎代末自动同步新入库，家族命名随时可人工精炼 |
-| **`docs/factor_library_crosspool.md`** | ★ **跨池派生视图**：把 `factor_library_{300,500,1000}.md` 里**全A 有效**的因子**去重合并**（实测 **12 个**，且**个个都不在本文件里** —— 因为它们写进了各自的池库）。附带**池标签并集修正**。由 `python ai_test/build_crosspool_view.py` 生成 |
 | `docs/loop_journal.md` | 每代诊断 + B角下一代参数（引擎自动读写） |
 | `docs/loop_archive.csv` | 每代 L2 全量候选流水（expr/指标/passed，引擎逐代追加） |
 | `engine/loop_state.pkl` | 运行状态：bank/seeds/失败库/FSA（`_dump_state.py` 可看） |

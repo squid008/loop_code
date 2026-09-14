@@ -35,6 +35,86 @@ KNOWN_HINT = ['ln_mktcap', 'ln_volume', 'turnover', 'mktcap', 'amt']
 SLOW_OPS = ['ts_mean20', 'ts_mean10', 'ts_rank60', 'ts_std60', 'ts_max20', 'ts_min20']
 FAST_OPS = ['ts_mean5', 'ts_delay1', 'ts_delta5']
 
+# =====================================================================
+# ★★★ 规则「动作」登记表 + 饱和检测 + LLM 否决(2026-09-14, docs/loop_todo.md §1.1)
+# ---------------------------------------------------------------------
+# 为什么必须给动作起**稳定 ID**（三条独立的理由）：
+#   ① **饱和检测**：一个"条件触发"的规则若**条件恒真**，它就退化成**固定偏移**，
+#      并会在多代间**累积**直到撞边界（实测 `depth` 被永久推到 [3,4,4]、`mix` 交叉撞 0.4）。
+#      ⇒ 必须能识别"**这已经是第 N 代施加同一个动作了**" ⇒ 需要动作有名字。
+#   ② **LLM 否决/降权通道**：LLM 审查此前只能写散文（"深度加深有害"），而散文**无法回写
+#      `sug`** ⇒ 85/98 次独立反驳全部被浪费。给了 ID，LLM 才能输出**机器可读**的否决。
+#   ③ **留痕**：journal 里能写清"这代施加了什么 / 哪条被拦、为什么" ⇒ 人工可复核、可推翻。
+RULE_NAMES = {
+    'r1_leaf_conc':    '叶子过度集中 -> 压低该叶子权重',
+    'r2_stab_low':     '稳定性差 -> min_stab+ / 偏好长周期算子',
+    'r3_struct_div':   '结构多样性低 -> 变异预算+10%',
+    'r4_fail_turn':    'L2 多因换手失败 -> min_stab 再+0.10',
+    'r5_calmar_cross': 'L2 多因 Calmar 不足 -> 交叉+15% / 深度加深',
+    'r6_known_ratio':  '候选仍绕已知族 -> decorr 收紧',
+    'r7_zero_pass':    '本代 0 通过 -> 深度放宽到 3~5',
+}
+# 饱和检测：同一动作**连续 SAT_N 代**被施加 ⇒ 视为饱和，冷却 COOL_N 代不再施加。
+#   SAT_N=2 的依据：rule5 在 96/96 代上都触发（`fail_calmar` 区间 0.846~1.000）
+#   ⇒ 连续 2 代足以判定"它不是自适应，是固定动作"，无需等到更多代才叫停。
+SAT_N = 2
+COOL_N = 3
+# 特殊常量：★ LLM 否决专用**持久哨兵**（2026-09-14 用户拍板「**让它永久闭嘴**」）。
+#   语义与"冷却"完全不同：冷却到期会**自动解禁**（规则还会再来一遍）；
+#   哨兵 = **一旦被 LLM 否决过，该动作对后续所有代永久失效**，直到人工改 `_muted`。
+#   存法用 gens 里的 `None`（不是代号）⇒ 与"按代幂等"的普通否决共存、互不干扰。
+MUTE = None
+
+
+def _no_fire(reasons, aid, why):
+    """统一的"动作未施加"留痕（★ 静默是禁止的，见 roadmap §8.44 铁律）。
+
+    ⚠ **必须带动作 ID**（2026-09-14 回归测试抓到）：初版只写 `【拦截】(未施加) <原因>`，
+      没带 ID ⇒ 在 journal 里**无法按动作 grep**（想查"r5 到底被拦了几代"只能肉眼翻）。
+      ⇒ 格式统一为 `【拦截】[<id>] <原因> —— <动作名>`。
+    """
+    reasons.append('【拦截】[{}] {} —— {}'.format(aid, why, RULE_NAMES.get(aid, aid)))
+
+
+def _fired(act, aid, gen):
+    """登记"本代施加了该动作"（**按代幂等**：同代被登记两次不会重复追加）。
+
+    ⚠ 为什么必须幂等：`loop_engine` 每代会调 `suggest()` **两次**
+      （代首 L1132 用上代数据定本代策略 + 代末 L2078 定下代策略），
+      两者 `diag['gen']` 分别是 `gen-1` 与 `gen`，且**都可能登记同一动作**
+      ⇒ 不幂等就会把历史记成两份，饱和检测判断全错。
+    """
+    gs = act.setdefault(aid, [])
+    if None not in gs and gen not in gs:
+        gs.append(gen)
+    return gs
+
+
+def _saturated(act, aid, gen):
+    """饱和检测：该动作在 `gen-1 .. gen-SAT_N` **连续**都触发过？"""
+    gs = set(act.get(aid) or [])
+    if MUTE in gs:          # 已被 LLM 永久闭嘴 -> 永远视为饱和
+        return True
+    return all((gen - k) in gs for k in range(1, SAT_N + 1))
+
+
+def _cooling(cool, aid, gen):
+    """冷却中？（`_cool` 记 {aid: 解禁代}) —— 饱和后停手 COOL_N 代再重新评估。"""
+    return gen < int(cool.get(aid, -10 ** 9))
+
+
+def _muted(veto, aid):
+    """被 LLM **永久否决**过？（`_veto[aid]` 含哨兵 `MUTE`）
+
+    用户原话（2026-09-14）：「**让它永久闭嘴**」——
+    LLM 对同一条动作**连续多次**反对时，不再一代一代地拦，而是**一次性永久关掉**它。
+    判"连续多次"用 `LLM_MUTE_N`；达到即写入哨兵。
+    """
+    return MUTE in set(veto.get(aid) or [])
+
+
+LLM_MUTE_N = 2      # LLM 连续否决达到该次数 -> 该动作**永久**停用（写哨兵）
+
 
 def _leaf_of(expr):
     """粗暴提取表达式里出现的叶子字段名(全集=loop_fields.LEAVES, 与引擎生成池同步)"""
@@ -53,10 +133,31 @@ def _ops_of(expr):
     return [t for t in toks if t in ops]
 
 
-def diagnose(l1, l2, gen, verbose=True):
+def diagnose(l1, l2, gen, verbose=True, gate=None, pool_map=None):
     """l1: L1候选DataFrame(需含 expr/ic/ic_ir/stab/sign);
        l2: L2精筛结果DataFrame(需含 expr/ann_ex/calmar/sharpe/turn/neg_yr/last_yr/passed) 或 None
+
+    ★★★ 2026-09-14 起新增 `gate` / `pool_map` —— 修 `docs/loop_todo.md` §1.1 的**传感器失真**：
+
+    **旧实现的病**：`fail_calmar` 写死 `(fail['calmar'] <= 0.5)` —— ① **0.5 是硬编码**，
+    与实际生效的 `--min_calmar` 可以完全不相干；② 取的是**全A 口径**，而**池内模式**的判定
+    用的是**池口径**（`任一池 Calmar > --min_pool_calmar`）⇒ 它**回答不了"离真正卡住你的那道门差多远"**。
+    实测：`pool=1000 gen1` 报 `fail_calmar=1.000`，而同代**确有 2 个候选 Calmar 0.661/0.561 通过入库**
+    ⇒ **指标自相矛盾**，且 96/96 代都触发规则5 ⇒ 自适应退化成固定动作。
+
+    **新实现给三个量**（前两个是"对账"，第三个是"不随配置漂移"的锚）：
+      · `fail_calmar`       —— 用**生效的** `min_calmar` 判（对账 ✓）
+      · `fail_calmar_neg`   —— `calmar <= 0` 占比 = **真·信号弱**（**不随任何配置漂移** ✓）
+      · `fail_pool_calmar`  —— **池口径**：失败者里"**没有任何一个池**过 `min_pool_calmar`"的占比
+                               ⇒ 池内模式下**这才是真实卡点**（需 `pool_map`）
+
+    :param gate: 生效门槛 dict（`min_calmar`/`min_sharpe`/`min_pool_calmar`/`pool_gate_on`/
+                 `pool_mode`/`or_all`）。由 `loop_engine._gate_of(args)` 提供，**单一事实源**。
+                 缺省/None ⇒ 退回旧行为（0.5），保证老调用方不炸。
+    :param pool_map: `{expr: 该候选最好池的 calmar}`。由引擎从 `pool_rows` 聚合。
+                     缺省 ⇒ 不产出 `fail_pool_calmar`（**宁可缺，不臆造**）。
     """
+    gate = gate or {}
     d = {}
     d['gen'] = gen
     d['n_l1'] = 0 if l1 is None or not len(l1) else len(l1)
@@ -90,19 +191,41 @@ def diagnose(l1, l2, gen, verbose=True):
         d['ex_max'] = float(l2['ann_ex'].max())
         # 失败原因分布
         fail = l2[~l2['passed']]
+        # ★ 生效门槛回显（让 journal 里"诊断用的门槛"与"实际生效的门槛"可直接对账）
+        _mc = float(gate.get('min_calmar', 0.5)) if gate else 0.5
+        d['gate_min_calmar'] = _mc
+        if gate:
+            d['gate_min_pool_calmar'] = float(gate.get('min_pool_calmar', -1.0))
+            # 池门槛的 OR/AND 语义（供 rule5 的留痕文字说明"卡在哪种语义上"）
+            d['gate_pool_mode'] = gate.get('pool_mode', 'any')
+            d['gate_or_all'] = bool(gate.get('or_all', False))
         if len(fail):
-            d['fail_calmar'] = float((fail['calmar'] <= 0.5).mean())
+            # ★ 对账后的 fail_calmar：用**生效的** min_calmar（不再是硬编码 0.5）
+            d['fail_calmar'] = float((fail['calmar'] <= _mc).mean())
+            # ★★ 稳定锚：真·信号弱 = 连 Calmar>0 都没到（不随任何配置漂移）
+            d['fail_calmar_neg'] = float((fail['calmar'] <= 0).mean())
             d['fail_turn'] = float((fail['turn'] > 0.30).mean())
             d['fail_negyear'] = float((fail['neg_yr'] > 1).mean())
             d['fail_lastyr'] = float((fail['last_yr'] <= 0).mean())
             d['fail_ic'] = float((fail['ic'] < 0.02).mean())
+            # ★★ 池口径（池内模式下**真实卡点**）：失败者里"没有一个池达标"的占比。
+            #    口径与引擎的 `pool_gate_ok` 一致：任一池 calmar > min_pool_calmar 即达标。
+            #    ⚠ pool_map 缺失(未开池观测/上代没存) -> **不产出该键**（宁可缺，不臆造 ——
+            #      与 strip/池门槛/LLM 同一条"缺失即放行不误杀"的铁律）。
+            _mpc = gate.get('min_pool_calmar', -1.0)
+            if pool_map is not None and _mpc is not None and _mpc >= 0:
+                _pm = [pool_map.get(str(e)) for e in fail['expr']]
+                _pm = [x for x in _pm if x is not None and np.isfinite(x)]
+                if _pm:
+                    d['fail_pool_calmar'] = float(np.mean([x <= _mpc for x in _pm]))
             # 分段独立验证击杀(基础指标可能全达标, 仅因某段失效被拦; 缺失则=0)
             if 'seg_ok' in l2.columns:
                 d['seg_kill'] = float((l2['seg_ok'] == False).mean())
             else:
                 d['seg_kill'] = 0.0
         else:
-            for k in ['fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic']:
+            for k in ['fail_calmar', 'fail_calmar_neg', 'fail_turn', 'fail_negyear',
+                      'fail_lastyr', 'fail_ic']:
                 d[k] = 0.0
             d['seg_kill'] = 0.0
     if verbose:
@@ -146,8 +269,28 @@ def guard_mix(mix):
 
 
 def suggest(diag, cur=None):
-    """根据诊断输出下一代搜索策略(规则透明, 每条带触发原因)"""
+    """根据诊断输出下一代搜索策略(规则透明, 每条带触发原因)
+
+    ★★★ 2026-09-14 重构（`docs/loop_todo.md` §1.1 修法 ②③④）—— 加了三件事：
+
+    **(A) 动作记忆 + 饱和检测**：每条规则动作有**稳定 ID**（见 `RULE_NAMES`）。
+        同一动作**连续 `SAT_N` 代**被施加 ⇒ 判为**饱和** ⇒ **冷却 `COOL_N` 代不再施加**，并留痕。
+        **动机**：实测 rule5 在 **96/96 代**上都触发（`fail_calmar` 区间仅 0.846~1.000）
+        ⇒ 它不是"自适应"而是**固定偏移** ⇒ `depth` 被**永久**推到 `[3,4,4]`、`mix` 交叉撞 0.4。
+
+    **(B) LLM 否决 / 降权通道**：`cur['_veto']` 里被 LLM 点名否决的动作，本代**跳过**；
+        同一动作被 LLM **连续否决 `LLM_MUTE_N` 次** ⇒ 升级为**永久哨兵 `MUTE`**
+        —— 用户原话「**让它永久闭嘴**」，不再一代一代地拦。
+        **动机**：`ai_review()` 的返回值此前**只打印、从不回写 `sug`** ⇒ 85/98 次独立、一致的反驳**全被浪费**。
+
+    **(C) 用"真正卡住的那道门"当判据**：池内模式下 rule5 改看 **`fail_pool_calmar`**（池口径 = 真实卡点）；
+        无池数据时退回**对账后**的 `fail_calmar`。
+
+    ⚠ **禁止静默**（见 roadmap §8.44 铁律）：任何"动作没施加"都必须由 `_guard` 写进 `reasons`，
+    这样 journal 里永远能回答"这代为什么没加交叉"。
+    """
     cur = cur or {}
+    gen = int(diag.get('gen') or 0)
     s = dict(leaf_w=dict(cur.get('leaf_w', {})),
              op_bias=dict(cur.get('op_bias', {})),
              depth=list(cur.get('depth', [2, 3, 4])),
@@ -156,53 +299,113 @@ def suggest(diag, cur=None):
              decorr=cur.get('decorr', 0.75),
              fsa_th=cur.get('fsa_th', 0.15),
              bank_skel_max=cur.get('bank_skel_max', 1))
+    # ★ 这三个键**必须原样带下去**（引擎会把 s 存进 state 的 cfg）—— 否则跨代就忘了:
+    #   `_act` = 动作施加史 · `_veto` = LLM 否决史 · `_cool` = 冷却解禁代
+    s['_act'] = {k: list(v) for k, v in (cur.get('_act') or {}).items()}
+    s['_veto'] = {k: list(v) for k, v in (cur.get('_veto') or {}).items()}
+    s['_cool'] = dict(cur.get('_cool') or {})
+    s['_sat_n'], s['_cool_n'] = SAT_N, COOL_N
     reasons = []
+    tgt = gen + 1        # ★ 本策略服务的**目标代**：代首(gen=args.gen-1)/代末(gen=args.gen) 恒等 ✓
+    act, veto, cool = s['_act'], s['_veto'], s['_cool']
+    n_blocked = [0]
+
+    def _guard(aid):
+        """动作闸门。返回 True=可施加；False=已拦下并**写明原因**（绝不静默）。"""
+        if _muted(veto, aid):
+            _no_fire(reasons, aid, 'LLM 已【永久】否决，后续各代一律不再施加')
+            n_blocked[0] += 1
+            return False
+        _vg = [g for g in (veto.get(aid) or []) if g is not MUTE]
+        if tgt in _vg:
+            if len(_vg) >= LLM_MUTE_N:
+                veto.setdefault(aid, []).append(MUTE)
+                _no_fire(reasons, aid, 'LLM 连续否决 {} 次 -> 升级为【永久】停用'.format(len(_vg)))
+            else:
+                _no_fire(reasons, aid, 'LLM 本代明确否决（第 {} 次）'.format(len(_vg)))
+            n_blocked[0] += 1
+            return False
+        if _cooling(cool, aid, tgt):
+            _no_fire(reasons, aid, '饱和冷却中（第 {} 代自动解禁）'.format(cool.get(aid)))
+            n_blocked[0] += 1
+            return False
+        if _saturated(act, aid, tgt):
+            cool[aid] = tgt + COOL_N
+            _no_fire(reasons, aid, '已连续 {} 代施加 -> 判为饱和（条件恒真=固定偏移），'
+                                   '冷却到第 {} 代再评估'.format(SAT_N, cool[aid]))
+            n_blocked[0] += 1
+            return False
+        return True
+
+    def _mark(aid, txt):
+        """登记施加 + 留痕（ID 前缀便于在 journal 里 grep 审计）。"""
+        _fired(act, aid, tgt)
+        reasons.append('【{}】{}'.format(aid, txt))
 
     # 1) 叶子过度集中 -> 压低该叶子
-    if diag.get('leaf_conc', 0) > 0.40:
+    if diag.get('leaf_conc', 0) > 0.40 and _guard('r1_leaf_conc'):
         top = diag['leaf_top'][0]
         s['leaf_w'][top] = 0.25
-        reasons.append(f"叶子[{top}]占比{diag['leaf_conc']:.0%}过高 -> 权重压到0.25, 逼引擎换字段")
+        _mark('r1_leaf_conc', f"叶子[{top}]占比{diag['leaf_conc']:.0%}过高 -> 权重压到0.25, 逼引擎换字段")
     # 2) 稳定性差 -> 抬高门槛 + 偏好长周期算子
-    if diag.get('stab_med', 1) < 0.60 or diag.get('stab_lt50', 0) > 0.40:
+    if (diag.get('stab_med', 1) < 0.60 or diag.get('stab_lt50', 0) > 0.40) and _guard('r2_stab_low'):
         s['min_stab'] = min(0.60, s['min_stab'] + 0.15)
         for o in SLOW_OPS:
             s['op_bias'][o] = 1.8
         for o in FAST_OPS:
             s['op_bias'][o] = 0.4
-        reasons.append(f"稳定性中位{diag.get('stab_med',0):.2f}(低) -> min_stab提到{s['min_stab']:.2f}, "
-                       f"偏好长周期算子")
+        _mark('r2_stab_low', f"稳定性中位{diag.get('stab_med',0):.2f}(低) -> min_stab提到{s['min_stab']:.2f}, "
+                             f"偏好长周期算子")
     # 3) 结构多样性低 -> 加强探索(随机槽固定15%走数据驱动加权, 故提变异逼换新信号源)
-    if diag.get('struct_div', 1) < 0.35:
+    if diag.get('struct_div', 1) < 0.35 and _guard('r3_struct_div'):
         m = s['mix']
         s['mix'] = [min(0.40, m[0] + 0.10), max(0.10, m[1] - 0.10), m[2], m[3], m[4]]
-        reasons.append(f"结构多样性{diag.get('struct_div',0):.2f}(同质化) -> "
-                       f"变异预算提至{s['mix'][0]:.0%}逼探索新信号源")
+        _mark('r3_struct_div', f"结构多样性{diag.get('struct_div',0):.2f}(同质化) -> "
+                               f"变异预算提至{s['mix'][0]:.0%}逼探索新信号源")
     # 4) L2 主要因换手失败 -> 再抬稳定性
-    if diag.get('fail_turn', 0) > 0.40:
+    if diag.get('fail_turn', 0) > 0.40 and _guard('r4_fail_turn'):
         s['min_stab'] = min(0.75, s['min_stab'] + 0.10)
-        reasons.append(f"L2中{diag['fail_turn']:.0%}因换手过高失败 -> min_stab再+0.10")
-    # 5) L2 主要因Calmar不足(信号弱) -> 加强交叉(把已有信号组合起来)
-    if diag.get('fail_calmar', 0) > 0.55 and diag.get('n_l2', 0) >= 8:
+        _mark('r4_fail_turn', f"L2中{diag['fail_turn']:.0%}因换手过高失败 -> min_stab再+0.10")
+    # 5) L2 主要因 Calmar 不足 -> 加强交叉(把已有信号组合起来) / 深度加深
+    #    ★ (C) **判据选"真正卡住的那道门"**：池内模式下池口径才是真实卡点。
+    #      为什么不能只看全A：pool=1000 实测「全A 门槛已放开（--min_calmar=0）却仍报 100%」，
+    #      而真正决定成败的是「任一池 Calmar > --min_pool_calmar」这道池门槛。
+    #    ★ 另给一个**不随配置漂移**的锚 `fail_calmar_neg`（真·信号弱），用于人工对照。
+    _sig, _sig_src = None, ''
+    if diag.get('fail_pool_calmar') is not None:
+        _sig = float(diag['fail_pool_calmar'])
+        _sig_src = '池口径: {}池 Calmar > {:g}'.format(
+            '任一' if diag.get('gate_pool_mode', 'any') == 'any' else '全部',
+            float(diag.get('gate_min_pool_calmar', 0)))
+    elif diag.get('fail_calmar') is not None:
+        _sig = float(diag['fail_calmar'])
+        _sig_src = '全A 口径: Calmar <= {:g}'.format(float(diag.get('gate_min_calmar', 0.5)))
+    if _sig is not None and _sig > 0.55 and diag.get('n_l2', 0) >= 8 and _guard('r5_calmar_cross'):
         m = s['mix']
         s['mix'] = [m[0] * 0.85, min(0.45, m[1] + 0.15), m[2], m[3], m[4]]
         s['depth'] = [3, 4, 4]
-        reasons.append(f"L2中{diag['fail_calmar']:.0%}因Calmar不足(信号弱) -> 交叉+15%, 深度加深")
+        _mark('r5_calmar_cross', f"L2中{_sig:.0%}因Calmar不足[{_sig_src}] -> 交叉+15%, 深度加深")
     # 6) 又绕回已知族 -> 收紧去相关阈值(对象=人工基准+历代入库bank, 对齐中金"入库IC<0.70")
     #    ⚠ 原实现 known_ratio 高时放宽到0.85是反的: 已知族候选占满L1却无法入库,
     #    应把更像已知者的拦在L2外, 逼搜索离开已知族; 放宽只会放更多同族进L2.
-    if diag.get('known_ratio', 0) > 0.60:
+    if diag.get('known_ratio', 0) > 0.60 and _guard('r6_known_ratio'):
         floor = 0.65 if diag.get('n_pass', 0) == 0 else 0.70
         if s['decorr'] > floor:
             s['decorr'] = max(floor, s['decorr'] - 0.05)
-            reasons.append(f"{diag['known_ratio']:.0%}候选仍含已知族字段 -> decorr收紧到"
-                           f"{s['decorr']:.2f}(0.70≈中金入库IC相关口径)")
+            _mark('r6_known_ratio', f"{diag['known_ratio']:.0%}候选仍含已知族字段 -> decorr收紧到"
+                                    f"{s['decorr']:.2f}(0.70≈中金入库IC相关口径)")
+        else:
+            _mark('r6_known_ratio', f"{diag['known_ratio']:.0%}候选仍含已知族字段，"
+                                    f"但 decorr={s['decorr']:.2f} 已达 floor={floor:.2f} -> 不重复收紧")
     # 7) 连续无产出 -> 换方向: 提高深度 + 提高随机
-    if diag.get('n_pass', 0) == 0 and diag.get('n_l2', 0) >= 10:
+    if diag.get('n_pass', 0) == 0 and diag.get('n_l2', 0) >= 10 and _guard('r7_zero_pass'):
         s['depth'] = [3, 4, 5]
-        reasons.append("本代0通过 -> 深度放宽到3~5, 探索更复杂结构")
+        _mark('r7_zero_pass', "本代0通过 -> 深度放宽到3~5, 探索更复杂结构")
     if not reasons:
         reasons.append("各项指标正常, 维持当前策略")
+    # ★ 审计小结：让 journal 一眼看出"这代被拦下了几条动作"（否则静默=未来的排查噩梦）
+    if n_blocked[0]:
+        reasons.append("—— 本代共拦截 {} 条动作（饱和/LLM 否决），详见上面【拦截】行".format(n_blocked[0]))
     # 出口统一护栏: 规则(含从旧state继承的cfg)算出任何 mix 都强制回到中金规格内,
     # 且修正前后不一致时留痕, 便于在 journal 里追踪护栏生效
     mix_raw = list(s['mix'])
@@ -219,10 +422,17 @@ def report(diag, sug, reasons, path):
     lines = []
     lines.append(f"\n## 第 {diag['gen']} 代 (B角诊断)\n")
     # 指标横排 md 表格(键行/分隔/值行): 源码3行, 渲染为横向对齐表格
+    # ★ 2026-09-14 新增（§1.1 修法①）：诊断的门槛**与被判的量并列展示**，以便一眼对账。
+    #   `gate_min_calmar` = 诊断实际用的全A calmar 门槛（应等于 --min_calmar）
+    #   `gate_min_pool_calmar` = 池门槛（池内模式下的真实卡点）
+    #   `fail_calmar_neg` = 真·信号弱（calmar<=0，**不随配置漂移**的锚）
+    #   `fail_pool_calmar` = 池口径失败率（缺池数据时不产出 -> present 过滤掉）
     keys = ['n_l1', 'ic_med', 'ic_max', 'stab_med', 'stab_lt50',
             'leaf_conc', 'struct_div', 'fam_blocked', 'known_ratio',
             'n_l2', 'n_pass', 'ex_max',
-            'fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic',
+            'gate_min_calmar', 'gate_min_pool_calmar',
+            'fail_calmar', 'fail_calmar_neg', 'fail_pool_calmar',
+            'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic',
             'seg_kill',
             # 风格暴露观测(--style_obs, 2026-09-11): 各组 |截面秩相关| 中位。
             # st_l2_=进L2组 / st_l1_=L1通过组; 入库组(st_ok_)样本过小, 只进 CSV 不进表。
@@ -247,6 +457,20 @@ def report(diag, sug, reasons, path):
                  f"depth={sug['depth']}  min_stab={sug['min_stab']}  "
                  f"decorr={sug['decorr']}  fsa_th={sug.get('fsa_th',0.15)}  "
                  f"bank_skel_max={sug.get('bank_skel_max',1)}\nleaf_w={sug['leaf_w']}\n```")
+    # ★ 动作留痕（2026-09-14, §1.1 修法③④）：把"施加过什么 / 哪条被永久闭嘴"落到 journal，
+    #   否则这些机制只活在内存里，人无法复核、更无法推翻（违反本文件"规则透明可解释"的设计原则）。
+    _act = sug.get('_act') or {}
+    _veto = sug.get('_veto') or {}
+    _muted_aids = [a for a, gs in _veto.items() if MUTE in (gs or [])]
+    if _act or _muted_aids:
+        lines.append("\n**规则动作留痕**:")
+        for aid, gs in sorted(_act.items()):
+            gg = [g for g in gs if g is not None]
+            mark = '（**已永久关闭**）' if aid in _muted_aids else ''
+            lines.append(f"- `{aid}` {RULE_NAMES.get(aid,'?')} —— 施加于第 {gg} 代{mark}")
+        if _muted_aids:
+            lines.append(f"- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）："
+                         f"{', '.join('`%s`' % x for x in _muted_aids)}")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, 'a', encoding='utf-8') as f:
         f.write('\n'.join(lines) + '\n')
@@ -314,13 +538,53 @@ def _fmt_l2(l2, n=4):
     return '\n'.join(lines) if lines else '(无样本)'
 
 
+def parse_veto(resp):
+    """从 LLM 回复里解析**机器可读的否决行**（2026-09-14, `docs/loop_todo.md` §1.1 修法④）。
+
+    约定（已写进 system prompt）：**最后一行**形如
+        `否决: r5_calmar_cross`   /   `否决: r5_calmar_cross,r7_zero_pass`   /   `否决: 无`
+
+    为什么需要这一行：此前 LLM 只能写散文（"深度加深有害"），而**散文无法回写 `sug`**
+    ⇒ 85/98 次独立反驳全部被浪费。有了结构化出口，LLM 才真正有**否决权**。
+
+    **容错优先**（铁律）：解析失败 / 未知 ID / 空 ⇒ 返回 `[]`，**不否决任何东西**。
+    ⚠ 宁可"少拦一条"，绝不可"因解析错而乱拦" —— LLM 侧任何问题都不得影响主流程。
+    """
+    import re
+    if not resp:
+        return []
+    # 取**最后**一处"否决:"（LLM 可能先解释再给结论；以最后一次表态为准）
+    ms = re.findall(r'否决\s*[:：]\s*([^\n]*)', resp)
+    if not ms:
+        return []
+    raw = ms[-1].strip()
+    if raw in ('无', 'none', 'None', '-', ''):
+        return []
+    out = []
+    for tok in re.split(r'[,，、;；\s]+', raw):
+        tok = tok.strip().strip('`*[]()"\'')
+        if tok in RULE_NAMES and tok not in out:
+            out.append(tok)
+    return out
+
+
 def ai_review(diag, l1, l2, gen, journal_path, reasons=None, sug=None, force=False):
     """B角 LLM 审查: 调 DeepSeek 对第 gen 代诊断做体检并点评规则建议, 全文追加进 journal。
-    返回 'ok'/'no_key'/'err'; 任何失败均跳过, 不影响主流程(规则 B角照常执行)。"""
+
+    返回 **dict**（2026-09-14 起；旧版返回裸字符串 `'ok'`，引擎已同步改用 `.get()`）：
+        `{'status': 'ok'|'no_key'|'err', 'veto': [规则动作ID, ...], 'text': LLM原文或''}`
+
+    ★ 为什么返回值从"字符串"升级为"带 `veto` 的 dict"：这是**修法④**的核心 ——
+      此前 `ai_review()` 的返回值**只用于打印、从不回写 `sug`** ⇒ LLM 的独立判断被完全浪费。
+      现在把 `veto` 交回引擎，引擎写进 `next_cfg['_veto']` ⇒ 下一代 `suggest()` 会**真的跳过**
+      被否决的动作（连续否决 `LLM_MUTE_N` 次则**永久闭嘴**）。
+
+    ⚠ 铁律不变：任何失败（无 key / 网络 / 解析）都只是**跳过**，绝不影响主流程。
+    """
     if not _deepseek_key():
         print("[AI审查] 未找到 DeepSeek key(环境变量 DEEPSEEK_API_KEY 或桌面 1.txt), "
               "本代跳过 -> 沿用规则B角")
-        return 'no_key'
+        return {'status': 'no_key', 'veto': [], 'text': ''}
     keys = ['n_l1', 'ic_med', 'ic_max', 'stab_med', 'stab_lt50', 'leaf_conc',
             'struct_div', 'fam_blocked', 'known_ratio', 'n_l2', 'n_pass', 'ex_max',
             'fail_calmar', 'fail_turn', 'fail_negyear', 'fail_lastyr', 'fail_ic',
@@ -332,20 +596,34 @@ def ai_review(diag, l1, l2, gen, journal_path, reasons=None, sug=None, force=Fal
     sug_txt = (f"mix={sug['mix']} depth={sug['depth']} min_stab={sug.get('min_stab')} "
                f"decorr={sug.get('decorr')} fsa_th={sug.get('fsa_th')} "
                f"bank_skel_max={sug.get('bank_skel_max')}") if sug else '(无)'
+    # ★ 给 LLM「可引用的动作名」——**没有 ID 它就无法否决**（这是修法④的前提）。
+    #   只列**本代真正施加过**的动作（没施加的动作谈不上"反对"），并标出**哪些已被永久关掉**，
+    #   否则 LLM 会年复一年地否决同一件事（实测它在 85/98 代上重复同一判断）。
+    _act = (sug or {}).get('_act') or {}
+    _veto_h = (sug or {}).get('_veto') or {}
+    _applied = [a for a in _act if a in RULE_NAMES and MUTE not in (_veto_h.get(a) or [])]
+    _muted_now = [a for a, gs in _veto_h.items() if MUTE in (gs or [])]
+    act_txt = '; '.join('`{}`={}'.format(a, RULE_NAMES[a]) for a in _applied) or '(本代未施加任何规则动作)'
+    mute_txt = ('已永久关闭: ' + ', '.join('`%s`' % a for a in _muted_now)) if _muted_now else ''
     user_txt = (
         f"第 {gen} 代诊断统计:\n{stat}\n"
         f"叶子使用: {leaf_hist}\n\n"
         f"L1 头部候选(按ic降序):\n{_fmt_l1(l1)}\n\n"
         f"L2 样本:\n{_fmt_l2(l2)}\n\n"
         f"规则B角建议(引擎将按此执行):\n- {rule_txt}\n"
-        f"下代表格: {sug_txt}\n")
+        f"下代表格: {sug_txt}\n\n"
+        f"本代**实际施加**的规则动作(可被否决):\n{act_txt}\n"
+        f"{mute_txt}\n")
     sys_txt = (
         "你是资深A股量价因子研究员, 在中金 Loop Engineering 双Agent框架里扮演 B角(审查者/启发者)。"
-        "输入是一轮因子挖掘迭代的诊断统计与规则B角建议。请只做三件事:\n"
+        "输入是一轮因子挖掘迭代的诊断统计与规则B角建议。请做四件事:\n"
         "(1) 用一句话点出本轮最核心的病根;\n"
         "(2) 逐条点评规则B角建议是否对症, 指出可能无效或互相冲突的点;\n"
-        "(3) 给出你自己对下代 mix(变异/交叉/扰动/引导/随机)/depth/min_stab/decorr 的取值与一句话理由。\n"
-        "硬性要求: 中文, 全文≤260字, 用(1)(2)(3)分条, 禁止markdown表格/管道符/代码块。")
+        "(3) 给出你自己对下代 mix(变异/交叉/扰动/引导/随机)/depth/min_stab/decorr 的取值与一句话理由;\n"
+        "(4) **否决**: 上面「本代实际施加的规则动作」里, 你认为**下代应当停掉**的, 用反引号里的 ID 列出。\n"
+        "硬性要求: 中文, 正文≤260字, 用(1)(2)(3)分条, 禁止markdown表格/管道符;\n"
+        "**最后一行必须且只能是** `否决: <ID列表或 无>`（ID 之间用英文逗号分隔, 例 `否决: r5_calmar_cross`；"
+        "若认为都该保留则写 `否决: 无`）。这一行是**机器读取**的, 请勿改写格式。")
     import time
     try:
         t0 = time.time()
@@ -355,13 +633,20 @@ def ai_review(diag, l1, l2, gen, journal_path, reasons=None, sug=None, force=Fal
         cost = time.time() - t0
     except Exception as e:
         print(f"[AI审查] DeepSeek 调用失败({type(e).__name__}: {e}) -> 跳过, 沿用规则B角")
-        return 'err'
+        return {'status': 'err', 'veto': [], 'text': ''}
+    veto = parse_veto(resp)
     block = (f"\n**AI 审查(DeepSeek {_DEEPSEEK_MODEL}, {cost:.0f}s)**:\n\n"
              + '\n'.join('> ' + x for x in resp.splitlines()) + '\n')
+    if veto:
+        # ★ 否决必须**显式留痕**：这是"规则负责稳定、LLM 负责纠偏"的可审计接口
+        block += ("\n**⚖️ 规则动作否决（机器读取）**: " +
+                  ', '.join('`%s`（%s）' % (a, RULE_NAMES.get(a, '?')) for a in veto) + '\n')
     os.makedirs(os.path.dirname(journal_path), exist_ok=True)
     with open(journal_path, 'a', encoding='utf-8') as f:
         f.write(block)
     preview = resp.replace('\n', ' ')[:220]
-    print(f"[AI审查] DeepSeek 审查完成({cost:.0f}s), 已写入 {journal_path}\n"
-          f"  {preview}...")
-    return 'ok'
+    print(f"[AI审查] DeepSeek 审查完成({cost:.0f}s), 已写入 {journal_path}")
+    if veto:
+        print(f"  [否决] 下代将跳过: {', '.join(veto)}")
+    print(f"  {preview}...")
+    return {'status': 'ok', 'veto': veto, 'text': resp}

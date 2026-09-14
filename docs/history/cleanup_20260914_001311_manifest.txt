@@ -1,0 +1,347 @@
+# cleanup_repo.py 执行清单  20260914_001311
+# 删除（不可恢复）
+DEL	ai_test/_bank_fac/bank08.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank10.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank11.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank16.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank17.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank18.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank19.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank20.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank21.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank22.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank23.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank24.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank27.pkl	142627808	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank01.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank02.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank03.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank04.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank05.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank06.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank07.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank09.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank12.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank13.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank14.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank15.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank25.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank26.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank28.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/_bank_fac/bank29.pkl	142627806	§8.13 一次性诊断导出（29 个 / ~3.9GB）。**保留 bank00** 作 QA 夹具；需要用 `ai_test/export_bank.py` 重建
+DEL	ai_test/F17_fac.pkl	71365184	单因子面板导出（9 个 / ~610MB）。**无代码引用**（只在结果报告 txt 里出现）；`combo_build.py` 是从 state 的 bank **重算**面板，不依赖它
+DEL	ai_test/F20_fac.pkl	71365184	单因子面板导出（9 个 / ~610MB）。**无代码引用**（只在结果报告 txt 里出现）；`combo_build.py` 是从 state 的 bank **重算**面板，不依赖它
+DEL	ai_test/F24_fac.pkl	71365184	单因子面板导出（9 个 / ~610MB）。**无代码引用**（只在结果报告 txt 里出现）；`combo_build.py` 是从 state 的 bank **重算**面板，不依赖它
+DEL	ai_test/F25_fac.pkl	71365184	单因子面板导出（9 个 / ~610MB）。**无代码引用**（只在结果报告 txt 里出现）；`combo_build.py` 是从 state 的 bank **重算**面板，不依赖它
+DEL	ai_test/F28_fac.pkl	71365184	单因子面板导出（9 个 / ~610MB）。**无代码引用**（只在结果报告 txt 里出现）；`combo_build.py` 是从 state 的 bank **重算**面板，不依赖它
+DEL	ai_test/F26_fac.pkl	71365182	单因子面板导出（9 个 / ~610MB）。**无代码引用**（只在结果报告 txt 里出现）；`combo_build.py` 是从 state 的 bank **重算**面板，不依赖它
+DEL	ai_test/F27_fac.pkl	71365182	单因子面板导出（9 个 / ~610MB）。**无代码引用**（只在结果报告 txt 里出现）；`combo_build.py` 是从 state 的 bank **重算**面板，不依赖它
+DEL	ai_test/F29_fac.pkl	71365182	单因子面板导出（9 个 / ~610MB）。**无代码引用**（只在结果报告 txt 里出现）；`combo_build.py` 是从 state 的 bank **重算**面板，不依赖它
+DEL	ai_test/F30_fac.pkl	71365182	单因子面板导出（9 个 / ~610MB）。**无代码引用**（只在结果报告 txt 里出现）；`combo_build.py` 是从 state 的 bank **重算**面板，不依赖它
+DEL	ai_test/_combo_all_raw_A.pkl	71365182	合成 raw 版（含市值倾斜，非生产口径）。生产用 `_combo_all_neu_*`
+DEL	ai_test/_combo_all_raw_B.pkl	71365182	合成 raw 版（含市值倾斜，非生产口径）。生产用 `_combo_all_neu_*`
+DEL	ai_test/_combo_all_raw_C.pkl	71365182	合成 raw 版（含市值倾斜，非生产口径）。生产用 `_combo_all_neu_*`
+DEL	standard/real_F30_20260911_1925_04_20180101_20260819_report.png	283674	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F27_pS_20260911_1907_43_20180101_20260819_report.png	280196	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank18_20260912_1453_24_20180101_20260819_report.png	279828	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank24_20260912_1458_17_20180101_20260819_report.png	279467	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank04_20260912_1439_55_20180101_20260819_report.png	279029	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F28_20260911_1720_33_20180101_20260819_report.png	277475	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/comboB_neu_f5_20260913_1743_08_20180101_20260819_report.png	277355	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank13_20260912_1447_38_20180101_20260819_report.png	276877	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/comboB_f5_20260913_1746_03_20180101_20260819_report.png	276496	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F30_20260911_1722_10_20180101_20260819_report.png	276390	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank22_20260912_1456_35_20180101_20260819_report.png	276290	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/live_F29_20260911_1933_13_20180101_20260819_report.png	275498	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/real_F28_20260911_1923_25_20180101_20260819_report.png	275360	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank29_20260912_1502_17_20180101_20260819_report.png	275211	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank05_20260912_1440_42_20180101_20260819_report.png	275076	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F27_20260911_1719_45_20180101_20260819_report.png	273605	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/live_F30_20260911_1934_02_20180101_20260819_report.png	273322	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank27_20260912_1500_40_20180101_20260819_report.png	272970	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank08_20260912_1443_00_20180101_20260819_report.png	272758	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/chkB_live_20260911_2049_00_20180101_20260819_report.png	272411	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F25_20260911_1716_55_20180101_20260819_report.png	272213	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F25_20260911_1718_07_20180101_20260819_report.png	272194	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank19_20260912_1454_12_20180101_20260819_report.png	271826	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/real_F29_20260911_1924_15_20180101_20260819_report.png	271801	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F25_20260911_1715_54_20180101_20260819_report.png	271666	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F29_20260911_1721_21_20180101_20260819_report.png	271628	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/live_F26_20260911_1930_45_20180101_20260819_report.png	271392	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank21_20260912_1455_49_20180101_20260819_report.png	271345	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank12_20260912_1420_47_20180101_20260819_report.png	271255	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/live_F25_20260911_1929_57_20180101_20260819_report.png	271141	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F26_final_check_20260911_1909_03_20180101_20260819_report.png	270871	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F20_20260910_2057_19_20180101_20260819_report.png	270753	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/live_F28_20260911_1932_24_20180101_20260819_report.png	270688	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank01_20260912_1421_38_20180101_20260819_report.png	269929	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F26_poolA_20260911_1859_41_20180101_20260819_report.png	269798	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/live_F27_20260911_1931_35_20180101_20260819_report.png	269688	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank20_20260912_1455_02_20180101_20260819_report.png	269578	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank25_20260912_1459_07_20180101_20260819_report.png	269038	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/real_F25_20260911_1920_40_20180101_20260819_report.png	269029	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F26_pA_20260911_1900_52_20180101_20260819_report.png	268877	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank15_20260912_1450_40_20180101_20260819_report.png	268824	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F26_pA_20260911_1903_17_20180101_20260819_report.png	268788	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F26_20260911_1718_55_20180101_20260819_report.png	268361	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank07_20260912_1442_17_20180101_20260819_report.png	268275	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank14_20260912_1449_19_20180101_20260819_report.png	267845	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/chkA_default_20260911_2049_00_20180101_20260819_report.png	267100	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank28_20260912_1501_27_20180101_20260819_report.png	267072	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F25_pS_20260911_1906_46_20180101_20260819_report.png	267071	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F28_c7_20260911_1915_24_20180101_20260819_report.png	266961	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F20_20260911_1727_07_20180101_20260819_report.png	266947	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F17_20260911_1727_07_20180101_20260819_report.png	266893	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/real_F27_20260911_1922_34_20180101_20260819_report.png	266846	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank16_20260912_1451_44_20180101_20260819_report.png	266263	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank03_20260912_1439_07_20180101_20260819_report.png	266134	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank26_20260912_1459_55_20180101_20260819_report.png	265626	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F26_c7_20260911_1914_25_20180101_20260819_report.png	265297	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank10_20260912_1419_59_20180101_20260819_report.png	265122	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/real_F26_20260911_1921_36_20180101_20260819_report.png	264902	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F17_20260910_2055_14_20180101_20260819_report.png	264837	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank17_20260912_1452_36_20180101_20260819_report.png	263986	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank06_20260912_1441_30_20180101_20260819_report.png	263586	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank02_20260912_1422_28_20180101_20260819_report.png	261101	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank09_20260912_1443_49_20180101_20260819_report.png	260911	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank00_20260913_1308_54_20180101_20260819_report.png	260069	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank00_20260912_1438_18_20180101_20260819_report.png	259995	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank23_20260912_1457_24_20180101_20260819_report.png	258983	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F26_pS_20260911_1905_45_20180101_20260819_report.png	258471	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/comboB_neu_20260913_1734_00_20180101_20260819_report.png	258002	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F24_20260910_2056_20_20180101_20260819_report.png	257429	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/F26_pB_20260911_1904_23_20180101_20260819_report.png	253173	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	standard/bank11_20260912_1445_45_20180101_20260819_report.png	242687	回测图 —— **用户 2026-09-14 明确要求删**
+DEL	ai_test/_cicc_loop.txt	24569	中金规格临时转存（内容已在 roadmap）
+DEL	ai_test/_gen71_poolobs.log	17085	单次池观测日志
+DEL	ai_test/chk_pit2_out.txt	14816	探针输出
+DEL	ai_test/_measure73.log	13009	一次性测量日志
+DEL	ai_test/_smoke_poolgate.log	12653	冒烟测试日志
+DEL	ai_test/loop_finalize.txt	11814	一次性收尾输出
+DEL	ai_test/_measure72.log	11529	一次性测量日志
+DEL	ai_test/_measure273.log	11422	一次性测量日志
+DEL	ai_test/_combo_all2.log	11328	合成构建过程的日志
+DEL	ai_test/_combo_all.log	11204	合成构建过程的日志
+DEL	ai_test/_measure272.log	10444	一次性测量日志
+DEL	ai_test/_measure271.log	9938	一次性测量日志
+DEL	ai_test/_measure71.log	9874	一次性测量日志
+DEL	ai_test/_st22.log	9532	standard_test 批量跑日志
+DEL	ai_test/_st13.log	9528	standard_test 批量跑日志
+DEL	ai_test/_st16.log	9526	standard_test 批量跑日志
+DEL	ai_test/_st18.log	9526	standard_test 批量跑日志
+DEL	ai_test/_st23.log	9480	standard_test 批量跑日志
+DEL	ai_test/_st12.log	9474	standard_test 批量跑日志
+DEL	ai_test/_st08.log	9472	standard_test 批量跑日志
+DEL	ai_test/_st10.log	9472	standard_test 批量跑日志
+DEL	ai_test/_st09.log	9470	standard_test 批量跑日志
+DEL	ai_test/_st25.log	9470	standard_test 批量跑日志
+DEL	ai_test/_st00.log	9466	standard_test 批量跑日志
+DEL	ai_test/_st06.log	9466	standard_test 批量跑日志
+DEL	ai_test/_st21.log	9466	standard_test 批量跑日志
+DEL	ai_test/_st27.log	9466	standard_test 批量跑日志
+DEL	ai_test/_st11.log	9464	standard_test 批量跑日志
+DEL	ai_test/_st28.log	9464	standard_test 批量跑日志
+DEL	ai_test/_st03.log	9462	standard_test 批量跑日志
+DEL	ai_test/_st20.log	9462	standard_test 批量跑日志
+DEL	ai_test/_st26.log	9462	standard_test 批量跑日志
+DEL	ai_test/_st01.log	9460	standard_test 批量跑日志
+DEL	ai_test/_st02.log	9458	standard_test 批量跑日志
+DEL	ai_test/_st04.log	9458	standard_test 批量跑日志
+DEL	ai_test/_st07.log	9458	standard_test 批量跑日志
+DEL	ai_test/_st17.log	9458	standard_test 批量跑日志
+DEL	ai_test/_st24.log	9458	standard_test 批量跑日志
+DEL	ai_test/_st29.log	9458	standard_test 批量跑日志
+DEL	ai_test/_st15.log	9456	standard_test 批量跑日志
+DEL	ai_test/_st05.log	9454	standard_test 批量跑日志
+DEL	ai_test/_st14.log	9454	standard_test 批量跑日志
+DEL	ai_test/_st19.log	9454	standard_test 批量跑日志
+DEL	ai_test/_smoke_pool.log	8741	冒烟测试日志
+DEL	ai_test/_smoke_strip.log	8285	冒烟测试日志
+DEL	ai_test/_smoke50.log	7209	冒烟测试日志
+DEL	ai_test/_combo_neu.log	5010	合成构建过程的日志
+DEL	ai_test/_combo_build.log	4931	合成构建过程的日志
+DEL	standard/bank00_20260913_1308_54_20180101_20260819_report.txt	4454	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/comboB_neu_f5_20260913_1743_08_20180101_20260819_report.txt	4440	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/comboB_neu_20260913_1734_00_20180101_20260819_report.txt	4439	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/comboB_f5_20260913_1746_03_20180101_20260819_report.txt	4436	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/live_F26_20260911_1930_45_20180101_20260819_report.txt	4331	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/live_F28_20260911_1932_24_20180101_20260819_report.txt	4329	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/real_F26_20260911_1921_36_20180101_20260819_report.txt	4329	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/live_F29_20260911_1933_13_20180101_20260819_report.txt	4327	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/live_F30_20260911_1934_02_20180101_20260819_report.txt	4327	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/real_F27_20260911_1922_34_20180101_20260819_report.txt	4327	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F26_20260911_1718_55_20180101_20260819_report.txt	4326	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/live_F27_20260911_1931_35_20180101_20260819_report.txt	4325	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/real_F30_20260911_1925_04_20180101_20260819_report.txt	4325	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F28_20260911_1720_33_20180101_20260819_report.txt	4324	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/live_F25_20260911_1929_57_20180101_20260819_report.txt	4323	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/real_F28_20260911_1923_25_20180101_20260819_report.txt	4323	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/real_F29_20260911_1924_15_20180101_20260819_report.txt	4323	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F29_20260911_1721_21_20180101_20260819_report.txt	4322	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F30_20260911_1722_10_20180101_20260819_report.txt	4322	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F27_20260911_1719_45_20180101_20260819_report.txt	4321	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/real_F25_20260911_1920_40_20180101_20260819_report.txt	4321	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F25_20260911_1715_54_20180101_20260819_report.txt	4320	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F25_20260911_1716_55_20180101_20260819_report.txt	4318	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F25_20260911_1718_07_20180101_20260819_report.txt	4318	standard_test 回测报告 —— **用户明确要求删**
+DEL	ai_test/_smoke_sn.log	3836	冒烟测试日志
+DEL	standard/F17_20260910_2055_14_20180101_20260819_report.txt	3717	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank18_20260912_1453_24_20180101_20260819_report.txt	3689	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank16_20260912_1451_44_20180101_20260819_report.txt	3688	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank22_20260912_1456_35_20180101_20260819_report.txt	3688	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank13_20260912_1447_38_20180101_20260819_report.txt	3685	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F26_final_check_20260911_1909_03_20180101_20260819_report.txt	3674	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F24_20260910_2056_20_20180101_20260819_report.txt	3668	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F26_poolA_20260911_1859_41_20180101_20260819_report.txt	3668	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F26_pA_20260911_1900_52_20180101_20260819_report.txt	3665	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F26_pA_20260911_1903_17_20180101_20260819_report.txt	3665	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F26_c7_20260911_1914_25_20180101_20260819_report.txt	3664	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F26_pS_20260911_1905_45_20180101_20260819_report.txt	3663	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F28_c7_20260911_1915_24_20180101_20260819_report.txt	3663	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F25_pS_20260911_1906_46_20180101_20260819_report.txt	3662	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F26_pB_20260911_1904_23_20180101_20260819_report.txt	3661	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F20_20260910_2057_19_20180101_20260819_report.txt	3656	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F27_pS_20260911_1907_43_20180101_20260819_report.txt	3655	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F17_20260911_1727_07_20180101_20260819_report.txt	3653	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/F20_20260911_1727_07_20180101_20260819_report.txt	3653	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/chkB_live_20260911_2049_00_20180101_20260819_report.txt	3652	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/chkA_default_20260911_2049_00_20180101_20260819_report.txt	3642	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank23_20260912_1457_24_20180101_20260819_report.txt	3639	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank12_20260912_1420_47_20180101_20260819_report.txt	3637	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank08_20260912_1443_00_20180101_20260819_report.txt	3636	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank09_20260912_1443_49_20180101_20260819_report.txt	3635	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank10_20260912_1419_59_20180101_20260819_report.txt	3635	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank00_20260912_1438_18_20180101_20260819_report.txt	3634	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank03_20260912_1439_07_20180101_20260819_report.txt	3634	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank21_20260912_1455_49_20180101_20260819_report.txt	3634	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank27_20260912_1500_40_20180101_20260819_report.txt	3634	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank25_20260912_1459_07_20180101_20260819_report.txt	3633	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank28_20260912_1501_27_20180101_20260819_report.txt	3633	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank01_20260912_1421_38_20180101_20260819_report.txt	3632	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank02_20260912_1422_28_20180101_20260819_report.txt	3632	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank15_20260912_1450_40_20180101_20260819_report.txt	3632	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank20_20260912_1455_02_20180101_20260819_report.txt	3632	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank26_20260912_1459_55_20180101_20260819_report.txt	3632	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank04_20260912_1439_55_20180101_20260819_report.txt	3631	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank11_20260912_1445_45_20180101_20260819_report.txt	3631	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank14_20260912_1449_19_20180101_20260819_report.txt	3631	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank29_20260912_1502_17_20180101_20260819_report.txt	3631	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank06_20260912_1441_30_20180101_20260819_report.txt	3630	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank07_20260912_1442_17_20180101_20260819_report.txt	3629	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank17_20260912_1452_36_20180101_20260819_report.txt	3629	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank24_20260912_1458_17_20180101_20260819_report.txt	3628	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank05_20260912_1440_42_20180101_20260819_report.txt	3627	standard_test 回测报告 —— **用户明确要求删**
+DEL	standard/bank19_20260912_1454_12_20180101_20260819_report.txt	3627	standard_test 回测报告 —— **用户明确要求删**
+DEL	ai_test/_combo_check.log	2013	合成构建过程的日志
+DEL	ai_test/_measure271_err.log	0	一次性测量日志
+DEL	ai_test/_measure272_err.log	0	一次性测量日志
+DEL	ai_test/_measure273_err.log	0	一次性测量日志
+DEL	ai_test/_measure71_err.log	0	一次性测量日志
+DEL	ai_test/_measure72_err.log	0	一次性测量日志
+DEL	ai_test/_measure73_err.log	0	一次性测量日志
+DEL	ai_test/_smoke50_err.log	0	冒烟测试日志
+DEL	ai_test/_smoke_poolgate_err.log	0	冒烟测试日志
+DEL	ai_test/_smoke_pool_err.log	0	冒烟测试日志
+DEL	ai_test/_smoke_sn_err.log	0	冒烟测试日志
+DEL	ai_test/_smoke_strip_err.log	0	冒烟测试日志
+DEL	ai_test/_combo_all2_err.log	0	合成构建过程的日志
+DEL	ai_test/_combo_all_err.log	0	合成构建过程的日志
+DEL	ai_test/_combo_build_err.log	0	合成构建过程的日志
+DEL	ai_test/_combo_check_err.log	0	合成构建过程的日志
+DEL	ai_test/_combo_neu_err.log	0	合成构建过程的日志
+# 归档（移动到 docs/history/cleanup_20260914_001311/）
+ARC	ai_test/_state_bak_20260912c/loop_state.pkl	1397111	过期的 state 备份目录
+ARC	ai_test/_state_prev_bankfix.pkl	1397111	09-12 的 state 备份
+ARC	ai_test/_state_bak_20260911/loop_state.pkl	1386134	过期的 state 备份目录
+ARC	ai_test/_state_bak_20260912b/loop_state.pkl	1386134	过期的 state 备份目录
+ARC	ai_test/_obs_4f.csv	697529	过期的 style_obs 片段（已被 docs/loop_style_obs*.csv 取代）
+ARC	ai_test/_obs_3gen.csv	604825	过期的 style_obs 片段（已被 docs/loop_style_obs*.csv 取代）
+ARC	ai_test/_obs_3gen_archive.csv	604825	过期的 style_obs 片段（已被 docs/loop_style_obs*.csv 取代）
+ARC	ai_test/_state_bak_20260912c/loop_archive.csv	504195	过期的 state 备份目录
+ARC	ai_test/_state_bak_20260911/loop_archive.csv	494880	过期的 state 备份目录
+ARC	ai_test/_state_bak_20260912b/loop_archive.csv	494880	过期的 state 备份目录
+ARC	ai_test/_obs_2gen.csv	410091	过期的 style_obs 片段（已被 docs/loop_style_obs*.csv 取代）
+ARC	ai_test/l1_shape_calib.csv	340996	过期的 L1 形状标定
+ARC	ai_test/_obs_gen71.csv	208309	过期的 style_obs 片段（已被 docs/loop_style_obs*.csv 取代）
+ARC	ai_test/_state_bak_20260912c/loop_journal.md	206760	过期的 state 备份目录
+ARC	ai_test/_state_bak_20260911/loop_journal.md	203013	过期的 state 备份目录
+ARC	ai_test/_state_bak_20260912b/loop_journal.md	203013	过期的 state 备份目录
+ARC	docs/history/loop_pool_obs_300.csv.bak_20260913_130734	76628	备份文件统一进 history/
+ARC	docs/history/loop_archive_300.csv.bak_20260913_234028	65205	备份文件统一进 history/
+ARC	docs/history/loop_pool_obs_500.csv.bak_20260913_130734	59003	备份文件统一进 history/
+ARC	docs/history/loop_archive_500.csv.bak_20260913_234028	57110	备份文件统一进 history/
+ARC	docs/factor_library.md.bak_20260913_192313	36827	备份文件统一进 history/
+ARC	ai_test/loop_conv/gen37C_conv.md	32898	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen68C_conv.md	32408	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	docs/history/loop_todo.md.bak_20260914_000509	32292	备份文件统一进 history/
+ARC	docs/factor_library.md.bak_20260913_192030	32107	备份文件统一进 history/
+ARC	ai_test/loop_conv/gen51C_conv.md	32014	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen39C_conv.md	31861	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen27C_conv.md	31815	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen40C_conv.md	31776	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen73C_conv.md	31694	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen59C_conv.md	31655	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen36C_conv.md	31568	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen60C_conv.md	31535	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen72C_conv.md	31398	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen62C_conv.md	31373	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen56C_conv.md	31275	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen70C_conv.md	31259	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen64C_conv.md	31251	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen52C_conv.md	31218	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen65C_conv.md	31165	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen66C_conv.md	31141	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen53C_conv.md	31006	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen38C_conv.md	30876	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen49C_conv.md	30850	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen55C_conv.md	30805	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen54C_conv.md	30727	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen67C_conv.md	30695	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen31C_conv.md	30669	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen35C_conv.md	30636	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen74C_conv.md	30611	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen47C_conv.md	30563	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen34C_conv.md	30538	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen71C_conv.md	30407	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen08C_conv.md	30354	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen32C_conv.md	30325	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen69C_conv.md	30319	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen43C_conv.md	30201	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen61C_conv.md	30158	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen06C_conv.md	30136	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen46C_conv.md	30123	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen33C_conv.md	30086	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen75C_conv.md	30084	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen05C_conv.md	30083	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen50C_conv.md	30075	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen63C_conv.md	30009	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen26C_conv.md	30008	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen48C_conv.md	30003	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen24C_conv.md	29742	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen07C_conv.md	29627	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen30C_conv.md	29597	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen02C_conv.md	29507	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen28C_conv.md	29456	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen01C_conv.md	29218	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen29C_conv.md	28983	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen23C_conv.md	28975	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen45C_conv.md	28837	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen58C_conv.md	28794	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen25C_conv.md	28747	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen44C_conv.md	28723	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen04C_conv.md	28713	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen41C_conv.md	28482	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen42C_conv.md	27356	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/_state_bak_20260912c/factor_library.md	26195	过期的 state 备份目录
+ARC	ai_test/loop_conv/gen57C_conv.md	25818	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/_state_bak_20260911/factor_library.md	24501	过期的 state 备份目录
+ARC	ai_test/_state_bak_20260912b/factor_library.md	24501	过期的 state 备份目录
+ARC	ai_test/loop_conv/gen21C_conv.md	23600	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen20C_conv.md	23094	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen19C_conv.md	22857	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen17C_conv.md	22728	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen22C_conv.md	22726	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen18C_conv.md	22672	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen16C_conv.md	22377	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/loop_conv/gen03C_conv.md	18404	LLM 对话录音（引擎每代写 genNN_conv.md，68 个）。过期但**留证有价值**
+ARC	ai_test/diag_pool_ext.csv	9809	过期诊断产物

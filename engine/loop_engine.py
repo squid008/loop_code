@@ -21,6 +21,7 @@
 import os
 import re
 import sys
+import io
 import gc
 import json
 import time
@@ -219,6 +220,111 @@ def base_fields():
     B_sub = {k: v[np.ix_(L1_ROWS, L1_COLS)] for k, v in B.items()}
     _BASE = dict(B=B, B_sub=B_sub, dates=dates, cols=cols, close=close)
     return _BASE
+
+
+def append_csv_schema_safe(path, df=None, new_cols=None):
+    """**Schema-aware** 追加写 CSV；发现 schema 变化就重写整文件（旧行对齐到新 schema）。
+
+    为什么必须这样（2026-09-13 实录, roadmap §8.30）：
+      原先各处的写法是 `_need_h = 文件不存在或为空` + `to_csv(mode='a', header=_need_h)`，
+      即**默认 schema 永远不变**。而 2026-09-13 我给 `--pool_obs` 加了 5 列
+      （ann_ex_cw/calmar_cw/dd_cw/sharpe_cw/tilt）⇒ 文件变成「**表头 10 列 + 旧行 10 列 +
+      新行 15 列**」⇒ `pd.read_csv` 直接报
+        `ParserError: Expected 10 fields in line 222, saw 15`
+      ⇒ **所有下游报告全崩**，而且崩在**离线脚本**里，引擎自己毫无察觉（静默数据损坏）。
+      ★ 本项目其实早就知道这个坑（见 `STYLE_OBS`/`STRIP_OBS` 的注释「追加模式下加列会让历史行
+        错位」），解法一直是"**另开一个文件**"。那次我改的正是**已有文件** ⇒ 违反了这条规则。
+      ⇒ 根治：写入端**必须与当前 schema 对账**；不一致就重写（这些文件只有几百~几万行，成本可忽略）。
+        并且**尽量救回已有数据** —— 混合宽度时按行宽判断该行属于旧头还是新 schema。
+
+    df=None 时 = **只修复**（用 new_cols 对账现有文件）。
+    返回 (状态字符串, 修复/写入的行数)。
+    """
+    import csv
+    if new_cols is None:
+        new_cols = list(df.columns) if df is not None else None
+    if not new_cols:
+        return ('skip: 无列信息', 0)
+
+    if (not os.path.exists(path)) or os.path.getsize(path) == 0:
+        if df is None:
+            return ('absent', 0)
+        df.to_csv(path, index=False, header=True, encoding='utf-8-sig')
+        return ('created', len(df))
+
+    with io.open(path, encoding='utf-8-sig', newline='') as fh:
+        rr = [r for r in csv.reader(fh) if r]
+    if not rr:
+        if df is None:
+            return ('empty', 0)
+        df.to_csv(path, index=False, header=True, encoding='utf-8-sig')
+        return ('created', len(df))
+    hdr, body = rr[0], rr[1:]
+
+    if hdr == list(new_cols):                       # schema 一致 -> 直接追加
+        if df is None:
+            return ('ok(无需修复)', 0)
+        df.to_csv(path, index=False, mode='a', header=False, encoding='utf-8-sig')
+        return ('appended', len(df))
+
+    # ---- schema 变了(或文件已混合宽度) -> 重写 ----
+    # 救数据: 行宽 == 旧表头列数 -> 按旧头对齐; 行宽 == 新 schema 列数 -> 按新 schema 对齐
+    rows, dropped = [], 0
+    for parts in body:
+        if len(parts) == len(hdr):
+            d = dict(zip(hdr, parts))
+        elif len(parts) == len(new_cols):
+            d = dict(zip(new_cols, parts))
+        else:
+            dropped += 1
+            continue
+        rows.append({c: d.get(c, '') for c in new_cols})
+    old = pd.DataFrame(rows, columns=list(new_cols))
+    out = pd.concat([old, df], ignore_index=True) if df is not None else old
+    out.to_csv(path, index=False, header=True, encoding='utf-8-sig')
+    msg = (f'rewritten(旧{len(old)}行{"+新" + str(len(df)) + "行" if df is not None else ""}'
+           f'{"，丢弃" + str(dropped) + "行无法识别" if dropped else ""})')
+    return (msg, len(out))
+
+
+def ex_max_corr(ex_new, bank_ex, min_overlap=30):
+    """新因子的**费后超额序列** vs 库内全部收益流的**最大 |Spearman 相关|**。
+
+    为什么用"收益流"而不是"表达式/因子值"做去重（2026-09-13, roadmap §8.33 实测）：
+      · 库内 30 个入库因子的**组合收益序列两两相关中位 0.967**（max 0.994）——
+        **它们是同一块钱的不同写法**；等权合成的 Calmar(0.978) 还**低于**最好的单因子(1.146)
+        ⇒ 合成无效 ⇒ 库里其实只有"一个因子"。
+      · 同时结构层面**极其多样**（`ai_test/analyze_diversity.py`：全A 1439 条候选里
+        结构骨架 1181 个唯一、Top5 仅占 1.9%）⇒ **表达式去重挡不住"同一块钱"**。
+      ⇒ ⇒ 所以"重复"必须**按收益流判**：换叶子/换窗口/换外壳赚同一块钱的，应当归为同族。
+
+    返回 (max|corr|, 命中的库内表达式)；无从判定返回 (None, None)。
+    口径: 只取两条序列**共同日期**上的有限值对；重叠期数 < min_overlap 则跳过(不当成重复)。
+    """
+    if ex_new is None or not bank_ex:
+        return None, None
+    try:
+        en = pd.Series(ex_new).astype('float64')
+    except Exception:
+        return None, None
+    if len(en) < min_overlap:
+        return None, None
+    best, who = 0.0, None
+    for k, ex_old in bank_ex.items():
+        try:
+            eo = pd.Series(ex_old).astype('float64')
+            a, b = en.align(eo, join='inner')
+            m = np.isfinite(a.values) & np.isfinite(b.values)
+            if int(m.sum()) < min_overlap:
+                continue
+            # 用两个"新建的 Series"(默认 RangeIndex)对齐后算 Spearman, 避免索引不一致
+            c = abs(float(pd.Series(a.values[m]).corr(pd.Series(b.values[m]),
+                                                      method='spearman')))
+            if np.isfinite(c) and c > best:
+                best, who = c, k
+        except Exception:
+            continue
+    return (best if who is not None else None), who
 
 
 def style_features(B):
@@ -541,15 +647,124 @@ def fam_quota_rows(rows, quota=FAM_QUOTA, use_sole=True):
     return pd.DataFrame(keep), len(cnt), n_block
 
 
-def _lib_sync(gen, res, n_total, added_exprs, expr2nd):
+def _tag_desc(tag):
+    """池标签的中文含义（转发到单一事实源 loop_pools.tag_desc）。"""
+    import loop_pools as _lp
+    return _lp.tag_desc(tag)
+
+
+def _gate_of(args):
+    """从命令行参数提取**实际生效的判定门槛**（供 `loop_critic.diagnose` 对账）。
+
+    ★★★ 为什么必须有这个函数（2026-09-14，`docs/loop_todo.md` §1.1 问题②）：
+
+      `loop_critic.py:94` 曾写死 `fail_calmar = (fail['calmar'] <= 0.5).mean()` ——
+      **硬编码 0.5 且取全A 口径**；而**池内模式**的判定用的是**池口径**
+      （`任一池 Calmar > --min_pool_calmar`）⇒ **传感器测的不是真正卡住候选的那道门**
+      ⇒ 实测 `1000 gen1` 报 `fail_calmar=1.000`，而同代**确有 2 个候选 Calmar 0.661/0.561 入库**
+      （指标自相矛盾），且 **96/96 代**都触发规则5 ⇒ `depth` 被**永久**推到 `[3,4,4]`。
+
+    **单一事实源纪律**：门槛**只从 `args` 读一次**（本函数），引擎自己那份 `_pool_gate_on`
+    也由同一逻辑推出 ⇒ 两侧不会再漂移。改门槛相关的 flag 时，**只改这里**。
+    """
+    _mpc = float(getattr(args, 'min_pool_calmar', -1.0) or -1.0)
+    return dict(min_calmar=float(getattr(args, 'min_calmar', 0.0)),
+                min_sharpe=float(getattr(args, 'min_sharpe', 0.5)),
+                min_pool_calmar=_mpc,
+                pool_gate_on=(_mpc >= 0),          # 默认 -1 = 关; >=0 启用(0 是合法阈值)
+                pool_mode=getattr(args, 'pool_gate_mode', 'any') or 'any',
+                or_all=bool(getattr(args, 'pool_gate_or_all', False)))
+
+
+def _pool_best(pool_rows):
+    """把 `pool_rows`（逐候选 × 逐池的长表）压成 `{expr: 该候选**最好**的池 calmar}`。
+
+    这是 `loop_critic.diagnose` 的**池口径传感器**输入。
+    ★ 为什么取 **max**：池门槛的默认语义是 `any`（**任一池**达标即达标），
+      而诊断要回答的是"**离最近的那条通道差多远**" ⇒ max 正确。
+      （`all` 语义下 max 不足以判定，但那属于"判定"的职责，不是"诊断"的 ——
+       诊断只需指出**有没有一条通道够得着**。）
+    ⚠ 缺数据时返回 `{}`（而不是臆造 0）⇒ `diagnose` 会**不产出** `fail_pool_calmar`
+      （与 strip / 池门槛 / LLM 同一条"缺失即不臆造"的铁律）。
+    """
+    out = {}
+    for r in (pool_rows or []):
+        try:
+            e = str(r['expr'])
+            c = float(r['calmar'])
+        except Exception:
+            continue
+        if not np.isfinite(c):
+            continue
+        if e not in out or c > out[e]:
+            out[e] = c
+    return out
+
+
+def _mk_library_skeleton(fname):
+    """为某个池创建 `factor_library_{pool}.md` 的最小骨架（2026-09-13, roadmap §8.44）。
+
+    为什么必须自动建：per-pool 路径由 `set_mine_pool` 派生，但这三个文件**从未被创建**
+    ⇒ `_lib_sync` 原先遇到不存在就 `return`，把失败**完全吞掉** ⇒ 池轨道入库的因子
+    **一个都没进文档**（实测 1000 池 2 代 3 个因子、300 池 1 个因子全丢）。
+
+    ⚠ 骨架**必须含三个锚点**，否则 `_lib_sync` 的插入逻辑不成立（会再次静默出错）：
+      ① `> 当前 **N 个入库**`  —— 供其 `re.sub` 更新计数
+      ② `## 因子明细`          —— 明细小节插在它之前
+      ③ `## 相关文件导航`      —— 明细插在它之前
+    """
+    tag = 'all'
+    m = re.search(r'factor_library_(.+)\.md$', fname)
+    if m:
+        tag = m.group(1)
+    sfx = '' if tag == 'all' else '_' + tag
+    txt = (
+        '# 因子库（池 = {t}）\n\n'
+        '> 当前 **0 个入库**\n'
+        '> 本文件由引擎在**每代末尾自动同步**（`--mine_pool={t}` 时生效；实现见 `_lib_sync`）。\n'
+        '> ⚠ 与全A 轨道的 `docs/factor_library.md` **互不读写**（池隔离，见 roadmap §8.42）。\n\n'
+        '---\n\n'
+        '## 因子总览\n\n'
+        '| 编号 | 入库代数 | 家族 | 一句话 | 状态 |\n'
+        '|---|---|---|---|---|\n\n'
+        '## 因子明细\n\n'
+        '## 相关文件导航\n\n'
+        '| 文件 | 内容 |\n|---|---|\n'
+        '| `docs/factor_library{s}.md`（本文件） | 池 **{t}** 的入库因子（只增不改） |\n'
+        '| `docs/factor_library.md` | 全A 轨道的入库因子 |\n'
+        '| **`docs/factor_library_crosspool.md`** | ★ **跨池派生视图**：各池库里**全A 有效**的因子'
+        '去重 + 池标签并集修正（`python ai_test/build_crosspool_view.py` 生成） |\n'
+        '| `docs/loop_journal{s}.md` | 池 **{t}** 的每代诊断 + B角下一代参数 |\n'
+        '| `docs/loop_pool_obs{s}.csv` | 池 **{t}** 候选的**三池池内指标**宽表 |\n'
+        '| `docs/loop_archive{s}.csv` | 池 **{t}** 每代 L2 全量候选流水 |\n'
+    ).format(t=tag, s=sfx)
+    io.open(LIBRARY, 'w', encoding='utf-8').write(txt)
+
+
+def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_grades=None):
     """本代新入库因子自动同步追加进 docs/factor_library.md(只增不改历史, 家族命名留待人工精炼)。
     幂等: 编号取文本现有最大 F{nn}+1; 任何失败仅告警, 绝不影响入库主流程。
-    added_exprs: 本代真正 append 进 bank 的 expr 列表; expr2nd: {str(node): node}(模块已有 Node/skeleton)。"""
+    added_exprs: 本代真正 append 进 bank 的 expr 列表; expr2nd: {str(node): node}(模块已有 Node/skeleton)。
+    pool_tags  : ★ 2026-09-13 新增 {expr: pool_tag} —— 用户要"一眼看出这个因子是全A+哪个池好用、
+                 还是只有全A好用"。规则来自 `loop_pools.derive_tag`（单一事实源），
+                 与 `standard/pool_tags.py` 派生出的 `docs/pool_tags.csv` **同一套口径**。
+                 没跑到 `--pool_obs` 时字典为空 -> 该行写"未测(--pool_obs 未开)"，**不写未知标签**。"""
     import re
     import io
     try:
-        if not added_exprs or not os.path.exists(LIBRARY):
+        if not added_exprs:
             return
+        if not os.path.exists(LIBRARY):
+            # ★★ 不再静默跳过（2026-09-13 实录, roadmap §8.44）：
+            #   per-pool 的 LIBRARY 路径是 `set_mine_pool` 派生的（`factor_library_{pool}.md`），
+            #   而这三个文件**从来没被创建过** ⇒ 原先的 `return` 把失败**完全吞掉**
+            #   （不报错、不告警、不留痕）⇒ 实测 `--mine_pool=1000` 连跑 2 代入库 **3 个因子**，
+            #   文档**一个都没写**；300 池入库的那 1 个也从没写进 `factor_library_300.md`。
+            #   ⚠ 这与今天修的 `--pool_obs` 是**同一类坑**：新功能只做了一半（路径派生了、
+            #     文件没人建），而且**失败无声**。⇒ 修法：**自动创建骨架 + 明确打印**。
+            _mk_library_skeleton(os.path.basename(LIBRARY))
+            print(f"  [文档] {os.path.basename(LIBRARY)} 不存在 -> **已自动创建骨架**"
+                  f"（首次同步；此前该池的入库因子从未写进文档）")
         rows = {str(r['expr']): r for _, r in res.iterrows()} if len(res) else {}
         txt = io.open(LIBRARY, encoding='utf-8').read()
         nos = [int(x) for x in re.findall(r'\bF(\d{2})\b', txt)]
@@ -569,14 +784,36 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd):
                       r['calmar'], r['sharpe'], r['last_yr'] * 100, r['turn'] * 100,
                       int(r['neg_yr'])))
             skel = skeleton(nd) if nd is not None else '?'
+            _tg = (pool_tags or {}).get(expr)
+            _tg_line = ('- 池标签：**`%s`** —— %s\n' % (_tg, _tag_desc(_tg))
+                        if _tg else '- 池标签：未测（本代未开 `--pool_obs`）\n')
+            # ★ 剥风格档（2026-09-14, §1.9）：**并列**于池标签，不替代它。
+            #   为什么要写进文档：实测约一半入库因子是"纯风格"（全A 口径漂亮、剥掉
+            #   lncap+lnamt 后转负），而**下游拿到文档就该一眼看出**，不能靠回头翻 CSV。
+            _sg = (strip_grades or {}).get(expr)
+            if _sg:
+                _sg_k, _sg_txt = _sg[0], _sg[1]
+                _sg_line = ('- 剥风格：**`%s`** %s'
+                            '（原 Calmar %.3f → 剥后 %.3f；超额 %+.1f%% → %+.1f%%）\n'
+                            % (_sg_k, _sg_txt, r['calmar'], _sg[2],
+                               r['ann_ex'] * 100, _sg[3] * 100))
+            else:
+                _sg_line = ('- 剥风格：**未测**（本代未开 `--strip_style`）'
+                            '⇒ ⚠ **不可断言它是独立 alpha**（见 roadmap §8.45 / loop_todo §1.9）\n')
+            # ⚠ **不加表格列**（2026-09-13 实录）：总览表头是**固定 5 列**
+            #   `| 编号 | 入库代数 | 家族 | 一句话 | 状态 |`，而本文件是 append-only、
+            #   表头只写一次 ⇒ 加列会让**历史行全部错位**（与 §8.30 的 CSV 同一个坑）。
+            #   ⇒ 池标签只写进**明细块**（用户正是看那里）。
             tbl_rows.append('| F%02d | gen%d | %s | %s | 已入库(auto) |'
                             % (no, gen, fam, short))
             det_rows.append(
                 '\n### F%02d · gen%d 入库（引擎自动同步，家族命名待人工精炼）\n'
                 '```\n%s\n```\n'
                 '- 家族：%s（auto）\n- 叶子：%s\n- 骨架：`%s`\n'
+                '%s%s'
                 '- 费后指标（full，成本 %s）：%s\n'
-                % (no, gen, expr, fam, leaf_s, skel, cost_label(r['cost']), met))
+                % (no, gen, expr, fam, leaf_s, skel, _tg_line, _sg_line,
+                   cost_label(r['cost']), met))
             no += 1
         if not det_rows:
             return
@@ -592,6 +829,12 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd):
             k = txt.find('\n', i + 2)
             if k >= 0:
                 txt = txt[:k] + '\n' + add_tbl + txt[k:]
+        elif j > 0:
+            # ★ 该池文档还没有任何数据行(刚建的骨架) -> 表行插在 '## 因子明细' 之前
+            #   否则 `rfind('\n| F')` 返回 -1, 总览表**永远不会有数据行**(静默)。
+            #   ⚠ 这里要**补两个换行**：`txt[j:]` 只带一个 `\n`，少一个空白行会让
+            #     `## 因子明细` 被 markdown 当成表格的一部分（渲染错乱）。
+            txt = txt[:j] + '\n' + add_tbl + '\n\n' + txt[j + 1:]
         # 3) 明细小节插在 '## 相关文件导航' 前(原 --- 分节保留, 新条目自带分隔)
         nav = '\n## 相关文件导航'
         p = txt.find(nav)
@@ -600,10 +843,14 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd):
         else:
             txt = txt[:p] + add_det + '\n---\n\n' + txt[p:]
         io.open(LIBRARY, 'w', encoding='utf-8').write(txt)
-        print(f"  [文档] factor_library.md 已自动追加 {len(det_rows)} 条新入库 "
+        # ⚠ 打印**真实文件名**（2026-09-13）：原先硬编码写 `factor_library.md`，
+        #   池轨道跑时也在报 `factor_library.md`，**指到了别的文件** ⇒ 排查时误导。
+        print(f"  [文档] {os.path.basename(LIBRARY)} 已自动追加 {len(det_rows)} 条新入库 "
               f"(F{nos and max(nos)+1 or 1}~F{no-1}, 累计 {n_total})")
     except Exception as e:
-        print(f"  [文档] factor_library.md 自动同步失败(不影响入库): "
+        # ⚠ 失败路径也要报**真实文件名**（2026-09-14 修）：成功路径早已改成 basename，
+        #   失败路径却还硬编码 `factor_library.md` ⇒ 池轨道出错时会**指错文件**（§8.44 的孪生坑）。
+        print(f"  [文档] {os.path.basename(LIBRARY)} 自动同步失败(不影响入库): "
               f"{type(e).__name__}: {e}")
 
 
@@ -909,6 +1156,10 @@ def run(args):
 
     # 载入上一代: 种子 + B角建议
     seeds, fsa, prev_l1, prev_l2, bank = [], {}, None, None, []
+    # ★ 收益流库(2026-09-13, roadmap §8.34): {表达式: 每期费后超额 Series} —— 收益流去重的对照集。
+    #   缺它的旧 state 也能跑(只与"本次运行新入库的"比), 但要立即见效请先跑
+    #   `ai_test/backfill_bank_ex.py` 补齐历史。
+    bank_ex = {}
     frozen = []                # FSA冻结骨架列表(中金: 超15%被禁止复用)
     fail_lib = {}              # 失败模式库(骨架级成败滚动统计, 中金: 生成阶段排除)
     cfg = dict(DEFAULT_CFG)
@@ -919,6 +1170,11 @@ def run(args):
     #   ⇒ 崩在**整代最后一行**(30 分钟计算白做, 且 state 被 0 字节覆盖)。
     #   实录: `--mine_pool=300` 首次全新轨迹即崩(loop_state_300.pkl 被创建为 0 字节)。
     n_tested_prev = 0
+    # ★ 上一代的「池口径」传感器数据（2026-09-14, §1.1 修法②）：代首要**重审上一代**，
+    #   而池结果不在 `last_l2` 里（那是全A 口径的表）⇒ 必须随 state 一起存。
+    #   ⚠ 无 state 时必须能保持为 None（否则 `st` 未绑定 -> UnboundLocalError，
+    #     这正是 §8.23 那个"崩在整代最后一行"的同类坑）。
+    _prev_pool_map = None
     if os.path.exists(STATE):
         with open(STATE, 'rb') as f:
             st = pickle.load(f)
@@ -930,9 +1186,13 @@ def run(args):
         prev_l1 = st.get('last_l1', None)
         prev_l2 = st.get('last_l2', None)
         bank = st.get('bank', [])          # 历代入库因子(node) —— decorr 的对比对象
+        bank_ex = st.get('bank_ex', {})    # ★ 收益流库(§8.34): {表达式: 每期费后超额 Series}
+        if not isinstance(bank_ex, dict):
+            bank_ex = {}
         frozen = st.get('frozen', [])
         fail_lib = st.get('fail_lib', {})  # 失败模式库
         cfg = st.get('cfg', cfg)
+        _prev_pool_map = st.get('last_pool_map', None)
         print(f"载入上一代种子 {len(seeds)} 个, 入库因子 {len(bank)} 个, "
               f"冻结骨架 {len(frozen)} 个, 失败库 {len(fail_lib)} 条, "
               f"已测 {st.get('n_tested', 0)} 个候选")
@@ -940,7 +1200,10 @@ def run(args):
     # ---- B角: 先审查上一代, 再据此定本代搜索策略 ----
     import loop_critic as critic
     if prev_l1 is not None and len(prev_l1):
-        diag = critic.diagnose(prev_l1, prev_l2, args.gen - 1)
+        # ★ 传 gate + pool_map（2026-09-14, §1.1 修法①②）：让 B角 的传感器与**实际生效的门槛**对账，
+        #   并在池内模式下改看**池口径**（那才是真实卡点）。代首用上一代存的 `last_pool_map`。
+        diag = critic.diagnose(prev_l1, prev_l2, args.gen - 1,
+                               gate=_gate_of(args), pool_map=_prev_pool_map)
         cfg, reasons = critic.suggest(diag, cfg)
         print("\n[B角建议] 本代搜索策略:")
         for r in reasons:
@@ -1152,6 +1415,22 @@ def run(args):
     #  (那是 L1 层池感知才需要的代价: 随机2000 ∪ 池union2701 ≈ 3700 列 = +85% 成本)。
     _min_pool_calmar = float(getattr(args, 'min_pool_calmar', -1.0))
     _pool_gate_mode = getattr(args, 'pool_gate_mode', 'any') or 'any'
+    # ★ 全A 口径的夏普门槛(2026-09-13, §8.26): 原先是**硬编码 0.5**;
+    #   默认 0.5 = 行为完全不变(向后兼容)。与 --pool_gate_or_all 配合才有意义。
+    _min_sharpe = float(getattr(args, 'min_sharpe', 0.5))
+    # ★ 池门槛与全A 口径改 **OR** 语义(2026-09-13, §8.26; 默认关=保持原 AND 行为)。
+    #   依据: 池内有效与全A 有效基本不同源(300 池"池内有效但全A无效"31 个 vs "都有效"15 个)
+    #   ⇒ 对"只在池内有效"的因子, AND 等于自相矛盾。组合标定: OR 保留量约为 AND 的 8 倍。
+    _pool_gate_or_all = bool(getattr(args, 'pool_gate_or_all', False))
+    # ★ 收益流去重阈值(2026-09-13, roadmap §8.34; 0=关)。见 loop_engine.ex_max_corr 的 docstring。
+    _dup_ex_corr = float(getattr(args, 'dup_ex_corr', 0.0) or 0.0)
+    _ex_by_expr = {}       # {表达式: 本代 L2 的每期费后超额 Series} —— 供入库段做收益流去重
+    _n_dup_ex = 0
+    # ★ 池标签(2026-09-13, §8.42): {表达式: pool_tag} —— 入库文档要写"适用哪个池"
+    _tag_by_expr = {}
+    # ★ 剥风格档（2026-09-14, §1.9）：{表达式: (档位, 说明, 剥后calmar, 剥后超额)}
+    #   与 `_tag_by_expr` **并列**（不替代）—— 入库文档里两者都写。
+    _strip_by_expr = {}
     _pool_gate_on = (_min_pool_calmar >= 0)      # 默认 -1 = 关; >=0 启用(0 是合法阈值)
     _pool_obs = bool(getattr(args, 'pool_obs', False)) or _pool_gate_on
     if _pool_gate_on and not getattr(args, 'pool_obs', False):
@@ -1565,25 +1844,43 @@ def run(args):
     #  ★ 建在**全量面板**上(池股天然都在, 面板覆盖率 99.3%/99.8%) ⇒ **不需要扩 L1 子面板列**。
     #   (L1 层池感知才需要"随机2000 ∪ 池union2701 ≈ 3700 列 = +85% 成本", 那是后续的事。)
     POOL_M = {}
+    import loop_pools as _lp          # ★ 池标签派生用(§8.42); 本地 import 避免与顶层名冲突
     if _pool_obs:
         try:
             _t_pool = time.time()
             for _tg in _pools:
                 POOL_M[_tg] = pool_mask(_tg, dates, cols)
             _sz = ', '.join(f"{t}:{int(POOL_M[t].sum())}格" for t in _pools)
-            _gate_txt = (f"**入库门槛: {'任一' if _pool_gate_mode == 'any' else '全部'}池 "
-                         f"Calmar > {_min_pool_calmar:g}**"
+            _gate_txt = ((f"**入库门槛: {'任一' if _pool_gate_mode == 'any' else '全部'}池 "
+                          f"Calmar > {_min_pool_calmar:g}"
+                          + ("　**或**　全A 口径(calmar>%.2f & sharpe>%.2f & 分段)**"
+                             % (args.min_calmar, _min_sharpe) if _pool_gate_or_all
+                             else "**（与全A 口径 AND）") )
                          if _pool_gate_on else "仅记录不设门槛(默认)")
             print(f"  [池指标] 已启用 池={_pools} (PIT掩码 {_sz}; "
                   f"用时 {time.time() - _t_pool:.0f}s) -> {POOL_OBS}; {_gate_txt}")
         except Exception as e:
             print(f"  [池指标] [!] 掩码构建失败 -> 本代跳过池指标: {type(e).__name__}: {e}")
             POOL_M = {}
+    # ---- 市值面板(2026-09-13, roadmap §8.28): 供"**市值加权基准**"口径 ----
+    #  为什么: 组合腿是 Top10% **等权**; 基准腿现状是"池内**等权**" ⇒ 两腿同为等权 ⇒ 规模中性
+    #   ⇒ 差额 = 纯选股 alpha。而**真实指数**(沪深300)是**自由流通市值加权** ⇒ 若用它当基准,
+    #   等权组合**天然超配池内小盘** ⇒ 多出一块「池内规模倾斜」收益(不是 alpha)。
+    #  ⇒ 因此**两个都记**: 等权基准作主判据(干净), 市值基准作产品口径 + tilt 诊断。
+    #  ⚠ 成本 = 0 额外回测(组合腿不变, 只换基准的加权平均)。
+    MCAP = None
+    if POOL_M:
+        try:
+            MCAP = np.where(B['mktcap'] > 0, B['mktcap'].astype('float64'), np.nan)
+        except Exception as e:
+            print(f"  [池指标] [!] 市值加权基准不可用(只影响该列, 主流程不受影响): "
+                  f"{type(e).__name__}: {e}")
+            MCAP = None
     rows = []
     seg_ok_list = []   # 与 rows 同步, 供 critic 统计 seg_kill(不入 archive 表头)
     strip_rows = []    # 剥风格明细(2026-09-12, --strip_style) -> 独立文件, 不进 archive 表头
     pool_rows = []     # 池内明细(2026-09-12, --pool_obs) -> 独立文件(长表), 理由同上
-    n_pool_nogate = 0  # 池门槛"无池结果 -> 放行不误杀"的次数(代末上报, 防静默失效)
+    n_pool_nogate = 0  # 池门槛「无池结果 -> 放行不误杀」的次数(代末上报, 防静默失效)
     for j, (_, r) in enumerate(top.iterrows(), 1):
         t_one = time.time()
         nd = r['node']
@@ -1631,18 +1928,47 @@ def run(args):
                         _vp = np.where(_M, fac.values, np.nan)
                         _fp = cs_rank(pd.DataFrame(_vp, index=dates, columns=cols))
                         _rp = evaluate_real(_fp, close, f"{nd}#pool{_tg}",
-                                            cost=args.cost, window=args.window)
+                                            cost=args.cost, window=args.window,
+                                            mcap=MCAP)   # ★同时给「市值加权基准」(§8.28)
                         if _rp is not None:
                             pool_rec.append(dict(
                                 gen=args.gen, expr=str(nd), pool=_tg,
                                 ic=_rp['ic'], ic_ir=_rp['ic_ir'], calmar=_rp['calmar'],
                                 ann_ex=_rp['ann_ex'], dd=_rp['dd'],
-                                sharpe=_rp['sharpe'], turn=_rp.get('turn', np.nan)))
+                                sharpe=_rp['sharpe'], turn=_rp.get('turn', np.nan),
+                                # 市值加权基准口径(§8.28): calmar_cw ≈ 对真实指数的超额
+                                #  tilt = ann_ex_cw - ann_ex = 「池内规模倾斜」贡献(越大越可疑)
+                                ann_ex_cw=_rp.get('ann_ex_cw', np.nan),
+                                calmar_cw=_rp.get('calmar_cw', np.nan),
+                                dd_cw=_rp.get('dd_cw', np.nan),
+                                sharpe_cw=_rp.get('sharpe_cw', np.nan),
+                                tilt=_rp.get('tilt', np.nan)))
                         del _fp
                     except Exception as e_p:
                         print(f"  [{j}] 池 {_tg} 计算失败(不影响主流程): "
                               f"{type(e_p).__name__}: {e_p}")
                 pool_rows.extend(pool_rec)
+                # ★ 池标签(2026-09-13, §8.42): 规则取自 `loop_pools.derive_tag`(**单一事实源**,
+                #   与 `standard/pool_tags.py` 派生 docs/pool_tags.csv 同口径)。
+                #   用户诉求:「一眼看出这个因子是全A+哪个池好用、还是只有全A好用」。
+                try:
+                    _okp = {q['pool']: bool(np.isfinite(q['ann_ex'])
+                                            and q['ann_ex'] > _lp.TAG_POOL_FLOOR)
+                            for q in pool_rec}
+                    _oka = bool(np.isfinite(rr['ann_ex']) and rr['ann_ex'] > 0
+                                and np.isfinite(rr['calmar'])
+                                and rr['calmar'] >= _lp.TAG_CAL_MIN)
+                    _tag_by_expr[str(nd)] = _lp.derive_tag(_oka, _okp, _pools)
+                    # ★ 剥风格档（**并列**记录，不改池标签语义）—— 分档规则在
+                    #   `loop_pools.strip_grade`（单一事实源，脚本与引擎共用一套）。
+                    if strip_rec is not None:
+                        _sg_k, _sg_t = _lp.strip_grade(strip_rec.get('strip_calmar'),
+                                                       strip_rec.get('strip_ann_ex'))
+                        _strip_by_expr[str(nd)] = (_sg_k, _sg_t,
+                                                   strip_rec.get('strip_calmar'),
+                                                   strip_rec.get('strip_ann_ex'))
+                except Exception as e_t:
+                    print(f"  [{j}] 池标签派生失败(不影响主流程): {type(e_t).__name__}: {e_t}")
             del f
             gc.collect()
         except Exception as e:
@@ -1654,7 +1980,13 @@ def run(args):
         # 统一用 factor_miner.pass_filter 的11项标准(亏损年<-2% <=1, 而非"所有年>0")
         from factor_miner import pass_filter
         ok, _ = pass_filter(rr, args.min_ic)
-        ok = ok and rr['calmar'] > args.min_calmar and rr['sharpe'] > 0.5
+        # ★「全A 量化口径」单独记一份 _ok_q, 供 --pool_gate_or_all 做 OR(见下方池门槛段)。
+        #   为什么必须分开: OR 语义要求"全A 口径达标 **或** 池内达标", 若把 _ok_q 提前 AND 进
+        #   ok, 后面再写 `ok and (_ok_q or _pok)` 会退化成 AND(ok 里已含 _ok_q)。
+        #   (2026-09-13, roadmap §8.26)
+        _ok_q = (rr['calmar'] > args.min_calmar and rr['sharpe'] > _min_sharpe)
+        _ok_prev = ok          # 快照: 尚未并入 _ok_q 的结果(供 OR 语义重建, 见池门槛段)
+        ok = ok and _ok_q
         # ★分段独立验证(防伪衰减): 把费后日超额序列均分 N 个不相交子区间,
         #   各段须同号(累计费后超额>0)的段数达标才通过 —— 拦"靠单段大行情撑
         #   全样本高t、一出该段即失效"的候选(F12 型)。样本不足自动放行不误杀。
@@ -1663,6 +1995,7 @@ def run(args):
             seg_ok, n_seg_pos, n_seg_k, seg_txt = seg_verify(
                 rr.get('ex'), args.seg_n, args.seg_need)
             ok = ok and seg_ok
+            _ok_q = _ok_q and seg_ok        # 分段也算「全A 量化口径」的一部分(供 OR 用)
         # ---- 剥风格入库门槛(2026-09-12, 默认关) ----
         #  args.min_strip_calmar <= 0 -> 只记录不拦(默认行为不变)。
         #  ⚠ strip_rec is None(未开/计算失败)时**放行不误杀** —— 与 LLM 审查同一条铁律。
@@ -1679,8 +2012,29 @@ def run(args):
                                      _min_pool_calmar, _pool_gate_mode)
             if _pok is None:                 # 无从判定 -> 放行不误杀, 但计数上报
                 n_pool_nogate += 1
+            elif _pool_gate_or_all:
+                # ★ OR 语义(2026-09-13, roadmap §8.26; 新开关 --pool_gate_or_all, 默认关):
+                #   「全A 量化口径达标」**或**「池内达标」。
+                #   依据: 池内有效与全A 有效**基本不同源** —— 300 池"池内有效但全A 无效"有 31 个,
+                #   是"两者都有效"15 个的两倍; AND 会把这 31 个全砍掉(自相矛盾:
+                #   对"只在池内有效"的因子, 同时要求全A 达标是逻辑冲突)。
+                #   组合标定(ai_test/combo_calib.py): AND 最优只保留 5/167(lift 2.73×, 召回 8%),
+                #   而 OR 可保留 41/167、精率 59%、召回 49%、lift 2.00× ⇒ 保留量约 6 倍。
+                #   实现要点: 必须用 _ok_prev 重建(撤掉已 AND 进去的 _ok_q), 否则退化回 AND。
+                ok = _ok_prev and (_ok_q or _pok)
             else:
                 ok = ok and _pok
+        # ★ 收益流去重(2026-09-13, roadmap §8.34, --dup_ex_corr): 算本候选 vs 历史库收益流的
+        #   最大 |相关|。**止血**机制 —— 实测库内 30 个因子的收益流两两相关中位 **0.967**
+        #   ⇒ 再攒同类因子等于没攒(合成 Calmar 还低于最好的单因子)。
+        #   ⚠ 这里**只记录**(落 archive 的 max_ex_corr 列), 拦入库在下方 bank 追加段做
+        #     —— 那里能拿到"本代已入库者"的最新库, 从而同时防"同代内近重复"。
+        _mec, _mew = None, None
+        _ex = rr.get('ex') if isinstance(rr, dict) else None
+        if _dup_ex_corr > 0 and _ex is not None:
+            _mec, _mew = ex_max_corr(_ex, bank_ex)
+        if _ex is not None:
+            _ex_by_expr[str(nd)] = _ex
         leaf_s, cat_s = leaf_parts(nd)
         rows.append(dict(expr=str(nd), cat=cat_s, leaf=leaf_s,
                          window=args.window, cost=args.cost,
@@ -1689,6 +2043,7 @@ def run(args):
                          sharpe=rr['sharpe'], last_yr=rr['last_yr'],
                          turn=rr.get('turn', np.nan),
                          neg_yr=sum(1 for v in yr.values() if v <= 0),
+                         max_ex_corr=(-1.0 if _mec is None else float(_mec)),
                          passed=ok))
         seg_ok_list.append(seg_ok)
         if strip_rec is not None:
@@ -1703,6 +2058,8 @@ def run(args):
         if pool_rec:
             _pstr = ' | 池内 ' + ' '.join(
                 f"{q['pool']}:{q['ann_ex']*100:+.2f}%/Cal{q['calmar']:+.2f}"
+                + (f"(市值{q['ann_ex_cw']*100:+.2f}%/倾斜{q['tilt']*100:+.2f}%)"
+                   if np.isfinite(q.get('tilt', np.nan)) else '')
                 for q in pool_rec)
             if _pool_gate_on:
                 _pok_, _pv_ = pool_gate_ok([q.get('calmar') for q in pool_rec],
@@ -1725,11 +2082,10 @@ def run(args):
     if _strip_style and strip_rows:
         try:
             _sd = pd.DataFrame(strip_rows)
-            _need_h = (not os.path.exists(STRIP_OBS)) or os.path.getsize(STRIP_OBS) == 0
-            _sd.to_csv(STRIP_OBS, index=False, mode='a', header=_need_h,
-                       encoding='utf-8-sig')
+            # ★ schema-aware 追加(2026-09-13, §8.30): 加列时会**重写并救回旧行**, 不再产生混合宽度
+            _st, _sn = append_csv_schema_safe(STRIP_OBS, _sd)
             _n_pos = int((_sd['strip_ann_ex'] > 0).sum())
-            print(f"已存 {STRIP_OBS} (追加, 本代 {len(_sd)} 条 L2 候选; "
+            print(f"已存 {STRIP_OBS} ({_st}, 本代 {len(_sd)} 条 L2 候选; "
                   f"剥风格后超额仍为正 {_n_pos}/{len(_sd)})")
         except Exception as e:
             print(f"  [剥风格] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
@@ -1740,9 +2096,10 @@ def run(args):
     if POOL_M and pool_rows:
         try:
             _pdd = pd.DataFrame(pool_rows)
-            _need_h = (not os.path.exists(POOL_OBS)) or os.path.getsize(POOL_OBS) == 0
-            _pdd.to_csv(POOL_OBS, index=False, mode='a', header=_need_h,
-                        encoding='utf-8-sig')
+            # ★ schema-aware 追加(2026-09-13, §8.30): 见 append_csv_schema_safe 的 docstring
+            _pst, _psn = append_csv_schema_safe(POOL_OBS, _pdd)
+            if 'rewritten' in _pst:
+                print(f"  [池指标] schema 变化 -> 已重写 {os.path.basename(POOL_OBS)}: {_pst}")
             _n_cand = len(_pdd) // max(len(_pools), 1)
             _msg = ', '.join(
                 f"{t}: 超额>0 {int((_pdd.loc[_pdd['pool'] == t, 'ann_ex'] > 0).sum())}"
@@ -1763,10 +2120,15 @@ def run(args):
         # 逐代累积流水(带 gen/cat/leaf 列): 文件缺失/为空时写表头, 其后追加
         # —— 每代 L2 明细永久留档(gen16 前旧快照已归 docs/history/loop_archive.legacy_pre_gen16.csv)
         res.insert(0, 'gen', args.gen)
-        need_head = (not os.path.exists(ARCHIVE)) or os.path.getsize(ARCHIVE) == 0
-        res.to_csv(ARCHIVE, index=False, mode='a', header=need_head,
-                   encoding='utf-8-sig')
-        print(f"\n已存 {ARCHIVE} (追加, 本代 {len(res)} 条)")
+        # ★ schema-aware 追加(2026-09-13, §8.44): 原先是"只判文件有无/为空"决定写不写表头,
+        #   而 §8.34 给本表加了 `max_ex_corr`(第 17 列) ⇒ `loop_archive_300/500.csv` 变成
+        #   「16列旧行 + 17列新行」混合宽度 ⇒ `pd.read_csv` 报
+        #   `Expected 16 fields in line 165, saw 17`。**同一个坑的第三处**
+        #   (前两处: loop_pool_obs_* / loop_strip_style_*, 见 `ai_test/fix_csv_schema.py`)。
+        _ast, _asn = append_csv_schema_safe(ARCHIVE, res)
+        if 'rewritten' in _ast:
+            print(f"  [流水] schema 变化 -> 已重写 {os.path.basename(ARCHIVE)}: {_ast}")
+        print(f"\n已存 {ARCHIVE} ({_ast}, 本代 {len(res)} 条)")
         p = res[res['passed']]
         print(f"L2 通过 {len(p)}/{len(res)} 个")
         if len(p):
@@ -1778,7 +2140,10 @@ def run(args):
     res_c = res.copy() if len(res) else res
     if len(seg_ok_list) == len(res_c):
         res_c['seg_ok'] = seg_ok_list
-    diag = critic.diagnose(l1, res_c if len(res_c) else None, args.gen)
+    # ★ 传 gate + pool_map（2026-09-14, §1.1 修法①②）：代末用**本代刚算出的**池结果，
+    #   这样 `fail_pool_calmar` 反映的是"刚才那批候选离池门槛差多远"（真实卡点）。
+    diag = critic.diagnose(l1, res_c if len(res_c) else None, args.gen,
+                           gate=_gate_of(args), pool_map=_pool_best(pool_rows))
     diag['fam_blocked'] = fam_blocked
     # ---- 风格暴露诊断聚合(2026-09-11, --style_obs): 落盘已在 L1 求值后完成, 此处只做分组聚合 ----
     #  判读(见 docs/factor_roadmap.md §8.3/§8.4): new vs old 两组对比, 若 L2 候选/通过集的
@@ -1816,8 +2181,25 @@ def run(args):
     # ---- B角 LLM 审查(DeepSeek, --ai_critic auto/on/off, 默认auto=有key即启用) ----
     ai = getattr(args, 'ai_critic', 'auto')
     if ai != 'off':
-        critic.ai_review(diag, l1, res_c if len(res_c) else None, args.gen,
-                         JOURNAL, reasons=reasons, sug=next_cfg, force=(ai == 'on'))
+        _airv = critic.ai_review(diag, l1, res_c if len(res_c) else None, args.gen,
+                                 JOURNAL, reasons=reasons, sug=next_cfg, force=(ai == 'on'))
+        # ★★★ 把 LLM 的否决**真正交回决策链**（2026-09-14, §1.1 修法④）——
+        #   此前 `ai_review()` 的返回值**只用于打印、从不回写 `sug`**
+        #   ⇒ 实测 **85/98 次**独立、跨池一致的反驳（"深度加深会加剧过拟合"）**全部被浪费**。
+        #   现在写进 `next_cfg['_veto']`（键=**目标代**），下一代 `suggest()` 会**真的跳过**该动作；
+        #   连续否决达 `critic.LLM_MUTE_N` 次则升级为**永久哨兵**（用户原话:「让它永久闭嘴」）。
+        _vt = (_airv or {}).get('veto') or []
+        if _vt:
+            _tgt = args.gen + 1
+            _v = next_cfg.setdefault('_veto', {})
+            for _aid in _vt:
+                _g = _v.setdefault(_aid, [])
+                if not isinstance(_g, list):        # 防御: 旧 state 里的脏数据
+                    _g = _v[_aid] = []
+                if critic.MUTE not in _g and _tgt not in _g:
+                    _g.append(_tgt)
+            print("  [否决] 第 {} 代将跳过: {}".format(
+                _tgt, ', '.join('{}（{}）'.format(a, critic.RULE_NAMES.get(a, '?')) for a in _vt)))
 
     # ---- 保存状态 ----
     new_seeds = list(l1.head(30)['node'])
@@ -1843,13 +2225,55 @@ def run(args):
                 print(f"  [FSA] 通过但不入库: 骨架 {s} 已有 {skel_cnt.get(s,0)} "
                       f"个(上限{args.bank_skel_max})")
                 continue
+            # ★ 收益流去重(2026-09-13, roadmap §8.34, --dup_ex_corr): **止血**闸门。
+            #   bank_ex 会在本循环里随入库增长 ⇒ 同时防"与历史库重复"与"同代内近重复"。
+            #   ⚠ 拿不到收益流(旧 state / 回测失败)则**放行不误杀**(与本项目其它闸门同一铁律)。
+            _ex_i = _ex_by_expr.get(expr)
+            if _dup_ex_corr > 0 and _ex_i is not None:
+                _mc2, _mw2 = ex_max_corr(_ex_i, bank_ex)
+                if _mc2 is not None and _mc2 > _dup_ex_corr:
+                    _n_dup_ex += 1
+                    print(f"  [收益流去重] 不入库: 与库内收益流相关 {_mc2:.3f} > "
+                          f"{_dup_ex_corr:.2f}（对方 {str(_mw2)[:66]}）")
+                    continue
             bank.append(nd)
             skel_cnt[s] = skel_cnt.get(s, 0) + 1
             lib_added.append(expr)
+            if _ex_i is not None:
+                bank_ex[expr] = _ex_i          # 入库 -> 其收益流进对照集
+        if _n_dup_ex:
+            print(f"  [收益流去重] 本代拦下 {_n_dup_ex} 个「与库内赚同一块钱」的因子"
+                  f"(阈值 |corr|>{_dup_ex_corr:.2f})")
         if len(bank) > n_bank_old:
             print(f"  入库 {len(bank)-n_bank_old} 个新因子, 累计 {len(bank)} 个")
             # 入库文档自动同步(factor_library.md): 只增不改, 失败不影响入库
-            _lib_sync(args.gen, res, len(bank), lib_added, by_expr)
+            # ★ 带池标签(§8.42): 入库条目里写明"适用哪个池"
+            _lib_sync(args.gen, res, len(bank), lib_added, by_expr,
+                      pool_tags=_tag_by_expr, strip_grades=_strip_by_expr)
+            # ★ 剥风格档汇总（2026-09-14, §1.9）：**"纯风格"必须吼出来** —— 它是"全A 口径漂亮
+            #   但剥掉 lncap+lnamt 后转负"的因子，入库后**指数增强不可用**，不吼会被忽略。
+            if _strip_by_expr:
+                _sc_cnt = {}
+                for _e in lib_added:
+                    _v = _strip_by_expr.get(_e)
+                    if _v:
+                        _sc_cnt[_v[0]] = _sc_cnt.get(_v[0], 0) + 1
+                if _sc_cnt:
+                    print("  [剥风格档] 本代入库因子: " + ", ".join(
+                        "{}x{}".format(k, v) for k, v in sorted(_sc_cnt.items())))
+                _n_c = sum(v for k, v in _sc_cnt.items() if k == 'C')
+                if _n_c:
+                    print("  [!][剥风格档] **{} 个是「纯风格」**（剥掉 lncap+lnamt 后超额/Calmar 转负）"
+                          "⇒ 指数增强不可用 ⇒ 检查 `--min_strip_calmar` 是否已设".format(_n_c))
+            if _tag_by_expr:
+                _tg_cnt = {}
+                for _e in lib_added:
+                    _t = _tag_by_expr.get(_e)
+                    if _t:
+                        _tg_cnt[_t] = _tg_cnt.get(_t, 0) + 1
+                if _tg_cnt:
+                    print("  [池标签] 本代入库因子: " + ", ".join(
+                        "{}x{}".format(k, v) for k, v in sorted(_tg_cnt.items())))
     for k, v in DEFAULT_CFG.items():
         next_cfg.setdefault(k, v)      # critic.suggest 重建dict可能丢键 -> 兜底补齐
     next_cfg.setdefault('bank_skel_max', args.bank_skel_max)
@@ -1868,15 +2292,23 @@ def run(args):
                          #  代价: --decorr 每候选要跟整库逐个比, 成本 O(len(bank)) ->
                          #  若库显著增长, 见去相关段的计时输出(实测 30 库/432 候选 = 276s)。
                          bank=bank,
+                         # ★ 收益流库(§8.34): {表达式: 每期费后超额 Series}。
+                         #   体积很小(每条 ~400 期 float64 ≈ 3KB; 100 个因子 ≈ 0.3MB)。
+                         bank_ex=bank_ex,
                          frozen=frozen,
                          fail_lib=fail_lib,
                          n_tested=n_tested_prev + len(cands),
                          last_l1=l1, last_l2=res if len(res) else None,
+                        # ★ 池口径传感器（2026-09-14, §1.1 修法②）: {expr: 最好的池 calmar}。
+                        #   代首"重审上一代"时必须用它才能算出**池口径**失败率 ——
+                        #   `last_l2` 只有全A 口径，回答不了"离池门槛差多远"。
+                        #   体积很小（每代候选数个小 float），可忽略。
+                        last_pool_map=_pool_best(pool_rows),
                          cfg=next_cfg), f)
     os.replace(_tmp, STATE)        # 原子替换: 要么全新状态, 要么保持旧状态, 不会出现半成品
     # ⚠ 日志口径: 打印的必须是**实际持久化**的数量(此前截断时打内存值 -> 与落盘不一致)
     print(f"\n保存状态: 种子 {len(new_seeds[:60])} 个, 入库因子 {len(bank)} 个(全量), "
-          f"冻结骨架 {len(frozen)} 个, 失败库 {len(fail_lib)} 条, "
+          f"收益流库 {len(bank_ex)} 条, 冻结骨架 {len(frozen)} 个, 失败库 {len(fail_lib)} 条, "
           f"耗时 {time.time()-t0:.0f}s")
 
 
@@ -2217,6 +2649,31 @@ if __name__ == '__main__':
     ap.add_argument('--pools', default='300,500',
                     help='--pool_obs 要算哪些池(默认 300,500; 逗号分隔)。可选见 '
                          'engine/loop_pools.py 的 POOLS(300/500/1000/50)。')
+    ap.add_argument('--dup_ex_corr', type=float, default=0.0,
+                    help='★ 收益流去重阈值(2026-09-13, roadmap §8.34; 0=关, 默认关=行为不变)：'
+                         '候选的**每期费后超额序列**与库内任一因子收益流的 |Spearman 相关| '
+                         '超过该值时**不入库**。为什么用收益流而不是表达式：实测库内 30 个入库'
+                         '因子的组合收益两两相关**中位 0.967**（它们是同一块钱的不同写法，'
+                         '等权合成 Calmar 0.978 还**低于**最好的单因子 1.146），'
+                         '而结构层面极多样（骨架 1181 个唯一、Top5 仅 1.9%%）'
+                         '⇒ **表达式/因子值去重挡不住"同一块钱"，只有收益流能识别**。'
+                         '建议 0.90（越严格库越"独立"但入库越少）。'
+                         '[!] 需 state 里有 bank_ex；旧 state 先跑 ai_test/backfill_bank_ex.py 补齐。')
+    ap.add_argument('--min_sharpe', type=float, default=0.5,
+                    help='L2 全A 口径的夏普门槛(2026-09-13, roadmap §8.26)。'
+                         '**默认 0.5 = 与原硬编码值相同, 行为完全不变**。'
+                         '原先是写死的 `rr["sharpe"] > 0.5`; 逐门诊断(§8.25-③)显示它在 **AND** 组合下'
+                         '是最大卡点(300 池砍掉 83%%、500 砍 71%%), 但在 **OR** 组合下它是合理的'
+                         '全A 分支门槛 ⇒ **改 OR 比删它更对**。')
+    ap.add_argument('--pool_gate_or_all', action='store_true',
+                    help='★把池门槛与全A 量化口径改成 **OR** 语义(2026-09-13, roadmap §8.26; 默认关,'
+                         '关=保持原 AND 行为)。开启后判定变为: '
+                         '「全A 口径(calmar/sharpe/分段)达标」**或**「池内 Calmar 达 --min_pool_calmar」。'
+                         '依据: 池内有效与全A 有效**基本不同源** —— 300 池"池内有效但全A 无效"有 31 个,'
+                         '是"两者都有效"15 个的两倍 ⇒ AND 会把它们全砍掉(对"只在池内有效"的因子,'
+                         '同时要求全A 达标是自相矛盾)。组合标定(ai_test/combo_calib.py): '
+                         'AND 最优只保留 5/167(召回 8%%), OR 可保留 41/167(精率 59%%、召回 49%%)'
+                         '⇒ **保留量约 6 倍**。')
     ap.add_argument('--min_pool_calmar', type=float, default=-1.0,
                     help='★池门槛(2026-09-12, 默认 -1=关; **用户选定方案 C = 排除 csi_all_only**): '
                          '>=0 时启用, 用池内 Calmar 与 --min_pool_calmar 比较(与 --min_calmar 同口径, '

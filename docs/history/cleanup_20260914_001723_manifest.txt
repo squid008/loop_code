@@ -1,0 +1,5 @@
+# cleanup_repo.py 执行清单  20260914_001723
+# 删除（不可恢复）
+# 归档（移动到 docs/history/cleanup_20260914_001723/）
+ARC	ai_test/_tracks_main2.log	1583	脚本输出日志（一次性；正在写的由 LIVE_GUARD 自动跳过）
+ARC	ai_test/_tracks_main2_err.log	0	脚本输出日志（一次性；正在写的由 LIVE_GUARD 自动跳过）

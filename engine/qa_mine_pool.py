@@ -77,6 +77,20 @@ def main():
     chk("L1_POOL_MASK = _LP.pool_mask" in src, "L1 池掩码按 PIT 构建")
 
     print("=" * 74)
+    print("[2b] 门槛改造(2026-09-13, roadmap §8.26): --min_sharpe / --pool_gate_or_all")
+    chk("add_argument('--min_sharpe'" in src, "--min_sharpe 已注册(默认 0.5 = 原硬编码值)")
+    chk("add_argument('--pool_gate_or_all'" in src, "--pool_gate_or_all 已注册(默认关)")
+    chk("_min_sharpe = float(getattr(args, 'min_sharpe', 0.5))" in src,
+        "_min_sharpe 默认 0.5 -> **默认行为不变**(向后兼容)")
+    chk("_pool_gate_or_all = bool(getattr(args, 'pool_gate_or_all', False))" in src,
+        "_pool_gate_or_all 默认 False -> 默认走原 AND 路径")
+    chk("rr['sharpe'] > 0.5" not in src.replace("help=", "").split("_min_sharpe")[-1],
+        "旧的硬编码 `rr['sharpe'] > 0.5` 已被 _min_sharpe 取代")
+    chk("_ok_prev = ok" in src and "ok = _ok_prev and (_ok_q or _pok)" in src,
+        "OR 语义用 _ok_prev 重建(**关键**: 否则退化成 AND)")
+    chk("_ok_q = _ok_q and seg_ok" in src, "分段验证也并入 _ok_q(算全A 口径)")
+
+    print("=" * 74)
     print("[3] loop_watch.py 是否跟随池后缀")
     w = os.path.join(HERE, 'loop_watch.py')
     wt = io.open(w, encoding='utf-8').read()

@@ -169,7 +169,7 @@ def get_tradability():
 
 
 def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
-                  window='full', with_ex=False):
+                  window='full', with_ex=False, mcap=None):
     """【可实现性版检验(费后)】与 evaluate() 的差别:
       1. T+1 买入日: 剔除涨停/停牌 -> 买不进的不算
       2. 卖出日: 跌停/停牌则顺延到下一个可卖日(实盘卖不出的真实处理)
@@ -178,10 +178,22 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
       5. window: 'full'=START(2018)起九年口径; 'recent600'=最近600交易日
          (对齐中金研报口径: 回测只用最近600日, 过滤只要求最近2年正)
       6. with_ex: 默认False(行为/返回结构完全不变); True时额外返回 'ex'=
-         费后日度超额序列(每换仓期一条), 供上层做【分段独立验证】——
-         把该序列按时间均分成K个不相交子区间, 各段须方向同号稳定。
-    其余(IC/分组/年度)与 evaluate 一致, 便于对照。
-    """
+          费后日度超额序列(每换仓期一条), 供上层做【分段独立验证】——
+          把该序列按时间均分成K个不相交子区间, 各段须方向同号稳定。
+      7. mcap: 默认None(行为完全不变)。给**市值面板**((T x N), 与 close 同轴)时, 额外返回
+          **市值加权基准**下的指标('ann_ex_cw'/'dd_cw'/'calmar_cw'/'sharpe_cw')与
+          'tilt' = ann_ex_cw - ann_ex。为什么(2026-09-13, roadmap §8.28):
+            · **组合腿永远是"Top10% 等权"**(策略本身, 不改)；
+            · 基准腿有两种口径          —— 现状 = **池内等权**(`nanmean(keep_all)`)；
+              新增 = **市值加权**(≈真实指数, 沪深300 就是自由流通市值加权)；
+            · 两者**同为等权**时 ⇒ 规模中性 ⇒ 差额 = **纯选股 alpha**；
+              组合等权 vs 基准市值加权 ⇒ 组合**天然超配池内小盘** ⇒ 多出一块
+              「**池内规模倾斜**」收益, 那不是 alpha。
+            · 所以 'tilt' 就是**这块倾斜的贡献**: 它越大, 说明"超额"里越多不是选股能力
+              (与 §8.13「全A超额 vs 剥风格后超额」同一逻辑, 只是从"全A 小盘"缩到"池内小盘")。
+          ⚠ 成本: **零额外回测** —— 组合腿 tr 不变, 只是基准腿换个加权平均。
+      其余(IC/分组/年度)与 evaluate 一致, 便于对照。
+      """
     TR = get_tradability()
     idx_all = close.index[(close.index >= START)]
     if window == 'recent600':
@@ -222,7 +234,8 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
     buyable = TR['buyable']
     next_sell = TR['next_sell']
     ar = np.arange(len(close.columns))
-    top_r, mkt_r, dates_l, turns = [], [], [], []
+    mc_ = None if mcap is None else np.asarray(mcap, dtype='float64')   # 市值面板(可选, 见 docstring 7)
+    top_r, mkt_r, mkt_cw, dates_l, turns = [], [], [], [], []
     prev_top = None
     for d in idx[::FWD][:-1]:
         u = U.loc[d]
@@ -258,6 +271,17 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
         turn = 1.0 - keep
         top_r.append(rt * cash - turn * cost)
         mkt_r.append(rm * cash)
+        if mc_ is not None:
+            # 市值加权基准(≈真实指数): 同一批 keep_all, 按市值加权平均。
+            # ⚠ 分子分母**必须用同一组有限值掩码** —— 否则 NaN 收益/NaN 市值两者口径不一致:
+            #   分子 nansum 跳过 NaN, 分母若把 NaN 的权重也算进去 -> 结果系统性偏低。
+            #   (2026-09-13 QA 实录: 恒等测试「mcap=常数 ⇒ 市值加权==等权」据此抓出 5.1e-06 偏差)
+            w = mc_[i1][keep_all]
+            rr_ = r_all[keep_all]
+            m_ = np.isfinite(rr_) & np.isfinite(w)
+            ws = float(np.sum(w[m_]))
+            rc = float(np.sum(rr_[m_] * w[m_]) / ws) if ws > 0 else np.nan
+            mkt_cw.append(rc * cash)
         dates_l.append(d)
         turns.append(turn)
         prev_top = set(top)
@@ -281,15 +305,37 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
         yr_ex[y] = (1 + g).prod() - 1
     recent = sorted(yr_ex.keys())[-1]
     recent_2 = sorted(yr_ex.keys())[-2] if len(yr_ex) > 1 else recent
-    return {
+    res = {
         'name': name, 'window': window, 'ic': ic_mean, 'ic_ir': ic_ir,
         'ic_win': ic_win, 'ic_series': ic, 'ann_top': ann_t, 'ann_mkt': ann_m,
         'ann_ex': ann_e, 'dd': dd_e, 'sharpe': sharpe, 'calmar': calmar,
         'yr': yr_ex, 'last_yr': yr_ex.get(recent, np.nan),
         'last2_yr': yr_ex.get(recent_2, np.nan), 'n_rebal': len(tr),
         'turn': float(np.mean(turns)) if turns else np.nan,
-        **({'ex': ex} if with_ex else {}),
+        # with_ex 时额外给 'ex'(每期费后超额) 与 'tr'(每期组合费后收益)。
+        #  'tr' 供**多因子合成**用（2026-09-13, roadmap §8.33）：把多个因子的组合收益等权平均
+        #  ⇒ 直接得到组合的收益序列, 不必重跑回测。默认(False)行为不变。
+        **({'ex': ex, 'tr': tr} if with_ex else {}),
     }
+    # ---- 市值加权基准口径(2026-09-13, roadmap §8.28; 仅当传了 mcap) ----
+    #  组合腿 tr 不变(仍是 Top10% 等权), 只换基准腿: 等权 -> 市值加权(≈真实指数)。
+    #  'tilt' = ann_ex_cw - ann_ex = 「池内规模倾斜」的贡献(见 docstring 7)。
+    if mc_ is not None and len(mkt_cw) == len(mkt_r) and len(mkt_cw) >= 30:
+        mrc = pd.Series(mkt_cw, index=dates_l)
+        exc = tr - mrc
+        nav_ec = (1 + exc).cumprod()
+        ann_ec = nav_ec.iloc[-1] ** (1 / yrs) - 1 if yrs > 0 else np.nan
+        dd_ec = (nav_ec / nav_ec.cummax() - 1).min()
+        nav_mc = (1 + mrc).cumprod()
+        res.update(
+            ann_ex_cw=ann_ec, dd_cw=dd_ec,
+            calmar_cw=(ann_ec / abs(dd_ec) if dd_ec < 0 else np.nan),
+            sharpe_cw=(exc.mean() / exc.std() * np.sqrt(243 / FWD)
+                       if exc.std() > 0 else np.nan),
+            tilt=ann_ec - ann_e,
+            ann_mkt_cw=(nav_mc.iloc[-1] ** (1 / yrs) - 1 if yrs > 0 else np.nan),
+        )
+    return res
 
 
 def evaluate_dual(fac, close, name='', cost=COST_RT, cash=1.0):

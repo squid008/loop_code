@@ -134,3 +134,100 @@ def parse_pools(text):
         if t not in out:
             out.append(t)
     return out
+
+
+# ===================== 池标签（pool_tag）单一事实源 =====================
+# ★ 为什么放在这里（2026-09-13）：原先 `tag_of` 只存在于 `standard/pool_tags.py`，
+#   而引擎要在**入库时**把标签写进 `docs/factor_library.md` ⇒ 若各自实现一份，
+#   两份规则必然漂移（本项目一贯治理原则：能统一就统一，暂不能统一就必须对拍）。
+#   今起**本模块是唯一事实源**，`standard/pool_tags.py` 与引擎都 import 它。
+# 判定口径（与 §8.13 的 bank 诊断一致；改阈值只需改这两个常数并重跑派生脚本）：
+TAG_POOL_FLOOR = 0.0      # 池内通过 = 该池费后超额 > 此值
+TAG_CAL_MIN = 0.30        # 全A通过 = 费后超额 > 0 且 Calmar >= 此值
+
+TAG_DESC = {
+    'none': '全不通过',
+    'all3': '全A **且所有池都通过**（真 alpha）',
+    'csi_all_only': '**只有全A通过** ⇒ 小盘/流动性溢价嫌疑，**指数增强不可用**',
+}
+
+
+def derive_tag(ok_all, ok_by_pool, pools):
+    """由「哪些池通过」派生标签（**单一事实源**；原 `standard/pool_tags.py:tag_of`）。
+
+    ok_all     : 全A 是否通过（超额>0 且 Calmar>=TAG_CAL_MIN）
+    ok_by_pool : {池: bool}，池内是否通过（该池费后超额 > TAG_POOL_FLOOR）
+    pools      : 池顺序（决定标签里池名的排列）
+    """
+    passed = [p for p in pools if ok_by_pool.get(p)]
+    if not passed and not ok_all:
+        return 'none'
+    if ok_all and len(passed) == len(pools):
+        return 'all3'
+    if ok_all and not passed:
+        return 'csi_all_only'
+    if ok_all:
+        return 'csi' + '_'.join(passed) + '_all'
+    if len(passed) == 1:
+        return 'csi{}_only'.format(passed[0])
+    return 'csi' + '_'.join(passed)
+
+
+# ===================== 剥风格分档（单一事实源，2026-09-14）=====================
+# ★★★ 为什么单独加这一档（问的是"这个因子的超额，剥掉 lncap+lnamt 之后还剩多少？"）：
+#   实测（`python ai_test/check_strip_style_pool.py`）：**池库 7/14 = 50%、全A 库已测的 6/11 = 55%
+#   是"纯风格因子"** —— 全A 口径 Calmar 看着漂亮（甚至 1.19/1.39），**剥掉市值/成交额后转负**。
+#   例：`corr100(mf_s_bqty, mf_x_sell)` 原 1.193 → 剥 **−0.075**。
+# ★ 根因是**入库判定漏了一道关**（`--strip_style` 开了记录却没传 `--min_strip_calmar`，
+#   后者默认 -1 = 只记录不拦），已修（`ai_test/run_tracks.py` 加 `--min_strip_calmar=0.15`）。
+# ★ 这一档**并列**于 `derive_tag`（**不改** `ok_all`），because：
+#   ① 历史标签语义突变会让 journal/文档前后不可比；
+#   ② 剥风格结果可能缺失（未开 `--strip_style`）⇒ 需要一个 **'D 未测'** 的诚实档位。
+TAG_STRIP_CAL_MIN = 0.30     # 「独立有效」档，与 TAG_CAL_MIN 对齐（口径一致）
+
+STRIP_DESC = {
+    'A': '独立有效（剥风格后 Calmar 仍 >= {:.2f}）'.format(TAG_STRIP_CAL_MIN),
+    'B': '弱独立（剥风格后 Calmar 在 0~{:.2f}）'.format(TAG_STRIP_CAL_MIN),
+    'C': '**纯风格**（剥掉 lncap+lnamt 后超额/Calmar 转负）⇒ 指数增强不可用',
+    'D': '未测（该代没开 `--strip_style`）',
+}
+
+
+def strip_grade(strip_calmar, strip_ann_ex):
+    """剥风格分档（**单一事实源**；引擎、`ai_test/check_strip_style_pool.py`、
+    `ai_test/build_crosspool_view.py` 全部 import 本函数，避免三处各写一套漂移）。
+
+    返回 (档位, 说明)：
+      **A 独立有效** `strip_calmar >= TAG_STRIP_CAL_MIN`
+      **B 弱独立**   0 < strip_calmar < TAG_STRIP_CAL_MIN
+      **C 纯风格**   `strip_ann_ex <= 0` 或 `strip_calmar <= 0` ⇒ **剥完就没了/变负**
+      **D 未测**     取不到剥风格数据（**宁可标"未测"，绝不臆断**）
+
+    ⚠ 判 `C` 用**两个条件或**：超额转负是最直接的证据；Calmar<=0 是必要补充
+      （避免"超额微正但风险调整后为负"漏判）。
+    """
+    if strip_calmar is None or strip_ann_ex is None:
+        return 'D', STRIP_DESC['D']
+    try:
+        sc, sa = float(strip_calmar), float(strip_ann_ex)
+    except (TypeError, ValueError):
+        return 'D', STRIP_DESC['D']
+    if not (np.isfinite(sc) and np.isfinite(sa)):
+        return 'D', STRIP_DESC['D']
+    if sa <= 0 or sc <= 0:
+        return 'C', STRIP_DESC['C']
+    if sc >= TAG_STRIP_CAL_MIN:
+        return 'A', STRIP_DESC['A']
+    return 'B', STRIP_DESC['B']
+
+
+def tag_desc(tag):
+    """标签的中文含义（写进文档用）。未登记的组合名给通用说明。"""
+    if tag in TAG_DESC:
+        return TAG_DESC[tag]
+    if tag.startswith('csi') and tag.endswith('_only'):
+        return '仅 **{}** 池通过（全A 不通过）'.format(tag[3:-5])
+    if tag.endswith('_all'):
+        return '全A + **{}** 池通过'.format(tag[3:-4].replace('_', '/'))
+    return '多池通过、全A 不通过（**{}**）'.format(tag[3:].replace('_', '/'))
+

@@ -1,0 +1,23 @@
+# cleanup_repo.py 执行清单  20260914_001515
+# 删除（不可恢复）
+# 归档（移动到 docs/history/cleanup_20260914_001515/）
+ARC	docs/history/cleanup_20260914_001311/docs/history/loop_pool_obs_300.csv.bak_20260913_130734	76628	备份文件统一进 history/
+ARC	docs/history/cleanup_20260914_001311/docs/history/loop_archive_300.csv.bak_20260913_234028	65205	备份文件统一进 history/
+ARC	docs/history/cleanup_20260914_001311/docs/history/loop_pool_obs_500.csv.bak_20260913_130734	59003	备份文件统一进 history/
+ARC	docs/history/cleanup_20260914_001311/docs/history/loop_archive_500.csv.bak_20260913_234028	57110	备份文件统一进 history/
+ARC	docs/history/cleanup_20260914_001311/docs/factor_library.md.bak_20260913_192313	36827	备份文件统一进 history/
+ARC	docs/history/cleanup_20260914_001311/docs/history/loop_todo.md.bak_20260914_000509	32292	备份文件统一进 history/
+ARC	docs/history/cleanup_20260914_001311/docs/factor_library.md.bak_20260913_192030	32107	备份文件统一进 history/
+ARC	ai_test/_calib_pool_gate.md	11378	§8.24/§8.26 池门槛标定（结论已在 §8.26）
+ARC	ai_test/_bank_diag_summary.md	7970	§8.13 银行因子诊断（结论已在 roadmap §8.13）
+ARC	ai_test/_validate_strip_l1.md	6812	§8.13 剥风格 L1 验证（结论已在 §8.13）
+ARC	ai_test/_calib_complexity.md	6770	复杂度标定（结论已在 roadmap）
+ARC	ai_test/_calib_barra.md	5997	§8.24 期 BARRA 标定（结论已在 §8.24）
+ARC	ai_test/_combo_calib.md	5846	合成标定（结论已在 §8.39）
+ARC	ai_test/_deg.md	4781	一次性探针记录
+ARC	ai_test/_moved_test.md	4781	一次性探针记录
+ARC	ai_test/_paired_2gen.md	4114	过期配对分析
+ARC	ai_test/_combine_report.md	3053	§8.35 合成对照（结论已在 §8.35~§8.36）
+ARC	ai_test/_paired_gen71.md	2739	过期配对分析
+ARC	ai_test/_combo_build_report.md	1569	§8.36 合成构建报告（结论已在 §8.36）
+ARC	ai_test/_combo_check_report.md	1516	合成自检报告

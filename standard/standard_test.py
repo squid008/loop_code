@@ -217,8 +217,10 @@ scan = {}
 for fwd in FREQS:
     scan[fwd] = run_pool(fwd)
     r = scan[fwd]
-    print(f"  fwd={fwd:<3d} 组合{r['ann_t']*100:6.2f}% 池{r['ann_m']*100:6.2f}% "
-          f"超额{r['ann_e']*100:+6.2f}% 回撤{r['dd_e']*100:7.2f}% Calmar{r['cal_e']:5.2f} "
+    print(f"  fwd={fwd:<3d} 组合{r['ann_t']*100:6.2f}% 池等权{r['ann_m']*100:6.2f}% "
+          f"池市值{r['ann_mc']*100:6.2f}% 超额(等权){r['ann_e']*100:+6.2f}% "
+          f"超额(市值){r['ann_ec']*100:+6.2f}% 回撤{r['dd_e']*100:7.2f}% "
+          f"Calmar等权{r['cal_e']:5.2f} 市值{r['cal_ec']:5.2f} "
           f"Sharpe{r['sh_e']:5.2f} 换手{r['turn']*100:5.1f}% 期数{r['n_period']}", flush=True)
 best_fwd = max(scan, key=lambda k: scan[k]['cal_e'] if np.isfinite(scan[k]['cal_e']) else -9)
 main = scan.get(FWD_MAIN, scan[best_fwd])
@@ -303,12 +305,16 @@ for _nm, _fl in ATTR_V:
     fac = neutralize(_G0, _fl)
     r = run_pool(FWD_MAIN)
     icv = float(ic_series(fac, 5).mean())
+    # ★ 双口径(2026-09-13, 用户要求固化): 等权=规模中性(纯 alpha); 市值加权=更接近真实指数。
+    #   **零额外成本** —— run_pool 已同时返回两套 (见其返回 dict 的 ann_ec/cal_ec/dd_ec)。
     attr.append(dict(name=_nm, ic=icv, ann=r['ann_e'], dd=r['dd_e'], cal=r['cal_e'],
                      sh=r['sh_e'], turn=r['turn'],
+                     ec=r['ann_ec'], ddc=r['dd_ec'], calc=r['cal_ec'],
                      ng=sum(1 for x in r['yr'].values() if x < 0)))
-    print(f"  {_nm:<6s} IC{icv:+.4f} 超额{r['ann_e']*100:+6.2f}% 回撤{r['dd_e']*100:7.2f}% "
-          f"Calmar{r['cal_e']:5.2f} Sharpe{r['sh_e']:5.2f} 换手{r['turn']*100:5.1f}% "
-          f"负年{attr[-1]['ng']}", flush=True)
+    print(f"  {_nm:<6s} IC{icv:+.4f} 超额(等权){r['ann_e']*100:+6.2f}% "
+          f"超额(市值){r['ann_ec']*100:+6.2f}% 回撤(等权){r['dd_e']*100:7.2f}% "
+          f"Calmar等权{r['cal_e']:5.2f} 市值{r['cal_ec']:5.2f} Sharpe{r['sh_e']:5.2f} "
+          f"换手{r['turn']*100:5.1f}% 负年{attr[-1]['ng']}", flush=True)
 fac = _G0                                     # 还原为对齐后的原始因子
 
 # ---------- 十档分层: 检验"是否只有极端档有效 / 最优档在哪" ----------
@@ -404,14 +410,18 @@ if ENGINE:
     L.append("  (✅|差≤阈值  ⚠|接近  ❌|偏差大; 方向已按引擎IC定向, 若整体反号说明文档缺取反标记)")
 L.append("")
 L.append("【1】全A 宽池 Top10% 频率扫描")
-L.append(f"{'freq':<6s}{'组合年化':>10s}{'池等权':>10s}{'超额':>10s}{'超额回撤':>10s}"
-         f"{'Calmar':>8s}{'Sharpe':>8s}{'换手':>8s}{'负年':>5s}{'期数':>6s}")
+L.append(f"{'freq':<6s}{'组合年化':>10s}{'池等权':>10s}{'池市值加权':>12s}{'超额等权':>10s}"
+         f"{'超额市值':>10s}{'Calmar等权':>11s}{'Calmar市值':>11s}"
+         f"{'Sharpe':>8s}{'换手':>8s}{'负年':>5s}{'期数':>6s}")
 for fwd in FREQS:
     r = scan[fwd]
     ng = sum(1 for x in r['yr'].values() if x < 0)
-    L.append(f"{fwd:<6d}{r['ann_t']*100:9.2f}%{r['ann_m']*100:9.2f}%{r['ann_e']*100:+9.2f}%"
-             f"{r['dd_e']*100:9.2f}%{r['cal_e']:8.3f}{r['sh_e']:8.3f}{r['turn']*100:7.1f}%"
-             f"{ng:>5d}{r['n_period']:>6d}")
+    L.append(f"{fwd:<6d}{r['ann_t']*100:9.2f}%{r['ann_m']*100:9.2f}%{r['ann_mc']*100:11.2f}%"
+             f"{r['ann_e']*100:+9.2f}%{r['ann_ec']*100:+9.2f}%"
+             f"{r['cal_e']:11.3f}{r['cal_ec']:11.3f}"
+             f"{r['sh_e']:8.3f}{r['turn']*100:7.1f}%{ng:>5d}{r['n_period']:>6d}")
+L.append("  (基准: 池等权=全A 可交易股票等权; 池市值加权=按 mktcap 加权(宽池下仅作参考)。"
+         "'超额等权'是**规模中性**口径=纯选股 alpha; '超额市值'含规模倾斜, 更接近可交付产品。)")
 L.append(f"  IC(fwd5) {ic5.mean():+.4f} / ICIR {ic5.mean()/ic5.std():+.3f}   "
          f"IC(fwd15) {ic15.mean():+.4f} / ICIR {ic15.mean()/ic15.std():+.3f}")
 L.append("")
@@ -446,12 +456,16 @@ for tag in ('300', '500'):
     L.append(f"  idx{tag}成分内: " + _segline(idx_res[tag]))
 L.append("")
 L.append(f"【6】风格归因: 逐步剥除 市值/成交额 暴露 (rank→逐日截面回归残差→rank; 主口径 freq={FWD_MAIN})")
-L.append(f"{'版本':<8s}{'IC(fwd5)':>11s}{'超额/年':>11s}{'回撤':>11s}{'Calmar':>9s}"
-         f"{'Sharpe':>9s}{'换手':>9s}{'负年':>5s}")
+L.append(f"{'版本':<8s}{'IC(fwd5)':>11s}{'超额等权':>11s}{'超额市值':>11s}{'回撤等权':>11s}"
+         f"{'Calmar等权':>11s}{'Calmar市值':>11s}{'Sharpe':>9s}{'换手':>9s}{'负年':>5s}")
 for a in attr:
-    L.append(f"{a['name']:<8s}{a['ic']:>11.4f}{a['ann']*100:>10.2f}%{a['dd']*100:>10.2f}%"
-             f"{a['cal']:>9.3f}{a['sh']:>9.3f}{a['turn']*100:>8.1f}%{a['ng']:>5d}")
+    L.append(f"{a['name']:<8s}{a['ic']:>11.4f}{a['ann']*100:>10.2f}%{a['ec']*100:>10.2f}%"
+             f"{a['dd']*100:>10.2f}%{a['cal']:>11.3f}{a['calc']:>11.3f}"
+             f"{a['sh']:>9.3f}{a['turn']*100:>8.1f}%{a['ng']:>5d}")
 L.append("  (剥后超额/Calmar 大幅衰减 -> 因子收益主要来自市值/成交额风格暴露, 独立信息有限)")
+L.append("  ★ 双口径(2026-09-13): '超额等权'=规模中性=纯选股 alpha(主判据); "
+         "'超额市值'=按 mktcap 加权基准(≈真实指数)。若**等权为正但市值口径转负** "
+         "-> 该因子的'超额'主要来自组合等权带来的**规模倾斜**, 对指数增强不可用。")
 L.append("")
 L.append(f"【7】十档分层超额 (freq={FWD_MAIN}, D1=因子值最高档 … D10=最低档; 年化【费前】超额, 未扣成本)")
 L.append('  ' + '  '.join(f"D{i+1} {x*100:+.2f}%" for i, x in enumerate(dec_ex)))
@@ -489,6 +503,19 @@ ax.plot(main['mr'].index.astype(str), (1+main['mr']).cumprod().values, lw=1.2,
 ax.plot(main['ex'].index.astype(str), (1+main['ex']).cumprod().values, lw=1.3,
         color='tab:blue', ls='--', label=f"超额 年化{main['ann_e']*100:+.1f}% Cal{main['cal_e']:.2f}")
 ax.axhline(1, color='k', lw=0.5); ax.legend(fontsize=9, loc='upper left')
+# ★ 指标框(2026-09-13 用户要求): 左上净值图补「总收益 / 最大回撤 / 夏普 / 卡玛」
+#   两行分别给【组合】与【超额(等权基准)】—— 超额那行才是我们真正关心的。
+#   放右下角(ha=right): 净值曲线从 1 涨到右上, 右下区域通常是空的, 不会压曲线。
+_nt = (1 + main['tr']).cumprod(); _ne = (1 + main['ex']).cumprod()
+ax.text(0.985, 0.035,
+        "组合  总收益{:+.1f}%  最大回撤{:.1f}%\n"
+        "        夏普{:.2f}   卡玛{:.2f}\n"
+        "超额  总收益{:+.1f}%  最大回撤{:.1f}%\n"
+        "        夏普{:.2f}   卡玛{:.2f}".format(
+            (_nt.iloc[-1] - 1) * 100, main['dd_t'] * 100, main['sh_t'], main['cal_t'],
+            (_ne.iloc[-1] - 1) * 100, main['dd_e'] * 100, main['sh_e'], main['cal_e']),
+        transform=ax.transAxes, fontsize=8.0, ha='right', va='bottom', linespacing=1.35,
+        bbox=dict(boxstyle='round,pad=0.3', fc='lightyellow', ec='gray', alpha=0.93))
 ax.set_title(f"{NAME} 全A宽池Top10% freq={FWD_MAIN} 费后{COST:.4f}"); ax.grid(alpha=0.3)
 ax = axes[0][1]
 xs = [str(k) for k in FREQS]
