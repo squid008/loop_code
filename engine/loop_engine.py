@@ -853,6 +853,20 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
             _tg = (pool_tags or {}).get(expr)
             _tg_line = ('- 池标签：**`%s`** —— %s\n' % (_tg, _tag_desc(_tg))
                         if _tg else '- 池标签：未测（本代未开 `--pool_obs`）\n')
+            # ★★★ 符号 `sign`（2026-09-14, loop_todo §1.23）—— **下游用它的第一件事**。
+            #   为什么必须写进文档：引擎求值时对 `sign<0` 的候选**取负**（让"值越大越好"）；
+            #   下游拿到因子值 h5 **直接排序选股、不乘 `sign`** ⇒ **方向反了、组合反向选股** ✗
+            #   实测：精选池 7 个里 **6 个 `sign=-1`** ⇒ 中招概率很高，且**错了不报错**。
+            # ⚠ 只写进**明细块**，**不加表格列** —— 本文件 append-only、总览表头只写一次，
+            #   加列会让历史行全部错位（与 §8.30 的 CSV 同一个坑，见上面 `tbl_rows` 处的注释）。
+            _sg_val = r.get('sign') if hasattr(r, 'get') else None
+            try:
+                _sg_n = int(round(float(_sg_val)))
+            except Exception:
+                _sg_n = None
+            _sg_line2 = ('- **符号 `sign`：`%d`**（★ 因子值须乘它才是"越大越好"的方向；'
+                         '不乘 ⇒ 反向选股）\n' % _sg_n if _sg_n is not None
+                         else '- 符号 `sign`：**未记录**（缺失时不臆造，见 roadmap §8.45 铁律）\n')
             # ★ 剥风格档（2026-09-14, §1.9）：**并列**于池标签，不替代它。
             #   为什么要写进文档：实测约一半入库因子是"纯风格"（全A 口径漂亮、剥掉
             #   lncap+lnamt 后转负），而**下游拿到文档就该一眼看出**，不能靠回头翻 CSV。
@@ -885,10 +899,10 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
             det_rows.append(
                 '\n### F%02d · gen%d 入库（引擎自动同步，家族命名待人工精炼）\n'
                 '```\n%s\n```\n'
-                '- 家族：%s（auto）\n- 叶子：%s\n- 骨架：`%s`\n'
+                '%s- 家族：%s（auto）\n- 叶子：%s\n- 骨架：`%s`\n'
                 '%s%s'
                 '- 费后指标（full，成本 %s）：%s\n'
-                % (no, gen, expr, fam, leaf_s, skel, _tg_line, _sg_line,
+                % (no, gen, expr, _sg_line2, fam, leaf_s, skel, _tg_line, _sg_line,
                    cost_label(r['cost']), met))
             no += 1
         if not det_rows:

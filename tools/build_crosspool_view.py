@@ -147,12 +147,18 @@ def parse_library(pool):
         m_g = re.search(r'gen(\d+) 入库', body)
         m_e = re.search(r'```\n([^\n]+)', body)
         m_t = re.search(r'池标签：\*\*' + BT + r'?([^' + BT + r'\*\n]+)', body)
+        # ★ 符号 `sign`（2026-09-14, §1.23）：明细块里由 `_lib_sync` 写入 /
+        #   `tools/backfill_library_sign.py` 回填。两种形态都覆盖：
+        #     `- **符号 \`sign\`：\`-1\`**（★ ...）`   ← 有值
+        #     `- 符号 \`sign\`：**未记录**（...）`     ← 未落地（不臆造）
+        m_s = re.search(r'符号 ' + BT + r'sign' + BT + r'：\*{0,2}' + BT + r'?([+\-]?\d+)', body)
         if not m_e:
             continue
         out.append(dict(no=no,
                         gen=int(m_g.group(1)) if m_g else None,
                         expr=m_e.group(1).strip(),
-                        tag=m_t.group(1).strip() if m_t else None))
+                        tag=m_t.group(1).strip() if m_t else None,
+                        sign=int(m_s.group(1)) if m_s else None))
     return out
 
 
@@ -193,6 +199,19 @@ def strip_verdict(sr):
     return 'B', '弱独立'
 
 
+def _sign_cell(v):
+    """`sign`（**方向**）的表格单元格。
+
+    ★ 为什么要单列（2026-09-14, §1.23）：引擎求值时对 `sign<0` 的候选**取负**
+    （让"值越大越好"）。下游拿到因子值 h5 **直接排序选股、不乘 `sign`**
+    ⇒ **方向反了、组合反向选股** ✗（精选池实测 7 个里 6 个 `sign=-1`）⇒ 必须显式给出。
+    ⚠ 缺失时写「未记录」，**绝不臆造**（roadmap §8.45 铁律）。
+    """
+    if v is None:
+        return '未记录'
+    return '**`%+d`**' % int(v) if int(v) < 0 else '**`+%d`**' % int(v)
+
+
 def collect(pools):
     """把各池**文档里的入库因子**汇成 {expr: 记录}（**按 expr 去重合并**）。
 
@@ -212,7 +231,14 @@ def collect(pools):
             expr = en['expr']
             rec = merged.setdefault(expr, dict(expr=expr, srcs=[], gens={}, _no={},
                                                _tag_doc={}, allA=None, pool_met={},
-                                               in_bank={}, cat=None, leaf=None, strip={}))
+                                               in_bank={}, cat=None, leaf=None, strip={},
+                                               sign=None))
+            # ★ 同一式子在各池应当 sign 一致（同表达式 ⇒ 同方向）；不一致则标出来（下面会用）
+            if en.get('sign') is not None:
+                if rec['sign'] is None:
+                    rec['sign'] = en['sign']
+                elif rec['sign'] != en['sign']:
+                    rec['sign_conflict'] = True
             # ---- 剥风格（同一 (gen,expr) 优先；退回该池任意代）----
             sr = strip.get((en['gen'], expr))
             if sr is None:
@@ -440,20 +466,27 @@ def main():
           '`A 独立有效`(`剥Calmar≥0.30`) / `B 弱独立`(0~0.30) / '
           '**`C 纯风格`**（**剥掉 lncap+lnamt 后超额转负** ⇒ 信息基本全是市值/成交额风格暴露）/ '
           '`D 无记录`。', '']
+    L += ['> ★★ **「`sign`」列（2026-09-14 加, §1.23）**：引擎求值时对 `sign<0` 的候选**取负**'
+          '（让"值越大越好"）。',
+          '> 下游拿到 `facs/` 的因子值 h5 **直接排序选股、不乘 `sign`** ⇒ '
+          '**方向反了、组合反向选股** ✗（精选池实测 7 个里 **6 个 `sign=-1`** ⇒ 中招概率很高）。',
+          '> ⚠ 「未记录」= 该因子**没在 `facs/` 落地**，`sign` 无从取得 —— **不臆造**'
+          '（roadmap §8.45 铁律）。', '']
     L += ['> ⚠ **为什么必须看这一列**：池轨道的**入库判定没有经过剥风格这道关** —— '
           '`tools/run_tracks.py` 传了 `--strip_style`（记录）但**没传** `--min_strip_calmar`'
           '（默认 `-1` = **只记录不拦**）⇒ 池库里混进了纯风格因子（实测 **7/14**）。'
           '⇒ **只看"全A Calmar"排序会被误导**（实测最高的两个剥完都是负的）。', '']
-    L += ['| # | 表达式 | 风格判定 | 全A超额 | Calmar | **剥风格超额** | **剥风格Calmar** | 池标签(重算) | 来源池(编号) | 换手 | 负年 | 仍在bank? |',
-          '|---|---|---|---|---|---|---|---|---|---|---|---|']
+    L += ['| # | 表达式 | **`sign`** | 风格判定 | 全A超额 | Calmar | **剥风格超额** | **剥风格Calmar** | 池标签(重算) | 来源池(编号) | 换手 | 负年 | 仍在bank? |',
+          '|---|---|---|---|---|---|---|---|---|---|---|---|---|']
     for i, r in enumerate([x for x in rows if x['ok_all']], 1):
         A = r['rec']['allA'] or {}
         sr = r.get('strip_r')
         k = r.get('strip_k', 'D')
         _mark = {'A': '**A 独立有效**', 'B': 'B 弱独立',
                  'C': '❌ **C 纯风格**', 'D': 'D 无记录'}[k]
-        L.append('| {} | {} | {} | **{}** | **{}** | {} | {} | **{}** | {} | {} | {} | {} |'.format(
-            i, '{}{}{}'.format(BT, r['expr'], BT), _mark,
+        L.append('| {} | {} | {} | {} | **{}** | **{}** | {} | {} | **{}** | {} | {} | {} | {} |'.format(
+            i, '{}{}{}'.format(BT, r['expr'], BT), _sign_cell(r['rec'].get('sign')),
+            _mark,
             _pct(A.get('ann_ex')), _f(A.get('calmar')),
             _pct(sr.get('strip_ann_ex')) if sr else '-',
             ('**%s**' % _f(sr.get('strip_calmar'))) if sr else '-',
@@ -467,13 +500,14 @@ def main():
     rest = [x for x in rows if not x['ok_all']]
     if rest:
         L += ['## 表B · 仅池内有效（全A 口径不过）', '']
-        L += ['| # | 表达式 | 池标签(重算) | 来源池 | 全A超额 | Calmar | 池内有效池 |',
-              '|---|---|---|---|---|---|---|']
+        L += ['| # | 表达式 | **`sign`** | 池标签(重算) | 来源池 | 全A超额 | Calmar | 池内有效池 |',
+              '|---|---|---|---|---|---|---|---|']
         for i, r in enumerate(rest, 1):
             A = r['rec']['allA'] or {}
             okp = [p for p, v in r['okp'].items() if v]
-            L.append('| {} | {} | **{}** | {} | {} | {} | {} |'.format(
-                i, '{}{}{}'.format(BT, r['expr'], BT), r['tag'],
+            L.append('| {} | {} | {} | **{}** | {} | {} | {} | {} |'.format(
+                i, '{}{}{}'.format(BT, r['expr'], BT), _sign_cell(r['rec'].get('sign')),
+                r['tag'],
                 '/'.join(r['rec']['srcs']), _pct(A.get('ann_ex')), _f(A.get('calmar')),
                 ', '.join(okp) or '—'))
         L += ['']

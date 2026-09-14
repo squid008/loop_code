@@ -33,26 +33,30 @@
 
 > ★★ **「风格判定」列是本表最重要的列**（2026-09-14 加）：`A 独立有效`(`剥Calmar≥0.30`) / `B 弱独立`(0~0.30) / **`C 纯风格`**（**剥掉 lncap+lnamt 后超额转负** ⇒ 信息基本全是市值/成交额风格暴露）/ `D 无记录`。
 
+> ★★ **「`sign`」列（2026-09-14 加, §1.23）**：引擎求值时对 `sign<0` 的候选**取负**（让"值越大越好"）。
+> 下游拿到 `facs/` 的因子值 h5 **直接排序选股、不乘 `sign`** ⇒ **方向反了、组合反向选股** ✗（精选池实测 7 个里 **6 个 `sign=-1`** ⇒ 中招概率很高）。
+> ⚠ 「未记录」= 该因子**没在 `facs/` 落地**，`sign` 无从取得 —— **不臆造**（roadmap §8.45 铁律）。
+
 > ⚠ **为什么必须看这一列**：池轨道的**入库判定没有经过剥风格这道关** —— `tools/run_tracks.py` 传了 `--strip_style`（记录）但**没传** `--min_strip_calmar`（默认 `-1` = **只记录不拦**）⇒ 池库里混进了纯风格因子（实测 **7/14**）。⇒ **只看"全A Calmar"排序会被误导**（实测最高的两个剥完都是负的）。
 
-| # | 表达式 | 风格判定 | 全A超额 | Calmar | **剥风格超额** | **剥风格Calmar** | 池标签(重算) | 来源池(编号) | 换手 | 负年 | 仍在bank? |
-|---|---|---|---|---|---|---|---|---|---|---|---|
-| 1 | `cs_demean(mul(add(turn_ratio, ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))` | **A 独立有效** | **+6.9%** | **0.891** | +5.6% | **0.587** | **csi_all_only** | 1000(F10) | +8.0% | 1 | ✓ |
-| 2 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` | **A 独立有效** | **+4.0%** | **0.802** | +2.3% | **0.349** | **csi_all_only** | 500(F05) | +18.7% | 2 | ✓ |
-| 3 | `max(fa_np_margin, ts_max100(barra_residual_volatility))` | **A 独立有效** | **+4.7%** | **0.577** | +4.3% | **0.667** | **csi_all_only** | 500(F04) | +6.8% | 1 | ✓ |
-| 4 | `ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))` | **A 独立有效** | **+7.0%** | **0.506** | +6.3% | **0.519** | **csi_all_only** | 1000(F07) | +4.9% | 2 | ✓ |
-| 5 | `sub(ts_min20(barra_beta), ts_mean60(barra_non_linear_size))` | B 弱独立 | **+12.5%** | **0.763** | +2.2% | **0.064** | **csi_all_only** | 1000(F03) | +9.8% | 1 | ✓ |
-| 6 | `corr100(cs_scale(mf_x_sell), mf_l_sell)` | B 弱独立 | **+7.7%** | **0.661** | +1.7% | **0.180** | **csi_all_only** | 300(F02) · 500(F01) · 1000(F01) | +15.2% | 0 | ✓ |
-| 7 | `ts_mean150(mul(barra_residual_volatility, amplitude))` | B 弱独立 | **+4.5%** | **0.563** | +1.9% | **0.171** | **csi_all_only** | 500(F02) | +5.4% | 1 | ⚠仅文档 |
-| 8 | `sub(corr100(mf_x_sell, mf_s_bqty), min(overnight, hl_ratio))` | ❌ **C 纯风格** | **+6.9%** | **1.391** | -3.4% | **-0.082** | **csi_all_only** | 300(F01) | +16.0% | 0 | ✓ |
-| 9 | `corr100(mf_s_bqty, mf_x_sell)` | ❌ **C 纯风格** | **+6.5%** | **1.193** | -3.2% | **-0.075** | **csi_all_only** | 1000(F05) | +15.4% | 0 | ⚠仅文档 |
-| 10 | `cs_scale(corr60(mf_l_sell, mf_m_bqty))` | ❌ **C 纯风格** | **+5.0%** | **0.713** | -3.6% | **-0.087** | **csi_all_only** | 300(F03) | +21.8% | 0 | ✓ |
-| 11 | `ts_mean60(corr60(ts_delta5(ts_mean100(mf_x_bqty)), true_range))` | ❌ **C 纯风格** | **+3.6%** | **0.600** | -0.6% | **-0.050** | **csi_all_only** | 1000(F09) | +12.0% | 0 | ⚠仅文档 |
-| 12 | `ts_sum100(corr20(mul(mktcap, fa_gm), true_range))` | ❌ **C 纯风格** | **+4.8%** | **0.565** | -1.2% | **-0.062** | **csi_all_only** | 1000(F06) | +12.7% | 0 | ⚠仅文档 |
-| 13 | `sub(ts_mean60(overnight), ts_mean60(barra_non_linear_size))` | ❌ **C 纯风格** | **+12.2%** | **0.561** | -5.7% | **-0.102** | **csi_all_only** | 1000(F02) | +6.2% | 1 | ⚠仅文档 |
-| 14 | `ts_mean60(corr60(turn_ratio, ts_delta5(ts_mean100(mf_l_sqty))))` | ❌ **C 纯风格** | **+3.4%** | **0.560** | -1.0% | **-0.054** | **csi_all_only** | 1000(F08) | +12.0% | 3 | ⚠仅文档 |
-| 15 | `ts_mean200(mul(ts_max20(max(fa_np_margin, barra_residual_volatility)), volume))` | ❌ **C 纯风格** | **+6.0%** | **0.559** | -2.3% | **-0.087** | **csi_all_only** | 500(F03) | +6.3% | 1 | ✓ |
-| 16 | `ts_sum100(corr20(mktcap, true_range))` | ❌ **C 纯风格** | **+5.4%** | **0.520** | -0.8% | **-0.042** | **csi_all_only** | 1000(F04) | +12.0% | 0 | ⚠仅文档 |
+| # | 表达式 | **`sign`** | 风格判定 | 全A超额 | Calmar | **剥风格超额** | **剥风格Calmar** | 池标签(重算) | 来源池(编号) | 换手 | 负年 | 仍在bank? |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 1 | `cs_demean(mul(add(turn_ratio, ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))` | **`+1`** | **A 独立有效** | **+6.9%** | **0.891** | +5.6% | **0.587** | **csi_all_only** | 1000(F10) | +8.0% | 1 | ✓ |
+| 2 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` | **`-1`** | **A 独立有效** | **+4.0%** | **0.802** | +2.3% | **0.349** | **csi_all_only** | 500(F05) | +18.7% | 2 | ✓ |
+| 3 | `max(fa_np_margin, ts_max100(barra_residual_volatility))` | **`-1`** | **A 独立有效** | **+4.7%** | **0.577** | +4.3% | **0.667** | **csi_all_only** | 500(F04) | +6.8% | 1 | ✓ |
+| 4 | `ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))` | **`+1`** | **A 独立有效** | **+7.0%** | **0.506** | +6.3% | **0.519** | **csi_all_only** | 1000(F07) | +4.9% | 2 | ✓ |
+| 5 | `sub(ts_min20(barra_beta), ts_mean60(barra_non_linear_size))` | **`+1`** | B 弱独立 | **+12.5%** | **0.763** | +2.2% | **0.064** | **csi_all_only** | 1000(F03) | +9.8% | 1 | ✓ |
+| 6 | `corr100(cs_scale(mf_x_sell), mf_l_sell)` | **`-1`** | B 弱独立 | **+7.7%** | **0.661** | +1.7% | **0.180** | **csi_all_only** | 300(F02) · 500(F01) · 1000(F01) | +15.2% | 0 | ✓ |
+| 7 | `ts_mean150(mul(barra_residual_volatility, amplitude))` | 未记录 | B 弱独立 | **+4.5%** | **0.563** | +1.9% | **0.171** | **csi_all_only** | 500(F02) | +5.4% | 1 | ⚠仅文档 |
+| 8 | `sub(corr100(mf_x_sell, mf_s_bqty), min(overnight, hl_ratio))` | **`-1`** | ❌ **C 纯风格** | **+6.9%** | **1.391** | -3.4% | **-0.082** | **csi_all_only** | 300(F01) | +16.0% | 0 | ✓ |
+| 9 | `corr100(mf_s_bqty, mf_x_sell)` | **`-1`** | ❌ **C 纯风格** | **+6.5%** | **1.193** | -3.2% | **-0.075** | **csi_all_only** | 1000(F05) | +15.4% | 0 | ⚠仅文档 |
+| 10 | `cs_scale(corr60(mf_l_sell, mf_m_bqty))` | **`-1`** | ❌ **C 纯风格** | **+5.0%** | **0.713** | -3.6% | **-0.087** | **csi_all_only** | 300(F03) | +21.8% | 0 | ✓ |
+| 11 | `ts_mean60(corr60(ts_delta5(ts_mean100(mf_x_bqty)), true_range))` | **`-1`** | ❌ **C 纯风格** | **+3.6%** | **0.600** | -0.6% | **-0.050** | **csi_all_only** | 1000(F09) | +12.0% | 0 | ⚠仅文档 |
+| 12 | `ts_sum100(corr20(mul(mktcap, fa_gm), true_range))` | **`-1`** | ❌ **C 纯风格** | **+4.8%** | **0.565** | -1.2% | **-0.062** | **csi_all_only** | 1000(F06) | +12.7% | 0 | ⚠仅文档 |
+| 13 | `sub(ts_mean60(overnight), ts_mean60(barra_non_linear_size))` | **`+1`** | ❌ **C 纯风格** | **+12.2%** | **0.561** | -5.7% | **-0.102** | **csi_all_only** | 1000(F02) | +6.2% | 1 | ⚠仅文档 |
+| 14 | `ts_mean60(corr60(turn_ratio, ts_delta5(ts_mean100(mf_l_sqty))))` | **`-1`** | ❌ **C 纯风格** | **+3.4%** | **0.560** | -1.0% | **-0.054** | **csi_all_only** | 1000(F08) | +12.0% | 3 | ⚠仅文档 |
+| 15 | `ts_mean200(mul(ts_max20(max(fa_np_margin, barra_residual_volatility)), volume))` | **`-1`** | ❌ **C 纯风格** | **+6.0%** | **0.559** | -2.3% | **-0.087** | **csi_all_only** | 500(F03) | +6.3% | 1 | ✓ |
+| 16 | `ts_sum100(corr20(mktcap, true_range))` | **`-1`** | ❌ **C 纯风格** | **+5.4%** | **0.520** | -0.8% | **-0.042** | **csi_all_only** | 1000(F04) | +12.0% | 0 | ⚠仅文档 |
 
 ## 跨池重复（同一式子被多个池独立入库）
 

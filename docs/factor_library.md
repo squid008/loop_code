@@ -101,6 +101,7 @@
 ```
 add(ts_std20(cs_demean(log(turnover))), ts_std60(cs_rank(cs_demean(add(mul(ret, ts_std20(volume)), log(cs_demean(turn_ratio)))))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
   （全A 超额 +3.37% / Calmar +0.302；300 -7.76%；500 -5.50%；1000 +1.44%）
 - 家族：换手-量联动波动（ret×volume 交互 + 换手双对数）
@@ -110,6 +111,7 @@ add(ts_std20(cs_demean(log(turnover))), ts_std60(cs_rank(cs_demean(add(mul(ret, 
 ```
 ts_std20(mul(cs_demean(hl_ratio), ts_mean100(cs_demean(turn_ratio))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 池标签：**`csi_all_only`** —— **只有全A通过** ⇒ 小盘/流动性溢价嫌疑，**指数增强不可用**
   （全A 超额 +2.19% / Calmar +0.318；300 -5.97%；500 -3.80%；1000 -0.06%）
 - 家族 A：hl_ratio×turn_ratio 稳定度（F05~F08 同骨架）
@@ -119,6 +121,7 @@ ts_std20(mul(cs_demean(hl_ratio), ts_mean100(cs_demean(turn_ratio))))
 ```
 add(ts_std60(cs_demean(log(turnover))), add(ts_sum20(cs_demean(ts_std20(cs_demean(log(turn_ratio))))), cs_demean(log(turnover))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
   （全A 超额 +5.18% / Calmar +0.386；300 -4.85%；500 -4.74%；1000 +0.98%）
 - 家族：换手波动叠加（turnover 60 波动 + turn_ratio 短期波动）
@@ -127,6 +130,7 @@ add(ts_std60(cs_demean(log(turnover))), add(ts_sum20(cs_demean(ts_std20(cs_demea
 ```
 add(ts_sum20(ts_std20(cs_demean(log(turn_ratio)))), cs_demean(log(ts_mean5(ts_std20(volume)))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
   （全A 超额 +4.02% / Calmar +0.484；300 -6.90%；500 -4.50%；1000 +1.23%）
 - 家族：turn_ratio 波动 + volume 波动组合
@@ -135,6 +139,7 @@ add(ts_sum20(ts_std20(cs_demean(log(turn_ratio)))), cs_demean(log(ts_mean5(ts_st
 ```
 ts_std60(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 池标签：**`csi500_1000_all`** —— 全A + **500/1000** 池通过
   （全A 超额 +4.86% / Calmar +0.589；300 -4.51%；500 +0.08%；1000 +5.86%）
 - 家族 A 窗口变体（std60 / mean5）
@@ -143,6 +148,7 @@ ts_std60(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
 ```
 ts_std150(mul(cs_demean(hl_ratio), ts_mean100(cs_demean(turn_ratio))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 池标签：**`csi500_1000_all`** —— 全A + **500/1000** 池通过
   （全A 超额 +3.62% / Calmar +1.146；300 -0.02%；500 +0.84%；1000 +4.08%）
 - 家族 A 窗口变体（std150 / mean100）
@@ -151,6 +157,7 @@ ts_std150(mul(cs_demean(hl_ratio), ts_mean100(cs_demean(turn_ratio))))
 ```
 ts_std100(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 池标签：**`csi500_1000_all`** —— 全A + **500/1000** 池通过
   （全A 超额 +5.38% / Calmar +0.709；300 -2.65%；500 +3.43%；1000 +6.11%）
 - 家族 A 窗口变体（std100 / mean5）
@@ -159,6 +166,7 @@ ts_std100(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
 ```
 ts_std150(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 池标签：**`csi500_1000_all`** —— 全A + **500/1000** 池通过
   （全A 超额 +3.78% / Calmar +0.506；300 -3.65%；500 +2.24%；1000 +3.13%）
 - 家族 A 窗口变体（std150 / mean5）
@@ -168,6 +176,7 @@ ts_std150(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
 ```
 neg(log(ts_mean60(div(add(mul(mul(turn_ratio, ts_mean5(ts_std20(cs_rank(log(turnover))))), ts_std20(add(mul(turn_ratio, ts_mean5(ts_mean20(volume))), mul(turn_ratio, corr20(log(cs_demean(turn_ratio)), mktcap))))), close), ts_std60(cs_rank(open))))))
 ```
+- **符号 `sign`：`1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 池标签：**`csi300_1000_all`** —— 全A + **300/1000** 池通过
   （全A 超额 +8.02% / Calmar +0.806；300 +0.38%；500 -0.10%；1000 +3.38%）
 - 家族：换手×量×价格 深度 5 交叉（不再是纯量/换手族窗口变体，混入 mktcap/close/open）
@@ -179,6 +188,7 @@ neg(log(ts_mean60(div(add(mul(mul(turn_ratio, ts_mean5(ts_std20(cs_rank(log(turn
 ```
 sub(add(sub(div(corr100(up_shadow, ln_volume), turnover), corr60(true_range, turn_ratio)), neg(log(corr100(amplitude, intraday)))), ln_volume)
 ```
+- **符号 `sign`：`1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 池标签：**`csi_all_only`** —— **只有全A通过** ⇒ 小盘/流动性溢价嫌疑，**指数增强不可用**
   （全A 超额 +5.30% / Calmar +0.459；300 -4.09%；500 -3.03%；1000 -0.57%）
 - 家族：量价背离·影线强度综合（up_shadow 与 ln_volume 的 100 日相关 ÷ turnover，叠加真实波幅/换手/日内波幅的对数合成）
@@ -190,6 +200,7 @@ sub(add(sub(div(corr100(up_shadow, ln_volume), turnover), corr60(true_range, tur
 ```
 ts_mean60(mul(div(hl_ratio, low), mul(mul(intraday, ret), intraday)))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
   （全A 超额 +5.11% / Calmar +0.405；300 -3.15%；500 -2.72%；1000 +0.29%）
 - 家族：日内强度密度（隔夜区间相对低点 hl_ratio/low × 日内动量² × 收益，60 日均值）
@@ -203,6 +214,7 @@ ts_mean60(mul(div(hl_ratio, low), mul(mul(intraday, ret), intraday)))
 ```
 div(ts_min100(corr100(overnight, ts_std60(div(corr100(up_shadow, div(fa_roe, turnover)), turnover)))), turnover)
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：跳空、影线、财报、成交额（auto）
 - 叶子：overnight、up_shadow、fa_roe、turnover
 - 骨架：`div(ts_min(corr(overnight,ts_std(div(corr(up_shadow,div(fa_roe,turnover)),turnover)))),turnover)`
@@ -217,6 +229,7 @@ div(ts_min100(corr100(overnight, ts_std60(div(corr100(up_shadow, div(fa_roe, tur
 ```
 ts_delay1(add(barra_residual_volatility, barra_non_linear_size))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、风格（auto）
 - 叶子：barra_residual_volatility、barra_non_linear_size
 - 骨架：`ts_delay(add(barra_residual_volatility,barra_non_linear_size))`
@@ -231,6 +244,7 @@ ts_delay1(add(barra_residual_volatility, barra_non_linear_size))
 ```
 add(log(barra_non_linear_size), ts_std150(ts_delay1(ts_sum20(ln_volume))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、量（auto）
 - 叶子：barra_non_linear_size、ln_volume
 - 骨架：`add(log(barra_non_linear_size),ts_std(ts_delay(ts_sum(ln_volume))))`
@@ -242,6 +256,7 @@ add(log(barra_non_linear_size), ts_std150(ts_delay1(ts_sum20(ln_volume))))
 ```
 ts_mean20(ts_mean60(sub(corr100(turnover, barra_non_linear_size), sub(barra_residual_volatility, true_range))))
 ```
+- **符号 `sign`：`1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：成交额、风格、风格、振幅（auto）
 - 叶子：turnover、barra_non_linear_size、barra_residual_volatility、true_range
 - 骨架：`ts_mean(ts_mean(sub(corr(turnover,barra_non_linear_size),sub(barra_residual_volatility,true_range))))`
@@ -253,6 +268,7 @@ ts_mean20(ts_mean60(sub(corr100(turnover, barra_non_linear_size), sub(barra_resi
 ```
 neg(ts_mean100(ts_mean60(sub(corr100(turnover, barra_non_linear_size), sub(barra_residual_volatility, true_range)))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：成交额、风格、风格、振幅（auto）
 - 叶子：turnover、barra_non_linear_size、barra_residual_volatility、true_range
 - 骨架：`neg(ts_mean(ts_mean(sub(corr(turnover,barra_non_linear_size),sub(barra_residual_volatility,true_range)))))`
@@ -267,6 +283,7 @@ neg(ts_mean100(ts_mean60(sub(corr100(turnover, barra_non_linear_size), sub(barra
 ```
 add(ts_mean100(corr100(corr100(fa_ocf_yoy, fa_gm), barra_residual_volatility)), max(ts_rank200(ts_max100(amplitude)), barra_residual_volatility))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：财报、财报、风格、振幅（auto）
 - 叶子：fa_ocf_yoy、fa_gm、barra_residual_volatility、amplitude
 - 骨架：`add(ts_mean(corr(corr(fa_ocf_yoy,fa_gm),barra_residual_volatility)),max(ts_rank(ts_max(amplitude)),barra_residual_volatility))`
@@ -278,6 +295,7 @@ add(ts_mean100(corr100(corr100(fa_ocf_yoy, fa_gm), barra_residual_volatility)), 
 ```
 add(ts_mean100(corr100(corr100(fa_ocf_yoy, fa_gm), add(barra_residual_volatility, fa_ocf_yoy))), max(ret, barra_residual_volatility))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：财报、财报、风格、收益率（auto）
 - 叶子：fa_ocf_yoy、fa_gm、barra_residual_volatility、ret
 - 骨架：`add(ts_mean(corr(corr(fa_ocf_yoy,fa_gm),add(barra_residual_volatility,fa_ocf_yoy))),max(ret,barra_residual_volatility))`
@@ -289,6 +307,7 @@ add(ts_mean100(corr100(corr100(fa_ocf_yoy, fa_gm), add(barra_residual_volatility
 ```
 max(ts_min20(cs_rank(div(mf_s_buy, ts_min20(ts_std200(corr200(ln_volume, mf_s_bqty)))))), barra_residual_volatility)
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：资金流、量、资金流、风格（auto）
 - 叶子：mf_s_buy、ln_volume、mf_s_bqty、barra_residual_volatility
 - 骨架：`max(ts_min(cs_rank(div(mf_s_buy,ts_min(ts_std(corr(ln_volume,mf_s_bqty)))))),barra_residual_volatility)`
@@ -303,6 +322,7 @@ max(ts_min20(cs_rank(div(mf_s_buy, ts_min20(ts_std200(corr200(ln_volume, mf_s_bq
 ```
 max(ts_mean120(cs_rank(div(barra_leverage, fa_gm))), barra_residual_volatility)
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、财报、风格（auto）
 - 叶子：barra_leverage、fa_gm、barra_residual_volatility
 - 骨架：`max(ts_mean(cs_rank(div(barra_leverage,fa_gm))),barra_residual_volatility)`
@@ -314,6 +334,7 @@ max(ts_mean120(cs_rank(div(barra_leverage, fa_gm))), barra_residual_volatility)
 ```
 max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_ocf_yoy, fa_gm))), barra_residual_volatility))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、风格、财报、财报（auto）
 - 叶子：barra_residual_volatility、barra_leverage、fa_ocf_yoy、fa_gm
 - 骨架：`max(add(barra_residual_volatility,barra_leverage),max(ts_min(cs_rank(div(fa_ocf_yoy,fa_gm))),barra_residual_volatility))`
@@ -325,6 +346,7 @@ max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_
 ```
 max(ts_min20(cs_rank(add(fa_ocf_yoy, barra_leverage))), barra_residual_volatility)
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：财报、风格、风格（auto）
 - 叶子：fa_ocf_yoy、barra_leverage、barra_residual_volatility
 - 骨架：`max(ts_min(cs_rank(add(fa_ocf_yoy,barra_leverage))),barra_residual_volatility)`
@@ -336,6 +358,7 @@ max(ts_min20(cs_rank(add(fa_ocf_yoy, barra_leverage))), barra_residual_volatilit
 ```
 max(ts_min20(cs_rank(barra_leverage)), barra_residual_volatility)
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、风格（auto）
 - 叶子：barra_leverage、barra_residual_volatility
 - 骨架：`max(ts_min(cs_rank(barra_leverage)),barra_residual_volatility)`
@@ -350,6 +373,7 @@ max(ts_min20(cs_rank(barra_leverage)), barra_residual_volatility)
 ```
 min(sub(barra_non_linear_size, min(div(fa_ocf_yoy, mf_s_bqty), ts_max100(barra_growth))), min(ts_mean5(corr100(mf_s_sqty, barra_liquidity)), ts_rank100(corr200(mf_m_bqty, barra_momentum))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、财报、资金流、风格、资金流、风格、…（auto）
 - 叶子：barra_non_linear_size、fa_ocf_yoy、mf_s_bqty、barra_growth、mf_s_sqty、barra_liquidity、mf_m_bqty、barra_momentum
 - 骨架：`min(sub(barra_non_linear_size,min(div(fa_ocf_yoy,mf_s_bqty),ts_max(barra_growth))),min(ts_mean(corr(mf_s_sqty,barra_liquidity)),ts_rank(corr(mf_m_bqty,barra_momentum))))`
@@ -364,6 +388,7 @@ min(sub(barra_non_linear_size, min(div(fa_ocf_yoy, mf_s_bqty), ts_max100(barra_g
 ```
 max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage)), ts_min20(cs_rank(barra_leverage)))), barra_residual_volatility)
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、风格（auto）
 - 叶子：barra_leverage、barra_residual_volatility
 - 骨架：`max(ts_mean(corr(ts_rank(cs_rank(barra_leverage)),ts_min(cs_rank(barra_leverage)))),barra_residual_volatility)`
@@ -378,6 +403,7 @@ max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage)), ts_min20(cs_rank(bar
 ```
 ts_delta120(barra_non_linear_size)
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格（auto）
 - 叶子：barra_non_linear_size
 - 骨架：`ts_delta(barra_non_linear_size)`
@@ -389,6 +415,7 @@ ts_delta120(barra_non_linear_size)
 ```
 corr100(mf_m_sqty, hl_ratio)
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：资金流、振幅（auto）
 - 叶子：mf_m_sqty、hl_ratio
 - 骨架：`corr(mf_m_sqty,hl_ratio)`
@@ -403,6 +430,7 @@ corr100(mf_m_sqty, hl_ratio)
 ```
 max(max(barra_residual_volatility, ts_rank60(cs_scale(ts_std200(barra_residual_volatility)))), sub(barra_non_linear_size, barra_liquidity))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、风格、风格（auto）
 - 叶子：barra_residual_volatility、barra_non_linear_size、barra_liquidity
 - 骨架：`max(max(barra_residual_volatility,ts_rank(cs_scale(ts_std(barra_residual_volatility)))),sub(barra_non_linear_size,barra_liquidity))`
@@ -417,6 +445,7 @@ max(max(barra_residual_volatility, ts_rank60(cs_scale(ts_std200(barra_residual_v
 ```
 max(max(barra_residual_volatility, corr60(barra_residual_volatility, barra_liquidity)), barra_non_linear_size)
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、风格、风格（auto）
 - 叶子：barra_residual_volatility、barra_liquidity、barra_non_linear_size
 - 骨架：`max(max(barra_residual_volatility,corr(barra_residual_volatility,barra_liquidity)),barra_non_linear_size)`
@@ -431,6 +460,7 @@ max(max(barra_residual_volatility, corr60(barra_residual_volatility, barra_liqui
 ```
 sub(mul(barra_residual_volatility, barra_liquidity), corr100(barra_non_linear_size, abs(max(barra_residual_volatility, barra_liquidity))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、风格、风格（auto）
 - 叶子：barra_residual_volatility、barra_liquidity、barra_non_linear_size
 - 骨架：`sub(mul(barra_residual_volatility,barra_liquidity),corr(barra_non_linear_size,abs(max(barra_residual_volatility,barra_liquidity))))`
@@ -445,6 +475,7 @@ sub(mul(barra_residual_volatility, barra_liquidity), corr100(barra_non_linear_si
 ```
 mul(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(barra_non_linear_size)))), max(barra_residual_volatility, div(min(barra_non_linear_size, barra_liquidity), barra_liquidity)))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、风格、风格（auto）
 - 叶子：barra_residual_volatility、barra_non_linear_size、barra_liquidity
 - 骨架：`mul(max(barra_residual_volatility,ts_rank(ts_std(cs_rank(barra_non_linear_size)))),max(barra_residual_volatility,div(min(barra_non_linear_size,barra_liquidity),barra_liquidity)))`
@@ -456,6 +487,7 @@ mul(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(barra_non_linear_
 ```
 add(barra_residual_volatility, div(sub(barra_non_linear_size, barra_comovement), barra_liquidity))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、风格、风格、风格（auto）
 - 叶子：barra_residual_volatility、barra_non_linear_size、barra_comovement、barra_liquidity
 - 骨架：`add(barra_residual_volatility,div(sub(barra_non_linear_size,barra_comovement),barra_liquidity))`
@@ -470,6 +502,7 @@ add(barra_residual_volatility, div(sub(barra_non_linear_size, barra_comovement),
 ```
 ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_beta), ts_std150(mf_x_bqty))))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：风格、风格、资金流（auto）
 - 叶子：barra_non_linear_size、barra_beta、mf_x_bqty
 - 骨架：`ts_delta(add(ts_max(ts_max(barra_non_linear_size)),div(cs_rank(barra_beta),ts_std(mf_x_bqty))))`
@@ -481,6 +514,7 @@ ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_be
 ```
 div(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(barra_non_linear_size)))), max(barra_residual_volatility, div(min(barra_non_linear_size, barra_liquidity), barra_liquidity)))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：未分类（auto）
 - 叶子：
 - 骨架：`div(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(barra_non_linear_size)))),max(barra_residual_volatility, div(min(barra_non_linear_size, barra_liquidity), barra_liquidity)))`
@@ -495,6 +529,7 @@ div(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(barra_non_linear_
 ```
 mul(ts_max20(max(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std100(barra_residual_volatility))))), corr100(true_range, mf_m_buy))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：振幅、资金流（auto）
 - 叶子：true_range、mf_m_buy
 - 骨架：`mul(ts_max(max(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)),ts_rank60(cs_scale(ts_std100(barra_residual_volatility))))),corr(true_range,mf_m_buy))`
@@ -509,6 +544,7 @@ mul(ts_max20(max(max(barra_residual_volatility, div(barra_residual_volatility, b
 ```
 ts_mean120(corr100(true_range, ts_delta20(mf_l_buy)))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：振幅、资金流（auto）
 - 叶子：true_range、mf_l_buy
 - 骨架：`ts_mean(corr(true_range,ts_delta(mf_l_buy)))`
@@ -520,6 +556,7 @@ ts_mean120(corr100(true_range, ts_delta20(mf_l_buy)))
 ```
 mul(ts_max20(ts_std200(mf_x_sqty)), corr100(true_range, mf_m_buy))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：资金流、振幅、资金流（auto）
 - 叶子：mf_x_sqty、true_range、mf_m_buy
 - 骨架：`mul(ts_max(ts_std(mf_x_sqty)),corr(true_range,mf_m_buy))`
@@ -531,6 +568,7 @@ mul(ts_max20(ts_std200(mf_x_sqty)), corr100(true_range, mf_m_buy))
 ```
 ts_mean120(corr20(cs_scale(mf_l_sqty), mf_s_sqty))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：资金流、资金流（auto）
 - 叶子：mf_l_sqty、mf_s_sqty
 - 骨架：`ts_mean(corr(cs_scale(mf_l_sqty),mf_s_sqty))`
@@ -542,6 +580,7 @@ ts_mean120(corr20(cs_scale(mf_l_sqty), mf_s_sqty))
 ```
 ts_mean150(corr20(ts_delta5(mf_l_sqty), mf_s_sqty))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：资金流、资金流（auto）
 - 叶子：mf_l_sqty、mf_s_sqty
 - 骨架：`ts_mean(corr(ts_delta(mf_l_sqty),mf_s_sqty))`
@@ -553,6 +592,7 @@ ts_mean150(corr20(ts_delta5(mf_l_sqty), mf_s_sqty))
 ```
 corr100(mf_l_bqty, mf_l_sell)
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：资金流、资金流（auto）
 - 叶子：mf_l_bqty、mf_l_sell
 - 骨架：`corr(mf_l_bqty,mf_l_sell)`
@@ -564,6 +604,7 @@ corr100(mf_l_bqty, mf_l_sell)
 ```
 neg(corr100(true_range, mf_x_bqty))
 ```
+- **符号 `sign`：`1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：振幅、资金流（auto）
 - 叶子：true_range、mf_x_bqty
 - 骨架：`neg(corr(true_range,mf_x_bqty))`

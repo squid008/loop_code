@@ -51,6 +51,10 @@ OK = [0, 0]
 # 反引号包裹的、以叶子/函数名开头的候选表达式
 RX = re.compile(r'`([a-z_][a-z_0-9]*(?:\([^`\n]*)?)`')
 RX_FENCE = re.compile(r'```[a-z]*\n([^\n]+)\n```')
+# 明细块（`### F07 · gen11 入库` -> 正文）
+RX_BLOCK = re.compile(r'^###\s*(F\d+)\s*·[^\n]*\n(.*?)(?=^###\s|\n## |\Z)', re.M | re.S)
+# `sign` 行的**宽松**标记（两种形态都覆盖：有值 / 未记录）
+SIGN_MARK = '符号 `sign`：'
 
 
 def chk(cond, msg):
@@ -111,6 +115,29 @@ def main():
             chk('sign' in t and '必须乘' in t,
                 '{} 给出 `sign`（**方向**）—— 不乘它因子值是反的'.format(name))
             chk('facs/' in t, '{} 给出因子值 h5 路径（下游不用再找）'.format(name))
+
+    print('\n[5] ★★ `sign`（**方向**）必须出现在所有"给人挑因子"的报告里（§1.23）')
+    # 为什么：引擎求值时对 sign<0 的候选**取负**；下游直接排序选股不乘 sign
+    # ⇒ **方向反了、组合反向选股** ✗（精选池实测 7 个里 6 个 sign=-1）
+    for p in sorted(glob.glob(os.path.join(ROOT, 'docs', 'factor_library*.md'))):
+        t = io.open(p, encoding='utf-8', errors='replace').read()
+        blocks = RX_BLOCK.findall(t)
+        if not blocks:
+            continue
+        n_s = sum(1 for _, b in blocks if SIGN_MARK in b)
+        dup = sum(1 for _, b in blocks if b.count(SIGN_MARK) > 1)
+        chk(n_s == len(blocks) and dup == 0,
+            '{}：**每个明细块**都有 `sign`（{}/{}）且无重复 —— 缺的下游会反向选股'.format(
+                os.path.relpath(p, ROOT).replace('\\', '/'), n_s, len(blocks)))
+    p = os.path.join(ROOT, 'docs', 'factor_library_crosspool.md')
+    if os.path.exists(p):
+        t = io.open(p, encoding='utf-8', errors='replace').read()
+        chk('**`sign`**' in t, 'crosspool 视图的**表头含 `sign` 列**')
+        chk(t.count('未记录') >= 0 and '不臆造' in t, 'crosspool 说明里声明「缺失不臆造」')
+    src_le = io.open(os.path.join(ROOT, 'engine', 'loop_engine.py'),
+                     encoding='utf-8').read()
+    chk('符号 `sign`' in src_le or '符号 \\`sign\\`' in src_le,
+        '★ `loop_engine._lib_sync` 会给**新入库**因子写 `sign` 行（+ 不改表格列）')
 
     print('\n[4] 生成器源码里不许有"表达式截断"（防止再手滑加回去）')
     src = io.open(os.path.join(ROOT, 'tools', 'cross_pool_review.py'),

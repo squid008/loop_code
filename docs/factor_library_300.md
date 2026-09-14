@@ -32,6 +32,7 @@
 ```
 sub(corr100(mf_x_sell, mf_s_bqty), min(overnight, hl_ratio))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：资金流、资金流、跳空、振幅（auto）
 - 叶子：mf_x_sell、mf_s_bqty、overnight、hl_ratio
 - 骨架：`sub(corr(mf_x_sell,mf_s_bqty),min(overnight,hl_ratio))`
@@ -45,6 +46,7 @@ sub(corr100(mf_x_sell, mf_s_bqty), min(overnight, hl_ratio))
 ```
 corr100(cs_scale(mf_x_sell), mf_l_sell)
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：资金流、资金流（auto）
 - 叶子：mf_x_sell、mf_l_sell
 - 骨架：`corr(cs_scale(mf_x_sell),mf_l_sell)`
@@ -58,6 +60,7 @@ corr100(cs_scale(mf_x_sell), mf_l_sell)
 ```
 cs_scale(corr60(mf_l_sell, mf_m_bqty))
 ```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
 - 家族：资金流、资金流（auto）
 - 叶子：mf_l_sell、mf_m_bqty
 - 骨架：`cs_scale(corr(mf_l_sell,mf_m_bqty))`
