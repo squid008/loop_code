@@ -1,6 +1,6 @@
 # 因子库（池 = 1000）
 
-> 当前 **9 个入库**
+> 当前 **4 个入库**
 > 本文件由引擎在**每代末尾自动同步**（`--mine_pool=1000` 时生效；实现见 `_lib_sync`）。
 > ⚠ 与全A 轨道的 `docs/factor_library.md` **互不读写**（池隔离，见 roadmap §8.42）。
 
@@ -27,6 +27,7 @@
 | F07 | gen5 | 跳空、风格、风格、风格 | ts_mean200(mul(add(sub(overnight, barra_b… | 已入库(auto) |
 | F08 | gen5 | 换手率、资金流 | ts_mean60(corr60(turn_ratio, ts_delta5(ts… | 已入库(auto) |
 | F09 | gen6 | 资金流、振幅 | ts_mean60(corr60(ts_delta5(ts_mean100(mf_… | 已入库(auto) |
+| F10 | gen7 | 未分类 | cs_demean(mul(add(turn_ratio, ts_mean60(b… | 已入库(auto) |
 ## 因子明细
 
 ### F01 · gen1 入库（引擎自动同步，家族命名待人工精炼）
@@ -133,6 +134,20 @@ ts_mean60(corr60(ts_delta5(ts_mean100(mf_x_bqty)), true_range))
 - 池标签：**`csi500_1000_all`** —— 全A + **500/1000** 池通过
 - 剥风格：**`C`** **纯风格**（剥掉 lncap+lnamt 后超额/Calmar 转负）⇒ 指数增强不可用（原 Calmar 0.600 → 剥后 -0.050；超额 +3.6% → -0.6%）
 - 费后指标（full，成本 0.004往返(主用档)）：IC 0.0235 / IC_IR 0.288 / 年化超额 +3.6% / 回撤 -6.0% / Calmar 0.600 / Sharpe 0.713 / 最近年 +1.0% / 单期换手 12.0% / 负年 0
+
+---
+
+
+### F10 · gen7 入库（引擎自动同步，家族命名待人工精炼）
+```
+cs_demean(mul(add(turn_ratio, ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))
+```
+- 家族：未分类（auto）
+- 叶子：
+- 骨架：`cs_demean(mul(add(turn_ratio, ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))`
+- 池标签：**`all3`** —— 全A **且所有池都通过**（真 alpha）
+- 剥风格：**`A`** 独立有效（剥风格后 Calmar 仍 >= 0.30）（原 Calmar 0.891 → 剥后 0.587；超额 +6.9% → +5.6%）
+- 费后指标（full，成本 0.004往返(主用档)）：IC 0.0469 / IC_IR 0.430 / 年化超额 +6.9% / 回撤 -7.8% / Calmar 0.891 / Sharpe 1.059 / 最近年 +1.1% / 单期换手 8.0% / 负年 1
 
 ---
 

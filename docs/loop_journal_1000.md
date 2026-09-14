@@ -230,3 +230,49 @@ leaf_w={}
 > (3) 建议: mix=[0.25,0.25,0.15,0.2,0.15] 提高变异/交叉以打散叶子; depth=[2,3,4] 降深度抗过拟合; min_stab=0.5 提门槛; decorr=0.85 强制去同质。
 > 
 > 否决: 无
+
+## 第 7 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 19 | 0.020 | 0.050 | 0.987 | 0.000 | 0.368 | 0.947 | 22 | 0.316 | 19 | 1 | 0.069 | 0.000 | 0.150 | 0.389 | 0.389 | 0.556 | 0.167 | 0.889 | 0.444 | 0.444 | 0.316 |
+
+叶子使用: {'barra_residual_volatility': 7, 'overnight': 5, 'turn_ratio': 5, 'barra_size': 5, 'barra_beta': 4, 'mktcap': 2}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- —— 本代共拦截 1 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.3  decorr=0.75  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [4, 5] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`
+
+**LLM 引导(A角 7代)**: 调用3次, 解析通过37条, 引导位使用37条
+> 资金流强度与价格变动的背离(主动净买入放大但价格未跟涨、或价格上行而超大单净卖出)反映知情交易者与散户的博弈错位,未来5日截面收益将向资金流方向修正;叠加财报景气动量与风格暴露的错配可增强预测。
+
+
+**LLM 候选审查(B角 7代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ts_std150(ts_mean5(ln_volume))`
+  > 理由: 仅对成交量均值取长窗标准差，属换手/成交额老故事，无增量机制
+- KILL `corr60(abs(barra_beta), high)`
+  > 理由: barra_beta与high跨域相关无明确量价机制，属数学拼凑，难解释
+- KILL `ts_min20(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(mktcap))))`
+  > 理由: 隔夜收益与beta/残差波动/市值尺度混算，经济含义拼凑，属数学巧合
+- KILL `ts_std150(div(corr60(ln_mktcap, true_range), ts_mean150(barra_beta)))`
+  > 理由: 市值与真实波幅相关性再除以beta均值，多层嵌套冗余，经济含义拼凑难解释
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1)病根:IC够但L2几乎全灭,neg_yr=0.889、fail_lastyr=0.444,即因子是"近端过拟合的短命信号",而非稳健alpha。
+> 
+> (2)规则B建议本身无新动作,只复述永久关闭r5_calmar_cross,对症但零信息量;真正该管的是neg_yr与lastyr,建议未触及,等于空转。mix里交叉0.4偏高、引导0.2偏低,与"需换骨架"矛盾。
+> 
+> (3)我取mix=[0.15,0.25,0.15,0.3,0.15],depth=[3,4,5],min_stab=0.5,decorr=0.7:提引导压交叉,加深换结构,抬stab门槛逼出跨年稳健因子。
+> 
+> 否决: 无
