@@ -474,6 +474,11 @@ def _cr(a, b, w):
     return fastops.ts_corr(a, b, w)
 
 
+def _e(x, w):
+    import fastops
+    return fastops.ts_ema(x, w)
+
+
 UNARY = {
     # 短中窗口(原)
     'ts_mean5': lambda x: _m(x, 5),
@@ -505,6 +510,19 @@ UNARY = {
     'ts_delta60': lambda x: ts_delta(x, 60),
     'ts_delta120': lambda x: ts_delta(x, 120),
     'ts_sum100': lambda x: _sm(x, 100),
+    # ★★ EMA 族（2026-09-15, loop_todo §1.25）—— 对齐 QuantaAlpha `EMA` / 通达信 `EMA`
+    #   为什么值得加：`ts_mean` 是**等权**、EMA 是**指数加权** ⇒ **不同算子、组合不出来**
+    #   ⇒ 这是盘点时发现的**唯一真缺**（`--style_obs` 4 项之外，算子族里唯一补不回来的）
+    #   ⇒ 它提供一条**新的平滑通道 = 新信号源**（正对 §1.20 铁律「瓶颈是信号源多样性」）✓
+    #   ★ 窗口为什么是这 5 个：**12/26 是 MACD 标准参数** ⇒ `sub(ema12(x), ema26(x))` 就是 MACD
+    #     （**不必再单独加 `MACD` 算子**）✓；5/20/60 与 `ts_mean` 的常用档对齐 ✓
+    #   ★ 性能：真面板实测 **`ema12(close)` 0.58s vs `ts_mean20(close)` 1.17s** ⇒
+    #     `ema` **反而更快**（`ts_mean` 要两次 cumsum + 计数）⇒ **无需特殊降权** ✓
+    'ema5': lambda x: _e(x, 5),
+    'ema12': lambda x: _e(x, 12),
+    'ema20': lambda x: _e(x, 20),
+    'ema26': lambda x: _e(x, 26),
+    'ema60': lambda x: _e(x, 60),
     'log': lambda x: np.log(np.maximum(x, 1e-9)),
     'abs': np.abs,
     'neg': lambda x: -x,

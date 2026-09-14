@@ -32,7 +32,10 @@ from loop_fields import LEAVES
 KNOWN_HINT = ['ln_mktcap', 'ln_volume', 'turnover', 'mktcap', 'amt']
 
 # 长周期算子(稳定性友好) / 短周期算子(换手高)
-SLOW_OPS = ['ts_mean20', 'ts_mean10', 'ts_rank60', 'ts_std60', 'ts_max20', 'ts_min20']
+# 长周期算子(稳定性友好) —— ★ 2026-09-15 加 `ema60`：EMA 是**指数平滑**，
+#   对近期加权但尾部衰减 ⇒ 天然**低换手/高稳定**，正是这一档想要的 ✓
+SLOW_OPS = ['ts_mean20', 'ts_mean10', 'ts_rank60', 'ts_std60', 'ts_max20', 'ts_min20',
+            'ema60']
 FAST_OPS = ['ts_mean5', 'ts_delay1', 'ts_delta5']
 
 # =====================================================================
@@ -234,14 +237,36 @@ def _leaf_of(expr):
     return [t for t in toks if t in LEAVES]
 
 
+_OP_CACHE = []
+
+
+def _op_names():
+    """★ **算子名单一事实源** = 引擎的 `UNARY` + `BINARY`（惰性导入 + 缓存）。
+
+    **为什么用惰性 import**：`loop_engine` 会 `import loop_critic`（B角 是它的一部分），
+    所以顶部 `import loop_engine` 会**循环导入** ⇒ 必须放到函数里 + 缓存（只取一次）✓
+    """
+    if not _OP_CACHE:
+        import loop_engine as LE
+        _OP_CACHE.append(tuple(LE.UNARY.keys()) + tuple(LE.BINARY.keys()))
+    return _OP_CACHE[0]
+
+
 def _ops_of(expr):
+    """粗暴提取表达式里出现的**算子**名（白名单 = 引擎单一事实源，见 `_op_names`）。
+
+    ★★★ 2026-09-15 修（`loop_todo §1.25`）—— **原实现硬编码 28 个算子**，
+      而引擎实际有 `UNARY(35) + BINARY(10) = 45` 个 ⇒ **缺 15 个**：
+      `ts_mean60/100/120/150/200` · `ts_std100/150/200` · `ts_rank100/200` ·
+      `ts_max100` · `ts_min100` · `ts_delta60/120` · `ts_sum100` · `corr100/200`
+      ⇒ **长窗口算子一直被 B角 的结构诊断忽视** ✗
+      ★ 这与项目史上「`loop_critic` 硬编码旧 12 字段」（见 `loop_fields.py` 头注）
+        是**同一类漂移** ⇒ 所以这次**不再补名单，而是改成派生** ✓
+    ⇒ 已加回归测试 `tools/_test_ops_sync.py` 锁住它（以后加算子若忘了同步会**直接报错**）✓
+    """
     import re
-    toks = re.findall(r'[A-Za-z_][A-Za-z0-9_]*', expr)
-    ops = ['ts_mean5', 'ts_mean10', 'ts_mean20', 'ts_std20', 'ts_std60', 'ts_max20',
-           'ts_min20', 'ts_rank20', 'ts_rank60', 'ts_delay1', 'ts_delta5', 'ts_delta20',
-           'ts_sum20', 'cs_rank', 'cs_demean', 'cs_scale', 'corr20', 'corr60',
-           'log', 'abs', 'neg', 'sign', 'add', 'sub', 'mul', 'div', 'min', 'max']
-    return [t for t in toks if t in ops]
+    toks = set(re.findall(r'[A-Za-z_][A-Za-z0-9_]*', expr))
+    return [t for t in toks if t in _op_names()]
 
 
 def diagnose(l1, l2, gen, verbose=True, gate=None, pool_map=None):

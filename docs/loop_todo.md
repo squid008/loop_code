@@ -935,7 +935,58 @@ gen61  叶子[barra_residual_volatility]占比67%过高  -> 权重压到0.25
 
 ---
 
-### 1.25 【待办·用户 2026-09-15 问起】技术指标族：**只有 `EMA` 真正缺**，其余能组合出来
+### 1.26 【待办·2026-09-15 用户问起】算子差集盘点：**4 类缺口，按价值/成本排序**
+
+**用户之问**：「他们的 20+（**偏度/峰度/分位/回归/argmax**…），这个我们没有吧？
+还有比如通达信里的 **slope、barssince、count、barslast、BARSCOUNT、CROSS、FILTER** 之类的也没有吧？」
+（并给了 3 张**通达信函数表**截图）
+
+**答案：对，都没有** ✓（逐条核对本地 `QuantaAlpha-main/quantaalpha/factors/coder/function_lib.py`
+的 **83 个算子** + 用户给的 3 张表）
+
+#### 缺口归纳成 **4 类**（这是关键 —— 按"性质"分组才看得清该不该加）
+
+| 类 | 缺什么 | 性质 | 成本 | 价值 | 建议 |
+|---|---|---|---|---|---|
+| **① 事件/时序位置** | `barslast`/`barssince`/`count`/`cross`/`filter`<br>`hhvbars`/`llvbars`/`highday`/`lowday`/`ts_argmax`/`ts_argmin` | ★ **需要一个"条件/布尔"概念** —— 而我们的表达式树是**纯数值**的 ⇒ **结构性缺** | 高（要改语法/求值）| 高（"距上次金叉 N 天"是经典信号）| **分两步**：先加**不需要布尔的**（`ts_argmax`/`ts_argmin` 极值位置）✓；`barslast`/`cross`/`filter` **单独立项** |
+| **② 高阶矩/分位** | `skew`/`kurt`/`median`/`quantile`/`mad`/`zscore`（`TS_SKEW`/`TS_KURT`/`PERCENTILE`/`TS_QUANTILE`/`TS_MAD`/`TS_ZSCORE`）| 都是**聚合函数**（与时序窗口同构）| **低**（照 `ts_std` 的模板写）| 中（分布形状是真信息）| ★ **可批量加**（一批 4~6 个）✓ |
+| **③ 回归类** | **`slope`** ← 用户点名 · `regbeta`/`regresi`（qlib 的 `BETA5~60` 用的就是它）| 一元 + 窗口，与 `ts_std` 同构 | **低** | ★ **高**（"趋势斜率"是**独立信息**，不是"均值的另一种写法"）| ★★★ **最值得优先加** |
+| **④ 数学/逻辑** | `sqrt`/`pow`/`exp`/`int`/`if`/`between`/`and`/`or`/`gt`/`lt` | 纯函数；逻辑类需要布尔 | 低（数学）/ 高（逻辑）| 低（`log`+`abs`+`sign` 已覆盖大半）| ★ **缓做**；数学类可顺带加 |
+
+#### ★ 已经有的（对照通达信表，**逐条核对过**）
+
+| 通达信 | 我们 |
+|---|---|
+| `VOL` / `AMOUNT` / `MARKET_CAP` | ✅ `volume` / `turnover` / `mktcap` |
+| `HHV` / `LLV` | ✅ `ts_max` / `ts_min` |
+| `MA` / `MEAN` / `REF` / `DELTA` | ✅ `ts_mean` / `ts_delay1` / `ts_delta` |
+| `STD` / `SUM` / `MAX` / `MIN` | ✅ `ts_std` / `ts_sum` / `max` / `min` |
+| `ABS` / `LOG` / `SGN` | ✅ `abs` / `log` / `sign` |
+| `VWAP` / `TURNOVERRATE` | ✅ `vwap` 叶子 / `turn_ratio` 叶子 |
+| **`EMA`** | ✅ **刚加**（v0.12.0，5 档）|
+| `VAR` | 🟡 可组合（`mul(ts_std20(x), ts_std20(x))`）|
+| `L2_AMO`/`L2_PCT`/`L2_VOL` | 🟡 **有原料**（`mf_*` 16 列）可组合 |
+| `EMA_TDX` / `SMA` / `WMA` | ❌（我们实现的是**标准 EMA** `α=2/(w+1)`；通达信的 `EMA_TDX`/`SMA` 是**另一种递归**）|
+
+#### 建议的下一步（**需拍板**）
+
+1. ★★★ **`slope`**（线性斜率）—— 1 个一元算子 + 窗口档位；价值最高、成本最低
+2. ★★ **`ts_argmax`/`ts_argmin`**（极值位置）—— 不需要布尔，可直接加 ✓
+3. ★ **`skew`/`kurt`/`median`/`quantile`** —— 批量加（照 `ts_std` 模板）
+4. ★ **`cross`/`barslast`/`filter`/`if`** —— **结构性改动**（引入布尔/条件）⇒ 单独立项、单独评估
+5. ⚠ **加之前先想清楚**：§1.20 铁律「瓶颈是**信号源多样性**，不是数量」
+   ⇒ 加算子的**唯一正当理由**是"它提供**新的信息通道**"（如 `slope` = 趋势、`skew` = 尾部形状）；
+   **能组合出来的不要加**（`rsi`/`boll`/`atr`/`macd` 已确认可组合）✓
+   ⇒ 且**必须配套复杂度门**（§1.3-B 的 `Base Features ≤ 5`），否则只扩大搜索空间
+
+---
+
+### 1.25 ✅【已完成 EMA·2026-09-15 v0.12.0】技术指标族：**只有 `EMA` 真正缺**，其余能组合出来
+
+> **✅ 已做**：加了 `ema5/ema12/ema20/ema26/ema60`（`sub(ema12,ema26)` 即 MACD ⇒ 不必单加 `MACD`）；
+> ★★ **顺带修掉一处漂移**：`loop_critic._ops_of()` **硬编码 28 个算子而引擎有 45 个**
+> （缺 15 个长窗算子 ⇒ **一直被 B角 结构诊断忽视**）⇒ 改成**从引擎派生** + 回归测试 `tools/_test_ops_sync.py`（**22 项**）锁住。
+> 详见 `docs/factor_roadmap.md §8.48`。
 
 **用户之问**：「咱们的特征**有四价一量**吗？像中金、QuantaAlpha 那样，另外还有
 **MA/MACD/EMA/HHV/LLV** 这些特征有吗？」

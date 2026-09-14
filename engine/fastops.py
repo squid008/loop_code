@@ -181,3 +181,56 @@ def ts_delta(x, n):
     if n < x.shape[0]:
         out[n:] = x[n:] - x[:-n]
     return out
+
+
+def ts_ema(x, w):
+    """指数移动平均 EMA —— 衰减因子 `α = 2/(w+1)`（对齐 QuantaAlpha `EMA` / 通达信 `EMA`）。
+
+    ## 2026-09-15 新增（`loop_todo §1.25`）—— 为什么值得加
+
+    盘点发现：我们的算子族里 **`ts_mean` 是「等权」、EMA 是「指数加权」
+    ⇒ 这是**不同的算子，组合不出来** ⇒ 这是唯一"补不回来"的缺口** ✗
+    加了它 ⇒ 提供一条**新的平滑通道** = **新信号源**（正对 §1.20 铁律「瓶颈是信号源多样性」）✓
+    ★ 尤其：`sub(ema12(x), ema26(x))` **就是 MACD** ⇒ 不必再单独加 `MACD` ✓
+
+    ## ★ 为什么**不能用前缀和**（本文件其它算子的加速技巧）
+
+    EMA 是**递归**的：`ema_t = α·x_t + (1-α)·ema_{t-1}` ⇒ 无法用 `cumsum` 表达。
+    ★★ **真面板实测（3309×5384，2026-09-15）**：
+      `ema12(close)` **0.58s** · `ema26(close)` 0.59s · `sub(ema12,ema26)` 1.26s
+      **vs 对照 `ts_mean20(close)` 1.17s** ⇒ ★ **`ema` 反而比 `ts_mean` 快约一倍** ✓
+      （原因：`ts_mean` 要算两次 `cumsum`（值和有效计数）+ 除法，而 EMA 是单次循环）
+      ⚠ 我原先按小面板估算写"ema 更慢" ⇒ **是错的，真面板实测相反** ✓
+    （也试过 `scipy.signal.lfilter`：0.32s（该随机数据下），且它把 NaN **传播**成整段 NaN ⇒
+      不符合我们"NaN 视为缺失"的口径 ✗ ⇒ **不引入 scipy 依赖**。）
+
+    ## ★★ 与其它 `ts_*` 的**两点语义差异**（都是"递归量"带来的）
+
+    **(1) `min_periods = w`（满窗）**，不是 `max(2, w//2)`：
+      EMA 的早期值**严重依赖起点** —— 起点影响 `(1-α)^k`，`w` 期后仍有 `(1-2/(w+1))^w ≈ 13.5%` 残留
+      ⇒ **必须等满窗**才输出 ⇒ 前 `w-1` 期为 NaN。
+      **代价可控**：面板 **3309 日**，`w=60` 只占 **1.8%** ✓
+      （⚠ 与 `ts_mean` 不同：后者用 `w//2`，前几期就有值 —— 均值稳定，EMA 不稳定）
+
+    **(2) NaN 处「跳过」**：保持上一个 EMA 值、**计数不增加**（不是 rolling 那种
+      "窗内 NaN 不计入分母"）—— 这是通达信/qlib 的口径 ✓
+      计数不足 `w` 时输出 NaN ⇒ 停牌很久的股票不会被"补出"虚假值 ✓
+
+    **★ 不引入未来信息**（铁律）：只依赖 `≤ t` 的值，递归单向 ✓
+    """
+    x = _prep(x)                      # (T,S) float64
+    T, S = x.shape
+    a = 2.0 / (w + 1.0)
+    out = np.full((T, S), np.nan, dtype=np.float64)
+    prev = np.full(S, np.nan, dtype=np.float64)
+    n = np.zeros(S, dtype=np.int64)
+    for t in range(T):
+        v = x[t]
+        m = np.isfinite(v)
+        # 有上一个 ema ⇒ 递推（NaN 处沿用 prev）；否则以本期值作起点
+        prev = np.where(np.isfinite(prev),
+                        a * np.where(m, v, prev) + (1.0 - a) * prev,
+                        np.where(m, v, np.nan))
+        n = np.where(m, n + 1, n)
+        out[t] = np.where(n >= w, prev, np.nan)
+    return out.astype(np.float32)
