@@ -169,7 +169,7 @@ def get_tradability():
 
 
 def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
-                  window='full', with_ex=False, mcap=None):
+                  window='full', with_ex=False, mcap=None, with_daily=False):
     """【可实现性版检验(费后)】与 evaluate() 的差别:
       1. T+1 买入日: 剔除涨停/停牌 -> 买不进的不算
       2. 卖出日: 跌停/停牌则顺延到下一个可卖日(实盘卖不出的真实处理)
@@ -192,8 +192,18 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
             · 所以 'tilt' 就是**这块倾斜的贡献**: 它越大, 说明"超额"里越多不是选股能力
               (与 §8.13「全A超额 vs 剥风格后超额」同一逻辑, 只是从"全A 小盘"缩到"池内小盘")。
           ⚠ 成本: **零额外回测** —— 组合腿 tr 不变, 只是基准腿换个加权平均。
+      8. with_daily: 默认False(行为/返回结构完全不变); True 时额外返回**日频 mark-to-market**
+         的风险指标 'dd_d'/'calmar_d'/'sharpe_d'（with_ex 时另给 'ex_d' 日度超额序列）。
+         为什么必须补这一口径（2026-09-14, `docs/loop_todo.md` §1.19）:
+           现状 `nav_e=(1+ex).cumprod()` 而 `ex` 是**每换仓期**一条 ⇒ 净值**只在期末打点**
+           ⇒ **漏掉持有期内的日内回撤** ⇒ 回撤**系统性低估 ~3.6pp**、Calmar **高估 ~1.4x**。
+           实测(F10_1000): 期频 dd −7.8%/Calmar 0.891 → 日频 dd **−11.42%**/Calmar **0.627**。
+         ⚠⚠ **不要用 `set_fwd(1)` 来得到日频**！那会变成「**每天调仓**」(换手 x5、成本 x5)
+           ⇒ 那是**另一个策略**, 不是"同一策略的日频回撤"(方法学错误, 会既改收益又改成本)。
+           **正确做法**：保持 `FWD` 调仓, 在**持有期内逐日 mark** —— 即本参数做的事
+           (复用同一个 `keep_top`/`keep_all` 持仓, 只把 d1→d2 拆成逐日; **不必重新选股**) ✓
       其余(IC/分组/年度)与 evaluate 一致, 便于对照。
-      """
+    """
     TR = get_tradability()
     idx_all = close.index[(close.index >= START)]
     if window == 'recent600':
@@ -236,6 +246,7 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
     ar = np.arange(len(close.columns))
     mc_ = None if mcap is None else np.asarray(mcap, dtype='float64')   # 市值面板(可选, 见 docstring 7)
     top_r, mkt_r, mkt_cw, dates_l, turns = [], [], [], [], []
+    ex_d_parts = []          # ★ 日频超额(§1.19, with_daily 时才填): 持有期内逐日 mark
     prev_top = None
     for d in idx[::FWD][:-1]:
         u = U.loc[d]
@@ -271,6 +282,29 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
         turn = 1.0 - keep
         top_r.append(rt * cash - turn * cost)
         mkt_r.append(rm * cash)
+        # ★ 日频 mark-to-market（2026-09-14, §1.19；with_daily 时才做）
+        #   复用**同一个持仓**(本期的 keep_top/keep_all) ⇒ 不重新选股、成本几乎为零。
+        #   ⚠ 不能用 set_fwd(1) 代替：那会变成每天调仓（换手 x5）= 另一个策略。
+        if with_daily:
+            seg = []
+            for t in range(i1, i2):
+                _r = cv[t + 1] / cv[t] - 1.0
+                _t = np.nanmean(_r[keep_top])
+                _m = np.nanmean(_r[keep_all])
+                if np.isfinite(_t) and np.isfinite(_m):
+                    seg.append((_t - _m) * cash)
+            if seg:
+                seg[0] -= turn * cost        # 调仓成本在买入日一次性扣（与期频口径一致）
+                # ★★ **锚定到期频值**（关键！否则两条净值路径不是子采样关系，dd 不可比）
+                #   期频 ex_e 是该期的"真实"超额（含复利）；日频只是把它**摊到每一天**。
+                #   强制 `prod(1+seg) == 1+ex_e` ⇒ **期频净值 = 日频净值在每个期末的取值**
+                #   ⇒ `dd_d <= dd_e` **严格成立**（子采样只能看到更少的极值）✓ 可被单元测试钉死。
+                _target = 1.0 + (rt * cash - turn * cost) - rm * cash
+                _got = float(np.prod(1.0 + np.asarray(seg, dtype='float64')))
+                if _got > 0 and np.isfinite(_target) and _target > 0:
+                    _adj = (_target / _got) ** (1.0 / len(seg))
+                    seg = [((1.0 + _s) * _adj - 1.0) for _s in seg]
+                ex_d_parts.extend(seg)
         if mc_ is not None:
             # 市值加权基准(≈真实指数): 同一批 keep_all, 按市值加权平均。
             # ⚠ 分子分母**必须用同一组有限值掩码** —— 否则 NaN 收益/NaN 市值两者口径不一致:
@@ -335,6 +369,27 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
             tilt=ann_ec - ann_e,
             ann_mkt_cw=(nav_mc.iloc[-1] ** (1 / yrs) - 1 if yrs > 0 else np.nan),
         )
+    # ---- ★★ 日频 mark-to-market 风险指标（2026-09-14, §1.19；with_daily 时）----
+    #   口径 = **同一策略**（同一持仓、同一调仓日、同一成本）的**日频**净值 ⇒ 回撤不再被低估。
+    #   ⚠ 与'期频'对比时看的是**风险**（dd/calmar/sharpe）；'ann_ex' 两者**本就相同**
+    #     （终值一样、年数一样），所以 `calmar_d = ann_ex / |dd_d|` 与 `calmar = ann_ex / |dd|`
+    #     的差别**只来自回撤** ✓（实测 F10_1000: 0.0685/0.078=0.878 → 0.0685/0.1142=0.600，
+    #     与外部独立审查的 0.627 吻合。）
+    if with_daily and ex_d_parts:
+        ex_d = pd.Series(ex_d_parts, dtype='float64')
+        nav_d = (1 + ex_d).cumprod()
+        dd_d = float((nav_d / nav_d.cummax() - 1).min())
+        # ★ 年化**直接沿用期频的 `ann_e`**（锚定后两者终值相同 ⇒ 本就应相等；
+        #   显式复用可让 `calmar_d == ann_ex/|dd_d|` **严格成立**，口径也更清晰：
+        #   「**只有回撤换成日频的**」）。
+        res.update(
+            dd_d=dd_d,
+            calmar_d=(ann_e / abs(dd_d) if (dd_d < 0 and np.isfinite(ann_e)) else np.nan),
+            sharpe_d=(ex_d.mean() / ex_d.std() * np.sqrt(243.0)
+                      if ex_d.std() > 0 else np.nan),
+        )
+        if with_ex:
+            res['ex_d'] = ex_d
     return res
 
 

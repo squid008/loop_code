@@ -308,7 +308,10 @@ def main():
             v = LE.eval_expr(nd, B, {})
             fac = pd.DataFrame(v, index=dates, columns=cols)
             f = cs_rank(fac.astype('float64'))
-            rr = evaluate_real(f, close, expr, cost=0.004, window=5)
+            # ★ 一次调用同时拿**期频**(dd/calmar/sharpe)与**日频**(dd_d/calmar_d/sharpe_d)口径
+            #   （2026-09-14, loop_todo §1.19：期频=期末打点 ⇒ 回撤系统性低估 ~3.6pp）
+            #   ⚠ 只多算一条净值序列（**不重新选股**），实测每因子 +4s 左右 ✓
+            rr = evaluate_real(f, close, expr, cost=0.004, window=5, with_daily=True)
         except Exception as e:
             print('  [{}] **求值/回测失败** {}: {}'.format(nm, type(e).__name__, e))
             continue
@@ -327,7 +330,7 @@ def main():
             sign = -1
             f = -f
             fac = -fac
-            rr = evaluate_real(f, close, expr, cost=0.004, window=5) or rr
+            rr = evaluate_real(f, close, expr, cost=0.004, window=5, with_daily=True) or rr
             ic_got = float(rr['ic'])
         elif _ref in (None, 0):
             nosign.append(nm)
@@ -357,20 +360,29 @@ def main():
         print('  [{:<10s}] {:>7s} IC={:+.4f}{}{}  {}'.format(nm, str(tuple(fac.shape)), ic_got, sgn, flag, expr[:38]))
         rows_out.append(dict(name=nm, pool=it['pool'], no=it['no'], expr=expr, sign=sign,
                              ic=ic_got, calmar=rr['calmar'], ann_ex=rr['ann_ex'],
+                             # ★ 日频口径（§1.19）：跨频率/跨因子比风险必须看这几列
+                             dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'),
+                             sharpe_d=rr.get('sharpe_d'),
                              path=os.path.relpath(p, ROOT)))
         # ---- 剥风格补测 ----
         if not a.no_strip:
             try:
                 fn = neutral_rank(f.values.astype('float64'), [STYLE['lncap'], STYLE['lnamt']])
                 rr_s = evaluate_real(pd.DataFrame(fn, index=dates, columns=cols), close,
-                                     expr + '#strip', cost=0.004, window=5)
+                                     expr + '#strip', cost=0.004, window=5, with_daily=True)
                 if rr_s is not None:
                     k, t = LE_pools_grade(rr_s['calmar'], rr_s['ann_ex'])
                     strip_rows.append(dict(name=nm, pool=it['pool'], expr=expr,
                                            ic=rr['ic'], calmar=rr['calmar'], ann_ex=rr['ann_ex'],
+                                           dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'),
                                            strip_ic=rr_s['ic'], strip_calmar=rr_s['calmar'],
                                            strip_ann_ex=rr_s['ann_ex'],
-                                           strip_sharpe=rr_s['sharpe'], grade=k))
+                                           strip_sharpe=rr_s['sharpe'],
+                                           # ★ 剥风格后的**日频**口径（§1.19）：标定新档位阈值用它
+                                           strip_dd_d=rr_s.get('dd_d'),
+                                           strip_calmar_d=rr_s.get('calmar_d'),
+                                           strip_sharpe_d=rr_s.get('sharpe_d'),
+                                           grade=k))
             except Exception as e:
                 print('      [剥风格] 失败(不影响落地): {}: {}'.format(type(e).__name__, e))
 
@@ -388,8 +400,14 @@ def main():
             print('\n清单 -> ai_test/_facs_built.csv （{} 个）'.format(len(rows_out)))
     strip_n = 0
     if strip_rows:
+        # ★ 2026-09-14（§1.19）：新增**日频**列 —— 期频=期末打点，回撤系统性低估，
+        #   跨频率/跨因子比风险必须看日频。`_merge_csv` 用 DictWriter（按 key 写）⇒
+        #   加列**不会**让历史行错位（§8.30 那个坑只发生在"裸行写入"的场景）；
+        #   缺列的旧行由 `_merge_csv` 的 `setdefault(c,'')` 补空 ✓
         cols_o = ['name', 'pool', 'expr', 'ic', 'calmar', 'ann_ex',
-                  'strip_ic', 'strip_calmar', 'strip_ann_ex', 'strip_sharpe', 'grade']
+                  'dd_d', 'calmar_d',
+                  'strip_ic', 'strip_calmar', 'strip_ann_ex', 'strip_sharpe',
+                  'strip_dd_d', 'strip_calmar_d', 'strip_sharpe_d', 'grade']
         outp = os.path.join(DOCS, 'loop_strip_style_bank.csv')
         strip_n = (_merge_csv(outp, strip_rows, cols_o) if a.only_new
                    else _write_csv(outp, strip_rows, cols_o))
