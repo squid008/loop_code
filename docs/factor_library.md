@@ -579,7 +579,7 @@ neg(corr100(true_range, mf_x_bqty))
 | 文件 | 内容 |
 |---|---|
 | `docs/factor_library.md`（本文件） | 只收入库因子；引擎代末自动同步新入库，家族命名随时可人工精炼 |
-| **`docs/factor_library_crosspool.md`** | ★ **跨池派生视图**：把 `factor_library_{300,500,1000}.md` 里**全A 有效**的因子**去重合并**（实测 **12 个**，且**个个都不在本文件里** —— 因为它们写进了各自的池库）。附带**池标签并集修正**。由 `python ai_test/build_crosspool_view.py` 生成 |
+| **`docs/factor_library_crosspool.md`** | ★ **跨池派生视图**：把 `factor_library_{300,500,1000}.md` 里**全A 有效**的因子**去重合并**（实测 **12 个**，且**个个都不在本文件里** —— 因为它们写进了各自的池库）。附带**池标签并集修正**。由 `python tools/build_crosspool_view.py` 生成 |
 | `docs/loop_journal.md` | 每代诊断 + B角下一代参数（引擎自动读写） |
 | `docs/loop_archive.csv` | 每代 L2 全量候选流水（expr/指标/passed，引擎逐代追加） |
 | `engine/loop_state.pkl` | 运行状态：bank/seeds/失败库/FSA（`_dump_state.py` 可看） |

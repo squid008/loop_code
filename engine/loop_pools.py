@@ -10,7 +10,7 @@
     某交易日 T 的成员 = items[bisect_right(cdates, T) - 1]   ← **当日之前最近一次调整**
     ⇒ 不是"最新快照"，避免未来函数（幸存者偏差）。
     ⚠ 这是**第二份实现**（第一份在 `standard_test.py:load_const`）⇒ 必须用
-      `ai_test/qa_loop_pools.py` **逐日对拍**防漂移（与 `cost_presets.py`/`loop_fields.py`
+      `tools/qa_loop_pools.py` **逐日对拍**防漂移（与 `cost_presets.py`/`loop_fields.py`
       同一治理思路：能统一就统一，暂不能统一就必须有对拍）。
 
 ⚠ 本模块**不 import loop_engine**（避免循环依赖）；只依赖 numpy / h5py。
@@ -175,11 +175,11 @@ def derive_tag(ok_all, ok_by_pool, pools):
 
 # ===================== 剥风格分档（单一事实源，2026-09-14）=====================
 # ★★★ 为什么单独加这一档（问的是"这个因子的超额，剥掉 lncap+lnamt 之后还剩多少？"）：
-#   实测（`python ai_test/check_strip_style_pool.py`）：**池库 7/14 = 50%、全A 库已测的 6/11 = 55%
+#   实测（`python tools/check_strip_style_pool.py`）：**池库 7/14 = 50%、全A 库已测的 6/11 = 55%
 #   是"纯风格因子"** —— 全A 口径 Calmar 看着漂亮（甚至 1.19/1.39），**剥掉市值/成交额后转负**。
 #   例：`corr100(mf_s_bqty, mf_x_sell)` 原 1.193 → 剥 **−0.075**。
 # ★ 根因是**入库判定漏了一道关**（`--strip_style` 开了记录却没传 `--min_strip_calmar`，
-#   后者默认 -1 = 只记录不拦），已修（`ai_test/run_tracks.py` 加 `--min_strip_calmar=0.15`）。
+#   后者默认 -1 = 只记录不拦），已修（`tools/run_tracks.py` 加 `--min_strip_calmar=0.15`）。
 # ★ 这一档**并列**于 `derive_tag`（**不改** `ok_all`），because：
 #   ① 历史标签语义突变会让 journal/文档前后不可比；
 #   ② 剥风格结果可能缺失（未开 `--strip_style`）⇒ 需要一个 **'D 未测'** 的诚实档位。
@@ -194,8 +194,8 @@ STRIP_DESC = {
 
 
 def strip_grade(strip_calmar, strip_ann_ex):
-    """剥风格分档（**单一事实源**；引擎、`ai_test/check_strip_style_pool.py`、
-    `ai_test/build_crosspool_view.py` 全部 import 本函数，避免三处各写一套漂移）。
+    """剥风格分档（**单一事实源**；引擎、`tools/check_strip_style_pool.py`、
+    `tools/build_crosspool_view.py` 全部 import 本函数，避免三处各写一套漂移）。
 
     返回 (档位, 说明)：
       **A 独立有效** `strip_calmar >= TAG_STRIP_CAL_MIN`

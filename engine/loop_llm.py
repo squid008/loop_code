@@ -25,13 +25,13 @@ import time
 _DEEPSEEK_URL = 'https://api.deepseek.com/chat/completions'
 DEFAULT_MODEL = 'deepseek-flash'
 # ★模型名变更(2026-09-12): 官方名由 `deepseek-v4-flash` 改为 **`deepseek-flash`**。
-#   实测(ai_test/probe_models.py, GET /models + 逐个最小请求):
+#   实测(tools/probe_models.py, GET /models + 逐个最小请求):
 #     /models 权威名单 = ['deepseek-flash', 'deepseek-v4-pro']  ← **只有这两个**
 #     deepseek-flash  OK / deepseek-v4-pro OK
 #     deepseek-v4-flash 仍可用(别名兼容, 但已不在名单 -> 随时可能下线, 不应再依赖)
 #     deepseek-pro   400: "The supported API model names are deepseek-flash, deepseek-v4-pro"
 #     deepseek-chat / deepseek-reasoner 能通但不在名单(legacy)
-#   ⚠ 换名/换模型后请重跑 `python ai_test/probe_models.py` 确认, 别照猜写(2026-09-09 曾因
+#   ⚠ 换名/换模型后请重跑 `python tools/probe_models.py` 确认, 别照猜写(2026-09-09 曾因
 #     "deepseek-flash-v4" 被 400 拒)。
 # 2026-09-09: 该系列默认深度推理, max_tokens 会被 reasoning_content 吃光
 # 导致 content 恒为空(finish=length) —— 实测 6000 tok 仍全被推理占用。

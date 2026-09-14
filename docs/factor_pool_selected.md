@@ -1,6 +1,6 @@
 # 精选因子池（L3）
 
-> **派生视图**，由 `python ai_test/cross_pool_review.py` 生成 —— 可随时重建。
+> **派生视图**，由 `python tools/cross_pool_review.py` 生成 —— 可随时重建。
 > 与 `docs/factor_library_crosspool.md`（**忠实镜像**各池库）**定位不同**：
 > 本文件是**过了双闸门的精选清单**，供下游（组合/回测/看板）直接使用。
 

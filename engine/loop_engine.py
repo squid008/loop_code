@@ -48,7 +48,7 @@ from loop_pools import (pool_mask, parse_pools,                 # 池成员PIT�
 #    · `--help` 直接抛 UnicodeEncodeError 全挂;
 #    · **更严重**: 无人值守跑到那个分支时抛错中断整代。
 #  errors='replace' 让这类字符退化为 '?' 而不是抛错 —— 是把"整轮跑挂"降级为"一个字显示不出"。
-#  同时新代码仍应尽量用 GBK 安全字符(见 ai_test/scan_non_gbk.py 与 qa_engine_cli.py)。
+#  同时新代码仍应尽量用 GBK 安全字符(见 tools/scan_non_gbk.py 与 qa_engine_cli.py)。
 try:
     sys.stdout.reconfigure(errors='replace')
     sys.stderr.reconfigure(errors='replace')
@@ -294,7 +294,7 @@ def ex_max_corr(ex_new, bank_ex, min_overlap=30):
       · 库内 30 个入库因子的**组合收益序列两两相关中位 0.967**（max 0.994）——
         **它们是同一块钱的不同写法**；等权合成的 Calmar(0.978) 还**低于**最好的单因子(1.146)
         ⇒ 合成无效 ⇒ 库里其实只有"一个因子"。
-      · 同时结构层面**极其多样**（`ai_test/analyze_diversity.py`：全A 1439 条候选里
+      · 同时结构层面**极其多样**（`tools/analyze_diversity.py`：全A 1439 条候选里
         结构骨架 1181 个唯一、Top5 仅占 1.9%）⇒ **表达式去重挡不住"同一块钱"**。
       ⇒ ⇒ 所以"重复"必须**按收益流判**：换叶子/换窗口/换外壳赚同一块钱的，应当归为同族。
 
@@ -733,7 +733,7 @@ def _mk_library_skeleton(fname):
         '| `docs/factor_library{s}.md`（本文件） | 池 **{t}** 的入库因子（只增不改） |\n'
         '| `docs/factor_library.md` | 全A 轨道的入库因子 |\n'
         '| **`docs/factor_library_crosspool.md`** | ★ **跨池派生视图**：各池库里**全A 有效**的因子'
-        '去重 + 池标签并集修正（`python ai_test/build_crosspool_view.py` 生成） |\n'
+        '去重 + 池标签并集修正（`python tools/build_crosspool_view.py` 生成） |\n'
         '| `docs/loop_journal{s}.md` | 池 **{t}** 的每代诊断 + B角下一代参数 |\n'
         '| `docs/loop_pool_obs{s}.csv` | 池 **{t}** 候选的**三池池内指标**宽表 |\n'
         '| `docs/loop_archive{s}.csv` | 池 **{t}** 每代 L2 全量候选流水 |\n'
@@ -1158,7 +1158,7 @@ def run(args):
     seeds, fsa, prev_l1, prev_l2, bank = [], {}, None, None, []
     # ★ 收益流库(2026-09-13, roadmap §8.34): {表达式: 每期费后超额 Series} —— 收益流去重的对照集。
     #   缺它的旧 state 也能跑(只与"本次运行新入库的"比), 但要立即见效请先跑
-    #   `ai_test/backfill_bank_ex.py` 补齐历史。
+    #   `tools/backfill_bank_ex.py` 补齐历史。
     bank_ex = {}
     frozen = []                # FSA冻结骨架列表(中金: 超15%被禁止复用)
     fail_lib = {}              # 失败模式库(骨架级成败滚动统计, 中金: 生成阶段排除)
@@ -2124,7 +2124,7 @@ def run(args):
         #   而 §8.34 给本表加了 `max_ex_corr`(第 17 列) ⇒ `loop_archive_300/500.csv` 变成
         #   「16列旧行 + 17列新行」混合宽度 ⇒ `pd.read_csv` 报
         #   `Expected 16 fields in line 165, saw 17`。**同一个坑的第三处**
-        #   (前两处: loop_pool_obs_* / loop_strip_style_*, 见 `ai_test/fix_csv_schema.py`)。
+        #   (前两处: loop_pool_obs_* / loop_strip_style_*, 见 `tools/fix_csv_schema.py`)。
         _ast, _asn = append_csv_schema_safe(ARCHIVE, res)
         if 'rewritten' in _ast:
             print(f"  [流水] schema 变化 -> 已重写 {os.path.basename(ARCHIVE)}: {_ast}")
@@ -2658,7 +2658,7 @@ if __name__ == '__main__':
                          '而结构层面极多样（骨架 1181 个唯一、Top5 仅 1.9%%）'
                          '⇒ **表达式/因子值去重挡不住"同一块钱"，只有收益流能识别**。'
                          '建议 0.90（越严格库越"独立"但入库越少）。'
-                         '[!] 需 state 里有 bank_ex；旧 state 先跑 ai_test/backfill_bank_ex.py 补齐。')
+                         '[!] 需 state 里有 bank_ex；旧 state 先跑 tools/backfill_bank_ex.py 补齐。')
     ap.add_argument('--min_sharpe', type=float, default=0.5,
                     help='L2 全A 口径的夏普门槛(2026-09-13, roadmap §8.26)。'
                          '**默认 0.5 = 与原硬编码值相同, 行为完全不变**。'
@@ -2710,7 +2710,7 @@ if __name__ == '__main__':
                     help='每代最多A角LLM调用次数(超限回退本地 guided_expr, 防拖慢无人值守)')
     ap.add_argument('--llm_model', default=None,
                     help='A角生成侧模型名(缺省与B角审查同款 loop_llm.DEFAULT_MODEL=deepseek-flash; '
-                         '可选 deepseek-v4-pro 做物理隔离。[!] 名单以 ai_test/probe_models.py 实测为准)')
+                         '可选 deepseek-v4-pro 做物理隔离。[!] 名单以 tools/probe_models.py 实测为准)')
     ap.add_argument('--ai_jury', default='auto', choices=['auto', 'on', 'off'],
                     help='B角候选级LLM审查(中金【审查】环节, L1硬滤后随机抽--jury_n深判, '
                          '与生成侧隔离防自证): KILL者剔除出L2; auto=找到DeepSeek key即启用; '

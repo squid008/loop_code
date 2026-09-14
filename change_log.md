@@ -35,6 +35,54 @@
 
 ---
 
+## [0.5.2] — 2026-09-14
+
+> 主题：**建 `tools/`，把生产管线从 `ai_test/` 迁出并纳入 git**（治 `loop_todo §1.16`）
+> 动机：`ai_test/` 被 `.gitignore` 整个忽略，但收尾管线住在里面
+> ⇒ **`git checkout v0.x` 回退代码时整条收尾管线会消失**（回退点不完整）。
+
+### Added
+- **`tools/`（新目录，纳入 git）— 23 个生产管线/工具脚本**。判据（三层，不靠"被任何文档提到"）：
+  | 层 | 判据 | 例 |
+  |---|---|---|
+  | **A** | 被 `engine/`、`standard/` 的 **.py 代码**引用 | `build_crosspool_view.py` · `add_quant_copy.py` · `bench_quant_read.py` · `backfill_bank_ex.py` · `analyze_diversity.py` · `scan_non_gbk.py` · `qa_loop_pools.py` · `check_strip_style_pool.py` · `probe_models.py` · `l1_shape_calib.py` |
+  | **B** | **收尾/轨道管线成员** | `run_tracks.py` · `build_facs.py` · `cross_pool_review.py` · `critic_sensor_report.py` · `fix_csv_schema.py` · `backfill_library_pool.py` · `tracks_status.py` · `journal_view.py` |
+  | **C** | 被 `README` 引用 / 回归测试 / 常用质检 | `calib_gates.py` · `_test_critic_sensor.py` · `_test_build_facs_merge.py` · `_check_quotes.py` · `_doc_outline.py` |
+  > ⚠ **不要**按"被任何文档提到"扫 —— 那样会得到 **106 个**（含 `round5_fund.py` / `verify_*.py` 等
+  > **roadmap 历史叙事里的"当时用过的一次性脚本"**）。判据必须是「**被代码引用 或 属当前管线**」。
+- **3 个兼容垫片** `ai_test/{run_tracks,build_facs,cross_pool_review}.py` —— 转发到 `tools/`（`runpy.run_path`）。
+  存在的唯一原因：**迁移时轨道正在跑**（`run_tracks.py` 用硬编码 `ai_test/build_facs.py` 调收尾①②）。
+  **轨道结束后可 `git rm`。**
+
+### Changed
+- **114 处引用** `ai_test/xxx.py` → `tools/xxx.py`：`engine/*.py`(17) · `tools/*.py`(自引用) ·
+  `README.md` · `docs/loop_todo.md`(37) · `docs/factor_library*.md` · `docs/factor_pool_selected.md`。
+  **不改**：`docs/factor_roadmap.md`（**历史档案** —— 改写历史路径 = 篡改档案，改为顶部加**导航注记**）·
+  `docs/history/**`（归档只读）· `docs/loop_journal*.md`（运行日志是既成事实，不可回改）。
+- `.gitignore`：`ai_test/` → **`ai_test/*` + 3 个 `!` 例外** + 补 `docs/history/**/ai_test/`。
+- `tools/run_tracks.py` 收尾①②改调 `tools/build_facs.py` / `tools/cross_pool_review.py`
+  （**新跑的用新路径**；垫片只服务正在跑的那一次）。
+- `.codebuddy/`、`ai_test/` 的定位在 README「目录结构」里改写清楚（工具入 git、产物继续忽略）。
+
+### Fixed
+- ★★ **`HERE` 产物路径会被劈成两半**：`run_tracks.py` 的 `_tracks`、`critic_sensor_report.py` 读的 `_tracks`、
+  `build_facs.py` 的 `_facs_built.csv` —— 若沿用 `HERE`，迁走后新进程会写 `tools/_tracks/`，
+  而**正在跑的进程仍在写 `ai_test/_tracks/`** ⇒ 日志/清单分裂。
+  **修法**：显式 `os.path.join(ROOT, 'ai_test', ...)`（**代码进 tools/，产物仍留 ai_test/**）。
+- ★ **gitignore 回归（我引入的）**：原 `ai_test/`（**无斜杠 ⇒ 匹配任意层级**）改成 `ai_test/*`
+  （**带斜杠 ⇒ 锚定仓库根**）后，**误放开** `docs/history/**/ai_test/` 下 **101 个归档文件**
+  （`001311` 下 88 · `001515` 下 13）⇒ 补 `docs/history/**/ai_test/`。
+- ★ **垫片不能写 stderr**：初版往 stderr 写提示 ⇒ PowerShell 报 `NativeCommandError`，
+  且收尾段会检查子进程 stderr 非空并记 `[stderr]` ⇒ 改 **stdout**。
+
+### Notes
+- **迁移脚本**（可复跑，带 `--dry-run`）：`ai_test/_migrate_to_tools.py` / `_fix_refs_tools.py` / `_scan_refs.py`
+  （留在草稿区不入 git —— 一次性任务，但保留以便复核与回滚）。
+- 验证：26 个文件编译通过 · 引号检查全绿 · 两处垫片转发实测（退出码 0）· 回归测试 11/11 + 32/32 ·
+  `git status` 仅显示 `tools/` + 3 垫片 · **引擎全程未受影响**（迁移前后 PID 3460/2540 均在跑 1000 池 gen4）。
+
+---
+
 ## [0.5.1] — 2026-09-14
 
 > **PATCH / 纯文档**（不改引擎行为）—— v0.5.0 提交后的收尾补充。

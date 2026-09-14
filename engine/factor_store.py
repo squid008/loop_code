@@ -132,7 +132,7 @@ class FactorStore:
     def open(self, name, expr=None, quant=False):
         """打开因子。`quant=True` 时**优先读 `values_q.h5`**（uint8 截面分位快查副本）。
 
-        ★★ 为什么双写（2026-09-14 用户批准；`ai_test/bench_quant_read.py` 实测）：
+        ★★ 为什么双写（2026-09-14 用户批准；`tools/bench_quant_read.py` 实测）：
           uint8 副本 **省 3.99x 空间**，且**秩类用法快 14.4x**（`读+免转秩` 146.8→10.2ms）
           —— 因为它存的**就是截面分位**，IC(Spearman)/十档分层/多空/**正交诊断**
           都**不需要再排序**，省掉的正是 `rank_rows` 的 O(N·logN)。
@@ -151,7 +151,7 @@ class FactorStore:
                 return self
             # 没有副本 -> 静默回落? **不**（§8.44 铁律：静默兜底=排查噩梦）⇒ 明确告知
             raise FileNotFoundError(
-                '{} 没有 values_q.h5 快查副本（用 `python ai_test/add_quant_copy.py` 生成）'.format(pq))
+                '{} 没有 values_q.h5 快查副本（用 `python tools/add_quant_copy.py` 生成）'.format(pq))
         p, _ = self.path_of(name, expr)
         if not os.path.exists(p):
             raise FileNotFoundError(p)

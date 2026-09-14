@@ -1,0 +1,255 @@
+# -*- coding: utf-8 -*-
+"""run_tracks.py -- 多池轨道的**串行**驱动器（Python 版，替代 run_3pools.ps1；roadmap §8.41）
+
+为什么换成 Python（2026-09-13）：
+  `run_3pools.ps1` 有两个问题：
+   ① **代数不读 journal** —— 代码是 `$gen = $StartGen + $i`（注释却写着"从本池 journal 读"）
+      ⇒ 池已有 gen1-5 时会**重跑 gen1**（浪费整代，journal 里代数还混在一起）。
+   ② .ps1 里写中文有编码风险（PS 5.1 按 GBK 读无 BOM 文件），且内联引号易错。
+  ⇒ 改 Python：**自动续代数**（读本池 journal 取 max+1）+ 无编码/引号问题 + 可断点续跑。
+
+⚠ 成本提示（2026-09-13 实测推算）：每轮 = L1 + L2；其中 L2 因 `--pool_obs --pools=300,500,1000`
+   + `--strip_style` ⇒ **每候选 5 次回测**（主口径/剥风格/300/500/1000）⇒ L2 约占 50min/轮。
+   L1 随池并集列数走：300≈925 列、500≈1776、**1000≈2818**（最贵）。
+   ⇒ 单池单轮 ≈ 60~80min；**3 池 × 3 轮 ≈ 10 小时**。默认**不含 all**
+   （all 已有 41 个入库、且不是瓶颈；要跑就把它加进 --pools）。
+
+用法:
+  python tools/run_tracks.py                      # 默认 300,500,1000 × 3 轮
+  python tools/run_tracks.py --pools=300,500,1000,all --rounds=1
+  python tools/run_tracks.py --dry                # 只打印"将跑哪些代"，不执行
+"""
+import io
+import os
+import re
+import subprocess
+import sys
+import time
+from datetime import datetime
+
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except Exception:
+    pass
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+ROOT = os.path.dirname(HERE)
+ENGINE = os.path.join(ROOT, 'engine')
+DOCS = os.path.join(ROOT, 'docs')
+LOGD = os.path.join(ROOT, 'ai_test', '_tracks')
+PY = sys.executable
+
+MY_LOG = os.path.join(LOGD, '_driver.log')
+
+
+def log(m):
+    line = "{} {}".format(datetime.now().strftime('%m-%d %H:%M:%S'), m)
+    print(line, flush=True)
+    os.makedirs(LOGD, exist_ok=True)
+    with io.open(MY_LOG, 'a', encoding='utf-8') as f:
+        f.write(line + '\n')
+
+
+def journal_of(pool):
+    sfx = '' if pool == 'all' else '_' + pool
+    return os.path.join(DOCS, 'loop_journal{}.md'.format(sfx))
+
+
+def read_log(path):
+    """宽容读日志（utf-8 -> gbk 逐个试）。
+
+    ⚠ 2026-09-13 实录：`subprocess.run(stdout=<文本文件对象>)` 只把**底层 fd** 传给子进程，
+      子进程按**自己的**编码写（Windows 下 cp936/GBK）⇒ 父进程按 utf-8 解读会得到**乱码**，
+      连 `L1 批 x/y` 都解析不出来。修法：给子进程设 `PYTHONIOENCODING=utf-8`（本文件已设），
+      读取端再用本函数兜底（历史日志仍是 GBK）。
+    """
+    if not os.path.exists(path):
+        return ''
+    try:
+        raw = open(path, 'rb').read()
+    except Exception:
+        return ''
+    for enc in ('utf-8', 'gbk', 'cp936'):
+        try:
+            s = raw.decode(enc)
+            if s.count('\ufffd') == 0:
+                return s
+        except Exception:
+            continue
+    return raw.decode('utf-8', errors='replace')
+
+
+def next_gen(pool):
+    """从**本池** journal 读已完成的最大代数 -> 下一个代数（无 journal 则从 1 开始）。"""
+    jf = journal_of(pool)
+    if not os.path.exists(jf):
+        return 1, 0
+    txt = io.open(jf, encoding='utf-8', errors='replace').read()
+    gens = [int(m) for m in re.findall(r'^##\s*第\s*(\d+)\s*代', txt, re.M)]
+    return ((max(gens) + 1) if gens else 1), (max(gens) if gens else 0)
+
+
+def main():
+    pools = ['300', '500', '1000']
+    rounds = 3
+    n, l2 = 800, 30
+    dry = False
+    # ★★ 池内挖掘的**必要参数组**（2026-09-13 实测；不传 = 白跑一整夜）
+    #   300/500 gen6~8 六代全部 `fail_calmar = 1.000`（**100%** 因全A Calmar 不足被砍），
+    #   B角原话:「L2中100%因Calmar不足(信号弱)」。根因：我只传了 `--pool_obs`，
+    #   引擎仍用**默认的全A 严格门槛**(`--min_calmar` 默认 0.5 量级) ⇒ 池内因子在池内
+    #   再有效也**先被全A 门槛砍掉** ⇒ **池门槛(--min_pool_calmar)根本轮不到生效**。
+    #   ⇒ 必须**解开全A 门槛**、把判定权交给**池门槛**(与 §8.26 验收轮同参数)。
+    # ★★★ 剥风格门槛（2026-09-14 用户采纳；roadmap §8.45 / loop_todo §1.9）
+    #   此前只传了 `--strip_style`（**开记录**）却**没传** `--min_strip_calmar`
+    #   ⇒ 后者默认 `-1.0` ⇒ 引擎里 `if args.min_strip_calmar > 0 ...` 不成立
+    #   ⇒ **只记录不拦** ⇒ 剥风格结果**从未参与入库判定**。
+    #   实测后果（`python tools/check_strip_style_pool.py`）：**池库 7/14 = 50% 是"纯风格因子"**
+    #   （剥掉 lncap+lnamt 后超额**转负**）—— 包括我先前误标为"质量最高"的
+    #   `corr100(mf_s_bqty, mf_x_sell)`（原 Calmar 1.193 → 剥后 **−0.075**）。
+    #   档位取 0.15 = 与 `--min_pool_calmar` 同档（口径一致）；实测**不会误伤**两个真独立有效的
+    #   （剥后 0.349 / 0.667 都远高于 0.15），但会挡掉那个 `all3`（剥后仅 0.064）与 7 个纯风格。
+    extra = ['--pool_obs', '--pools=300,500,1000', '--strip_style', '--dup_ex_corr=0.90',
+             '--min_calmar=0.0', '--min_ic=-1', '--score_mode=new',
+             '--min_pool_calmar=0.15', '--pool_gate_or_all',
+             '--min_strip_calmar=0.15']
+    for a in sys.argv[1:]:
+        if a.startswith('--pools='):
+            pools = [x.strip() for x in a.split('=', 1)[1].split(',') if x.strip()]
+        elif a.startswith('--rounds='):
+            rounds = int(a.split('=', 1)[1])
+        elif a.startswith('--n='):
+            n = int(a.split('=', 1)[1])
+        elif a.startswith('--l2='):
+            l2 = int(a.split('=', 1)[1])
+        elif a == '--dry':
+            dry = True
+        elif a.startswith('--extra='):
+            extra = [x for x in a.split('=', 1)[1].split() if x]
+
+    log('=' * 76)
+    log('多池轨道驱动: 池={}  每池 {} 轮  n={} l2={}  dry={}'.format(pools, rounds, n, l2, dry))
+    log('透传引擎参数: {}'.format(' '.join(extra)))
+    plan = []
+    for p in pools:
+        g0, done = next_gen(p)
+        plan.append((p, g0, done))
+        log('  [PLAN] pool={:<5s} 既有 {} 代 -> 从第 {} 代起跑 {} 轮'.format(p, done, g0, rounds))
+    log('=' * 76)
+    if dry:
+        log('（--dry：只列计划，不执行）')
+        return 0
+
+    for p, g0, done in plan:
+        sfx = '' if p == 'all' else '_' + p
+        for i in range(rounds):
+            gen = g0 + i
+            seed = gen * 10 + 7
+            logf = os.path.join(LOGD, 'pool{}_gen{}.log'.format(sfx, gen))
+            errf = os.path.join(LOGD, 'pool{}_gen{}_err.log'.format(sfx, gen))
+            cmd = [PY, '-u', 'engine/loop_engine.py', '--gen={}'.format(gen),
+                   '--n={}'.format(n), '--l2={}'.format(l2), '--seed={}'.format(seed)] + extra
+            if p != 'all':
+                cmd.append('--mine_pool={}'.format(p))
+            log('[START] pool={} gen={} seed={} -> {}'.format(
+                p, gen, seed, os.path.basename(logf)))
+            t0 = time.time()
+            # ⚠ 必须给子进程设 PYTHONIOENCODING=utf-8（2026-09-13 实录）：
+            #   `subprocess.run(stdout=<文本文件对象>)` 只把**底层 fd** 传给子进程，
+            #   子进程按**自己的**编码写（Windows 下 cp936/GBK），而这里按 utf-8 解读
+            #   ⇒ **日志里中文全成乱码**，连 `L1 批 x/y` 都解析不出来（进度/ETA 全失效）。
+            _env = dict(os.environ)
+            _env['PYTHONIOENCODING'] = 'utf-8'
+            with io.open(logf, 'w', encoding='utf-8') as o, \
+                    io.open(errf, 'w', encoding='utf-8') as e:
+                pr = subprocess.run(cmd, cwd=ROOT, stdout=o, stderr=e, env=_env)
+            mins = (time.time() - t0) / 60.0
+            errsz = os.path.getsize(errf) if os.path.exists(errf) else 0
+            log('[END]   pool={} gen={} 退出码={} 耗时={:.1f}min err={}B'.format(
+                p, gen, pr.returncode, mins, errsz))
+            # 摘结果 + ★ 守卫：若"全部因同一个门被砍"，这是**配置问题**的强信号，必须吼出来
+            try:
+                txt = read_log(logf)
+                for pat in (r'入库 \d+ 个新因子[^\n]*', r'L2 通过 \d+/\d+ 个[^\n]*',
+                            r'保存状态: [^\n]*'):
+                    mm = re.findall(pat, txt)
+                    if mm:
+                        log('        ' + mm[-1][:150])
+                # 守卫 ①：**直接核验驱动器真正传了"池内判定"那组参数**（2026-09-14 重写）
+                #   ⚠ 原判据是「`fail_calmar` > 0.9 且 L2 通过 0/x」—— 但 `fail_calmar`
+                #     当时**恒为 1.000**（硬编码 0.5 + 全A 口径的传感器失真，已在 §1.1 修好）
+                #     ⇒ 轨道跑完时**必然误报**：实测 09-14 03:32 那条 GUARD，
+                #       而当时参数其实**传全了**（`--min_calmar=0.0 --pool_gate_or_all` 都在）。
+                #   ★★ 教训：**用不可靠的量当报警判据 ⇒ 必然误报**，
+                #     "狼来了"会让真警报被忽略（比不报警更糟）。
+                #   ⇒ 改为检查**命令里有没有那组 flag** —— 这是可信、可证伪的事实。
+                fc = re.findall(r'fail_calmar\s+([\d.]+)', txt)
+                pass0 = re.findall(r'L2 通过 0/(\d+)', txt)
+                _need = ['--pool_obs', '--min_pool_calmar', '--pool_gate_or_all']
+                _miss = [f for f in _need if not any(x.startswith(f) for x in cmd)]
+                if _miss:
+                    log('        [!][GUARD] 本池**漏传**池内判定的必要参数: {} ⇒ '
+                        '池门槛不会生效（池内因子会先被全A 门槛砍掉）'.format(', '.join(_miss)))
+                # 守卫 ②（辅助信号，**已修好对账后才可信**）：全A 与池口径**都** >90% 失败
+                #   ⇒ 更可能是"这批候选真的弱"，而不是配置问题（给人工判读一个提示）
+                _fpc = re.findall(r'fail_pool_calmar\s+([\d.]+)', txt)
+                if pass0 and fc and _fpc and float(fc[-1]) > 0.9 and float(_fpc[-1]) > 0.9:
+                    log('        [note] L2 通过 0/{}，且**对账后**的全A({})与池口径({})失败率均 >90% '
+                        '⇒ 更像"候选真的弱"，而非配置问题'.format(pass0[-1], fc[-1], _fpc[-1]))
+                # 守卫 ②：真的一个都没入库，连代次数都数出来，便于判断"是配置还是候选真的不行"
+                if re.search(r'入库 0 个新因子', txt):
+                    log('        [note] 本代入库 0（若连续多代如此，先看 fail_* 分布再下结论）')
+            except Exception:
+                pass
+            if pr.returncode != 0 or errsz > 0:
+                log('[!] 本池非正常结束 -> **停止本池**（继续下一池）。'
+                    '人工看 {}'.format(os.path.basename(errf)))
+                break
+    log('===== 全部轨道结束 =====')
+    # ★★★ 收尾：**跨池审查 + 精选池**（2026-09-14 用户批准；见 `tools/cross_pool_review.py`）
+    #   为什么必须放在这里：**跨池去重无法放进引擎** —— 三个池是独立进程、互不知道；
+    #   若让后跑的池读先跑的池的 bank ⇒ **跑序一变结果就变、不可复现**。
+    #   ⇒ 正确地做成"**一轮轨道跑完后的一次性审查**"。
+    #   ⚠ 前置：先把新入库因子的值落地到 `facs/`（否则审查看不到新因子）。
+    if not dry:
+        log('')
+        log('=' * 76)
+        log('[收尾 ①] 因子值落地到 facs/（新入库的必须落，否则审查看不到）')
+        log('=' * 76)
+        try:
+            # ★ `--only-new`（2026-09-14 优化）：**增量落地** —— 已落地的跳过、只缺
+            #   `values_q.h5` 的只补副本、都不缺时**连面板都不载**。
+            #   实测：52 个全就绪 ⇒ **4.0s**（全量要 ~21min）；缺 3 个副本 ⇒ 5.9s。
+            #   ⚠ 增量模式下 CSV 走「读-合并-写」（`_merge_csv`）⇒ 不会清空已有的
+            #     52 条剥风格记录（那是精选池 L3 的闸门依据）。回归测试：
+            #     `python tools/_test_build_facs_merge.py`（11 项）。
+            r = subprocess.run([PY, '-u', 'tools/build_facs.py', '--only-new'],
+                               cwd=ROOT, capture_output=True, text=True,
+                               encoding='utf-8', errors='replace', timeout=7200)
+            for ln in (r.stdout or '').splitlines()[-6:]:
+                log('    ' + ln[:150])
+            if r.returncode != 0:
+                log('    [!] 落地非零退出={} -> 仍继续审查（用已有 facs/）'.format(r.returncode))
+        except Exception as e:
+            log('    [!] 落地失败({}) -> 仍继续审查'.format(type(e).__name__))
+        log('')
+        log('=' * 76)
+        log('[收尾 ②] L2 跨池审查 + L3 精选池')
+        log('=' * 76)
+        try:
+            r = subprocess.run([PY, '-u', 'tools/cross_pool_review.py'],
+                               cwd=ROOT, capture_output=True, text=True,
+                               encoding='utf-8', errors='replace', timeout=3600)
+            for ln in (r.stdout or '').splitlines():
+                log('    ' + ln[:150])
+            if r.stderr and r.stderr.strip():
+                log('    [stderr] ' + r.stderr.strip()[:300])
+        except Exception as e:
+            log('    [!] 审查失败({}: {})'.format(type(e).__name__, e))
+        log('')
+        log('⇒ 精选池见 docs/factor_pool_selected.md（比"入库数"更接近"能用几个"）')
+    return 0
+
+
+if __name__ == '__main__':
+    sys.exit(main())

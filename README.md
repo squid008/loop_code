@@ -1,6 +1,6 @@
 # loop_code — Loop 式因子自动挖掘引擎
 
-> **当前版本 `v0.5.1`**（2026-09-14）— 池化挖掘闭环 + B角「诊断→决策」链条修复 + 收尾提速
+> **当前版本 `v0.5.2`**（2026-09-14）— 池化挖掘闭环 + B角「诊断→决策」链条修复 + 收尾提速 + 管线迁入 `tools/`
 > · 变更全文见 **[`change_log.md`](change_log.md)** · 研发档案见 `docs/factor_roadmap.md`
 > · 版本历史与回退见下方「[版本与回退](#版本与回退2026-09-11-起)」
 
@@ -19,6 +19,18 @@
   - `panel.h5` / `universe.h5` / `barra.h5` / `fa_pit.h5` L1 筛选用数据（由 `build_*.py` 从 E:\rq 重建）
   - `loop_state.pkl` 引擎滚动状态（运行中会变）
   - `_check_*.py` 机制自检（dry-run 零误杀验证）
+- `tools/` — **生产管线与工具（纳入 git）**。2026-09-14（v0.5.2）从 `ai_test/` 迁出：
+  - `run_tracks.py` 多池轨道驱动（生产唯一入口）· `build_facs.py` 收尾① 因子值落地（`--only-new` 增量）
+  - `cross_pool_review.py` 收尾② L2 跨池审查 + L3 精选池 · `critic_sensor_report.py` B角 传感器审计
+  - `fix_csv_schema.py` / `backfill_library_pool.py` / `tracks_status.py` / `journal_view.py`（journal 倒序查看）
+  - `build_crosspool_view.py` / `add_quant_copy.py` / `backfill_bank_ex.py` 等（被 `engine/` 代码引用的脚本）
+  - `_test_critic_sensor.py`（32 项）· `_test_build_facs_merge.py`（11 项）回归测试 · `_check_quotes.py` 质检
+  - ⚠ **为什么迁**：`ai_test/` 长期被 `.gitignore` 整个忽略，但收尾管线住在里面
+    ⇒ `git checkout v0.x` 回退代码时**整条管线会消失**（回退点不完整）。
+- `ai_test/` — **草稿区 + 运行产物（按 `.gitignore` 忽略，可随时删）**：一次性诊断/探索脚本、
+  日志（`_tracks/`）、中间产物（`*.csv`/`*.pkl`/`*.md` 报告）。
+  - ⚠ 仅留 3 个**兼容垫片**（`run_tracks.py` / `build_facs.py` / `cross_pool_review.py` → 转发到 `tools/`），
+    为「迁移时正在跑的轨道」保留；**轨道结束后可 `git rm`**。
 - `standard/` — **统一检验 / 分析工具**（均为独立可跑的绝对路径脚本）
   - `standard_test.py` 因子检验模板：一次跑齐「引擎指标复现校验 + 全A宽池频率扫描 + 沪深300/中证500 成分内 + 风格归因 + 分段独立验证」，含 `--pool_mode=A|B|S`、`--cost-name`；成本口径取自 `engine/cost_presets.py`
   - `style_paired_analysis.py` 排序分**配对**风格暴露比较（old / new / new+mono / new_n）→ 写 `docs/loop_style_paired.md`
@@ -62,7 +74,7 @@ D:\miniconda3\envs\rqdata\python.exe all04.py
 ## 说明
 - 引擎所有文件读写都相对 `engine/` 定位，`loop_code` 可整体搬移；唯一外部依赖是 `E:\rq` 数据盘。
 - `loop_state.pkl` 为滚动态：**gen23 起 watcher 无人值守接力，已跑至 gen70 达标收官（2026-09-11）**，入库因子 **30**（F01~F30）。整体复盘见 `docs/factor_roadmap.md` 附录 A/B + Round27；入库因子明细见 `docs/factor_library.md`；逐代诊断见 `docs/loop_journal.md`。跨系统（存储/数据库/对齐）决策见 `docs/software_framework.md`。
-- **gen51 起新增两道抗冗余闸门**（治 gen50 同代近重复 F20~F23）：`--dedup_corr`（默认 0.85，同代 L1 TopN 两两 |rank corr| 超阈即丢弃后者）+ `--fam_sole`（默认开，族指纹并入"单叶变换"维度把"同叶不同壳"的叶子代理候选归同族）。标定/验证见 `ai_test/calib_gates.py` / `verify_gates.py`，冒烟 `ai_test/qa_fam_smoke.py`。
+- **gen51 起新增两道抗冗余闸门**（治 gen50 同代近重复 F20~F23）：`--dedup_corr`（默认 0.85，同代 L1 TopN 两两 |rank corr| 超阈即丢弃后者）+ `--fam_sole`（默认开，族指纹并入"单叶变换"维度把"同叶不同壳"的叶子代理候选归同族）。标定/验证见 `tools/calib_gates.py` / `verify_gates.py`，冒烟 `ai_test/qa_fam_smoke.py`。
 - 数据文件（*.h5/*.pkl）体积大且可由 `build_*.py` 重建，git 入库时按 `.gitignore` 排除。
 
 ## 版本与回退（2026-09-11 起）
@@ -96,7 +108,8 @@ git tag -a v0.2 -F <说明文件>               # 建新版（说明按上表四
 
 | tag | 日期 | 提交 | 一句话内容 |
 |---|---|---|---|
-| **v0.5.1** | 2026-09-14 | `tag 自身` | **纯文档**：README 版本表修正 v0.5.0 的提交号 + `loop_todo §1.15`（规则1 固定动作且连压 13 代无效 ⇒ 缺"动作有效性"追踪）+ `§1.16`（`ai_test/` 未纳入 git ⇒ **回退点不完整**） |
+| **v0.5.2** | 2026-09-14 | `tag 自身` | **建 `tools/` 纳入 git**（23 个管线/工具脚本从 `ai_test/` 迁出 ⇒ **回退点完整**）+ 114 处引用更新 + 3 个兼容垫片（**轨道结束后可删**）+ 修 `HERE` 产物路径分裂 + 修 gitignore 误放开 101 个归档文件 |
+| **v0.5.1** | 2026-09-14 | `bcea0aa` | **纯文档**：README 版本表修正 v0.5.0 的提交号 + `loop_todo §1.15`（规则1 固定动作且连压 13 代无效 ⇒ 缺"动作有效性"追踪）+ `§1.16`（`ai_test/` 未纳入 git ⇒ **回退点不完整**） |
 | **v0.5.0** | 2026-09-14 | `3da89fe` | 池化挖掘闭环（中证1000 池 + 池门槛 OR 语义 + 收益流去重）+ **B角「诊断→决策」链条修复**（门槛对账 / 动作饱和 / **LLM 否决权 + 永久闭嘴**）+ 收尾提速 **23min→4.1s**（`build_facs --only-new`）+ 跨池审查/L3 精选池 + `facs/` 因子值仓（含 `values_q.h5` 快查副本）+ `change_log.md` |
 | **v0.4** | 2026-09-12 | `6c60c7f` | 三池并行挖掘 `--mine_pool` + 入库剥风格/池内判据（`--strip_style`/`--pool_obs`）+ `loop_pools.py`（PIT 成分单一事实源）+ **修"整代末尾 `UnboundLocalError`"事故** |
 | **v0.3** | 2026-09-12 | `41dbb9d` | `new_n` 判定 ✅ + `--reuse_v` 提速 35% + `--shape_neutral` |

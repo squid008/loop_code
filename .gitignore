@@ -48,8 +48,24 @@ Thumbs.db
 # IDE 会话/项目数据（CodeBuddy 记忆等，本地专用）
 .codebuddy/
 
-# 临时诊断脚本/产物（可随时删）
-ai_test/
+# ai_test/ = 草稿区 + 运行产物（一次性诊断脚本、日志、pkl/csv 等，可随时删）
+# ⚠ 2026-09-14（v0.5.2）：**生产管线已迁至 tools/**。
+#   原因：ai_test/ 长期被整个忽略，但收尾管线（run_tracks/build_facs/cross_pool_review ...）
+#   住在里面 ⇒ `git checkout v0.x` 回退代码时**整条收尾管线会消失**（回退点不完整）。
+#   ⇒ 工具入 git、产物继续忽略：tools/ 正常跟踪；ai_test/ 只留 3 个兼容垫片。
+#
+# ⚠ 必须写 `ai_test/*`（带斜杠 = **锚定仓库根**）而**不是** `ai_test/`：
+#   git 规则「父目录被排除时无法再包含其中的文件」⇒ 写 `ai_test/` 会让下面的 `!` 例外**全部失效**。
+ai_test/*
+# ⚠ 例外：3 个兼容垫片（仅为「迁移时正在跑的轨道」保留；**轨道结束后可 git rm**）
+!ai_test/run_tracks.py
+!ai_test/build_facs.py
+!ai_test/cross_pool_review.py
+# ⚠ 但**同名目录出现在别处**（docs/history 下的归档快照）要继续整体忽略 —— 与迁移前行为一致。
+#   原规则是 `ai_test/`（无斜杠 ⇒ 匹配**任意层级**的同名目录），换成锚定的 `ai_test/*` 后
+#   会**误放开** docs/history/**/ai_test/ 里的 101 个归档文件（实测：001311 下 88 个、001515 下 13 个）
+#   ⇒ 显式补回这条。
+docs/history/**/ai_test/
 
 # 外部参考项目（只读参考，非本项目代码；28MB/237 文件，勿混入版本）
 # 来源：D:\工作\QuantaAlpha-main.zip → 解压于此供查阅（roadmap §8.8）

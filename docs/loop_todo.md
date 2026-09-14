@@ -8,7 +8,7 @@
 > - 设计决策全文：`docs/factor_roadmap.md`（**改动前必读对应小节**）
 > - 当日细节与踩坑：`.codebuddy/memory/YYYY-MM-DD.md`（**只读尾部 30~50 行**）
 > - 跨会话长期事实：`.codebuddy/memory/MEMORY.md`
-> - 运行速查：`python ai_test/tracks_status.py`（三/四池轨道一屏）· `python ai_test/status_all.py`（夜间流水线）
+> - 运行速查：`python tools/tracks_status.py`（三/四池轨道一屏）· `python ai_test/status_all.py`（夜间流水线）
 >
 > **⚠ 本文档不重复 roadmap 的内容，只引用 `§8.xx`** —— 见 §2.2 「Token 纪律」。
 
@@ -24,7 +24,7 @@
 
 | 进程 | 内容 | 起于 | 预计 |
 |---|---|---|---|
-| `ai_test/run_tracks.py --pools=1000,300,500 --rounds=3` | **三池轨道，每池 3 代**（detached） | 09-13 21:47 | 1000 三代 ~00:15；300 ~01:30；500 ~03:00 |
+| `tools/run_tracks.py --pools=1000,300,500 --rounds=3` | **三池轨道，每池 3 代**（detached） | 09-13 21:47 | 1000 三代 ~00:15；300 ~01:30；500 ~03:00 |
 | └ 当前代 | `pool=1000 gen=3`（seed=37） | 09-13 23:28 | ~00:20 |
 
 **各池 bank（入库数）**：`all` **41** · `300` **1** · `500` **0** · **`1000` 3**（其中 1 个是 `all3`）
@@ -60,7 +60,7 @@
 ### 1.1 【已完成】✅★★★ B角 的「诊断→决策」链条断裂 —— **四条修法全部落地并端到端验证**
 
 - **状态**：`[x]` **已完成**（2026-09-14）。改动文件：`engine/loop_critic.py`、`engine/loop_engine.py`、
-  `ai_test/run_tracks.py`；新增回归测试 `ai_test/_test_critic_sensor.py`（**32 项全绿**）。
+  `tools/run_tracks.py`；新增回归测试 `tools/_test_critic_sensor.py`（**32 项全绿**）。
 - **★ 端到端验证**（50 池全新跑 3 代，`ai_test/_smoke50_g{1,2,3}.log` + `docs/loop_journal_50.md`）：
 
 | 验证项 | 结果 |
@@ -97,7 +97,7 @@
   本条**关闭**。若将来重启：注意风险是"可能误撤掉一个事后被证明有用的调整"，
   可行的小步做法是**只在永久闭嘴时回退一次**、并把回退写进 journal 让人可复核。
 - **影响面**：只影响"下一代怎么调参"，**不影响已入库因子**。
-- **一键复现证据**：`python ai_test/critic_sensor_report.py --pools=all,1000,300,500`
+- **一键复现证据**：`python tools/critic_sensor_report.py --pools=all,1000,300,500`
   ⇒ `ai_test/_critic_sensor.md`（逐代并列 **B角建议 vs LLM建议 vs 实际产出**）。**改动前先跑它。**
 
 三个层次（覆盖 **96 个世代**）：
@@ -180,16 +180,16 @@
 
 ```bash
 # ① 体检：有没有新的「追加加列」导致的混合宽度（§8.44 那类坑）
-python ai_test/fix_csv_schema.py                  # DRY-RUN，有坏文件再加 --apply
+python tools/fix_csv_schema.py                  # DRY-RUN，有坏文件再加 --apply
 
 # ② 补录池因子库（兜底：gen3 进程加载的是旧代码，它入库的因子不会自动写文档）
-python ai_test/backfill_library_pool.py           # DRY-RUN
-python ai_test/backfill_library_pool.py --apply
+python tools/backfill_library_pool.py           # DRY-RUN
+python tools/backfill_library_pool.py --apply
 
 # ③ 判读 + 三方对比
 python ai_test/run_reports.py                     # 重出 tilt / 夜间报告
-python ai_test/critic_sensor_report.py --pools=all,1000,300,500
-python ai_test/tracks_status.py                   # 核对各池 bank
+python tools/critic_sensor_report.py --pools=all,1000,300,500
+python tools/tracks_status.py                   # 核对各池 bank
 ```
 
 **判据**：
@@ -320,7 +320,7 @@ python ai_test/tracks_status.py                   # 核对各池 bank
   · ` 500` 池 gen1（只测 300/500）⇒ **`csi_all_only`** —— 字面是
     「只有全A通过 ⇒ 小盘/流动性溢价嫌疑，**指数增强不可用**」⇒ **会冤枉因子**。
 - **影响**：① 读者会把"只在两池测过"误读成"池内无效"；② **跨批次比较标签没有意义**。
-- **已做的缓解（本次已落地）**：`ai_test/backfill_library_pool.py` 给每条池轨迹文档
+- **已做的缓解（本次已落地）**：`tools/backfill_library_pool.py` 给每条池轨迹文档
   **逐代标注池口径**（`gen1~5 --pools=300,500 ⚠未测1000` / `gen6~8 --pools=1000,300,500`），
   并写明"**不同代的标签不能直接比**"这条陷阱 ✓ 幂等可重跑。
 - **建议根治**（按代价从小到大）：
@@ -355,7 +355,7 @@ python ai_test/tracks_status.py                   # 核对各池 bank
      `corr100(cs_scale(mf_x_sell), mf_l_sell)` 同时是 **300:F02 / 500:F01 / 1000:F01** ⇒
      直接合并会**重复入场**。
 - **✅ 解法：独立的、可重生成的派生视图** `docs/factor_library_crosspool.md`
-  （脚本 `python ai_test/build_crosspool_view.py`）：
+  （脚本 `python tools/build_crosspool_view.py`）：
   - 按**表达式去重**，把「在哪些池入库」「各池编号」「在哪些池有效」合并成一行；
   - ★ **池标签并集重算**（用 `loop_pools.derive_tag` 单一事实源）——
     解决池库文件自己警告的「不同代测的池不同 ⇒ 标签不能直接比」。
@@ -423,7 +423,7 @@ python ai_test/tracks_status.py                   # 核对各池 bank
   并引述另一处 AI 的建议「不用入库；若想要风格信息直接上 `neg(ln_mktcap)` 更优；
   剥完只剩 +2.15%/Calmar 0.04，等于没有」。
 - **★ 核实：用户判断成立，且实际更严重**（数据源 `docs/loop_strip_style_{pool}.csv`；
-  一键体检 `python ai_test/check_strip_style_pool.py`）：
+  一键体检 `python tools/check_strip_style_pool.py`）：
 
   | 池/编号 | 表达式 | 原 Calmar | **剥风格 Calmar** | 判定 |
   |---|---|---|---|---|
@@ -437,7 +437,7 @@ python ai_test/tracks_status.py                   # 核对各池 bank
   （例：`add(barra_residual_volatility, ...)` 原 Calmar 0.851 → 剥 **−0.030**）。
   ⚠ **其余 30 个从未测过剥风格**（`--strip_style` 是 09-12 才加的）⇒ **需补测**。
 - **★ 根因（配置的半拉子功能，与 §8.44 同源）**：
-  `ai_test/run_tracks.py` 传了 **`--strip_style`**（开**记录**）但**没传 `--min_strip_calmar`**
+  `tools/run_tracks.py` 传了 **`--strip_style`**（开**记录**）但**没传 `--min_strip_calmar`**
   ⇒ 后者默认 **`-1.0`** ⇒ 引擎里 `if args.min_strip_calmar > 0 ...` 不成立
   ⇒ **剥风格结果从未参与入库判定**（"只记录不拦"）。
   ★ 而 roadmap §8.43 里**我自己写过判读诀**：「**全A 超额正但剥风格后转负 ⇒ 纯风格因子**
@@ -452,7 +452,7 @@ python ai_test/tracks_status.py                   # 核对各池 bank
   已实现：`python ai_test/check_pool_vs_allA.py`（池因子 vs 全A 库的**收益流最大 |相关|**）。
   ⚠ 需要**澄清 `facs/` 指的是哪份清单**，是否需要新建。
 - **★ 已做（非破坏性，纯诊断/呈现）**：
-  1. `ai_test/check_strip_style_pool.py` —— 池库因子逐条「原 vs 剥风格」体检 + 分档汇总；
+  1. `tools/check_strip_style_pool.py` —— 池库因子逐条「原 vs 剥风格」体检 + 分档汇总；
   2. `docs/factor_library_crosspool.md` **新增「风格判定」列**（A/B/C/D），
      并把**排序改为"先按剥风格判定降序"** —— 因为**只按未剥风格 Calmar 排序会把纯风格因子排在最前**
      （实测最高的两个剥完都是负的）⇒ **排序本身就是误导**；
@@ -472,7 +472,7 @@ python ai_test/tracks_status.py                   # 核对各池 bank
 然后**因子值是用 h5 存吧**？我记得之前咱们讨论过**数据库用 PGSQL、存储用 h5** 这些对吧」。
 
 #### ① 剥风格门槛（`--min_strip_calmar=0.15`）
-`ai_test/run_tracks.py` 的 `extra` 加上 `--min_strip_calmar=0.15`（与 `--min_pool_calmar` 同档）
+`tools/run_tracks.py` 的 `extra` 加上 `--min_strip_calmar=0.15`（与 `--min_pool_calmar` 同档）
 ⇒ **从下一轮起挡住"纯风格"因子**。实测**不误伤**两个真独立有效的（剥后 0.349 / 0.667 都 >> 0.15）。
 
 #### ② 剥风格档**并列**进标签体系（**不改** `derive_tag` 的 `ok_all`）
@@ -491,7 +491,7 @@ python ai_test/tracks_status.py                   # 核对各池 bank
   - 格式**严格按 §4.3 实测定稿**：`facs/{ast_hash前2位}/{名}/values.h5`，
     dataset `data` = float32 **`(date, inst)`**、**连续、不 chunk、不压缩**；attrs 带 `expr/ast_hash/dates/instruments/freq/unit/version/source/sign/...`
   - 提供 `quantize='uint8q'`（截面分位，§4.2 实测体积 5.1~5.7x 且保截面排序）
-- **新增 `ai_test/build_facs.py`**：从 `state.bank` 的 **Node** 落地因子值到 `facs/`，
+- **新增 `tools/build_facs.py`**：从 `state.bank` 的 **Node** 落地因子值到 `facs/`，
   并**顺带补测剥风格**（§1.9 待办③）→ `docs/loop_strip_style_bank.csv`（**新文件**，不污染 per-pool 表）
 - **新增 `ai_test/orthogonal_diag.py`**：**正交诊断**（用户引述的另一处 AI 建议）——
   算某因子 vs `facs/` 全体的**逐日截面 Spearman 中位**，报 `>=thr` 的高重叠，判断"新颖性"
@@ -527,7 +527,7 @@ python ai_test/tracks_status.py                   # 核对各池 bank
 - **用户之问**：「省空间的话读取性能会不会打折扣？」
 - **★ 为什么必须实测**：`docs/software_framework.md` §4.1 测的是**布局**（npy/h5/parquet），
   §4.2 只给了**体积**（uint8 截面分位 5.1~5.7x）+ 一句定性的"保住截面排序语义" ⇒ **读取性能无人测过**。
-- **实测**（新增 `python ai_test/bench_quant_read.py`，真实落地的 F09，3309×5384）：
+- **实测**（新增 `python tools/bench_quant_read.py`，真实落地的 F09，3309×5384）：
 
   | 项 | float32 | uint8q | 倍率 |
   |---|---|---|---|
@@ -557,8 +557,8 @@ python ai_test/tracks_status.py                   # 核对各池 bank
 #### ① 双写 `values_q.h5`（uint8 快查副本）—— **已生成**
 - `engine/factor_store.py`：新增 `write_quant_copy()` + `open(quant=True)`
   （⚠ 副本不存在时**明确报错**，不静默回落 —— §8.44 铁律）
-- `ai_test/add_quant_copy.py`：**不需要重算因子**（只读 h5→量化→写 h5）⇒ 52 个仅 **57s**
-- `ai_test/build_facs.py`：今后落地**自动双写**
+- `tools/add_quant_copy.py`：**不需要重算因子**（只读 h5→量化→写 h5）⇒ 52 个仅 **57s**
+- `tools/build_facs.py`：今后落地**自动双写**
 - **实测结果**：`float32 3.71 GB` + `uint8 0.93 GB` = **总占用 4.64 GB**（省 4.00x）
 - ★ **量化精度自检**：uint8 分位 vs float32 的**逐日截面秩相关中位 = 1.0000、最小 = 1.0000**
   ⇒ **完全保住截面排序**（IC/十档分层/多空/正交诊断 **无损**）✓
@@ -668,12 +668,12 @@ python ai_test/tracks_status.py                   # 核对各池 bank
 ⇒ 配合增量会**清空已有 52 行**、只剩几个新因子 ⇒ 下游 `cross_pool_review.py` 会误判成
 "库里只有 3 个因子"，**且不报错**。已由 `_merge_csv` 处理，并有回归测试守护。
 
-**回归测试**：`python ai_test/_test_build_facs_merge.py`（**11 项**，含"真实文件必须分毫未动"断言）
+**回归测试**：`python tools/_test_build_facs_merge.py`（**11 项**，含"真实文件必须分毫未动"断言）
 **已接进收尾**：`run_tracks.py` 收尾①改为 `build_facs.py --only-new`。
 
 ### 1.15 【待修】规则1 也在重演「固定动作」，而且**连压 13 代完全无效** —— 缺「动作**有效性**」检测
 
-**发现方式**（2026-09-14，纯属意外）：写 `ai_test/journal_view.py` 做倒序索引时，一眼看到
+**发现方式**（2026-09-14，纯属意外）：写 `tools/journal_view.py` 做倒序索引时，一眼看到
 
 ```
 gen75  L2中100%因Calmar不足(信号弱) -> 交叉+15%, 深度加深
@@ -705,18 +705,39 @@ gen61  叶子[barra_residual_volatility]占比67%过高  -> 权重压到0.25
 
 ---
 
-### 1.16 【待决策】`ai_test/` 全目录被 gitignore，但**收尾管线已住在里面**
+### 1.16 ✅【已完成】`ai_test/` 全目录被 gitignore，但收尾管线住在里面 —— 已迁至 `tools/`（2026-09-14, v0.5.2）
+
+- **做法**：把 **23 个**生产管线/工具脚本迁到 `tools/` 并纳入 git；`ai_test/` 收敛为草稿区 + 产物。
+- **★ 三个必须处理的坑（都已解）**：
+  1. **`HERE`→`ROOT`**：`ai_test/x.py` 与 `tools/x.py` 的 `ROOT` **相同**（`tools/` 是仓库根的直接子目录）✓ 不用改推导。
+  2. **产物路径必须钉死**：`run_tracks.py` 的 `_tracks`、`critic_sensor_report.py` 读的 `_tracks`、
+     `build_facs.py` 的 `_facs_built.csv` —— 若用 `HERE` 会**把日志/清单劈成两半**（正在跑的进程写 `ai_test/`）
+     ⇒ 显式改成 `ROOT/'ai_test'/...`（**代码进 tools/，产物仍留 ai_test/**）✓
+  3. **正在跑的进程**：`run_tracks.py` 之后还要 `subprocess.run(['ai_test/build_facs.py'])`
+     ⇒ 移走会让它在**收尾时报"文件不存在"** ⇒ 在原位置留 **3 个兼容垫片**（`runpy.run_path` 转发）✓
+       ⚠ 垫片提示必须写 **stdout 不写 stderr**（PowerShell 会把子进程 stderr 当 `NativeCommandError`，
+       且收尾段会检查 stderr 非空并记 `[stderr]`）。
+- **★ 顺手修的 gitignore 回归**：原规则 `ai_test/`（**无斜杠 ⇒ 匹配任意层级同名目录**）改成 `ai_test/*`
+  （**带斜杠 ⇒ 锚定仓库根**）后，会**误放开** `docs/history/**/ai_test/` 下的 **101 个归档文件**
+  （实测：`001311` 下 88 个、`001515` 下 13 个）⇒ 已显式补 `docs/history/**/ai_test/`。
+  > ★ 另注：**不能**写 `ai_test/` + `!ai_test/xxx.py` —— git 规则「父目录被排除时无法再包含其中文件」
+  > ⇒ `!` 例外会**全部失效**。必须用 `ai_test/*`（排除内容而非目录）才能配合 `!`。
+- **验证**：26 个文件全部编译通过 · 引号检查全绿 · 两处垫片转发实测成功（含退出码 0）
+  · 回归测试 11/11 + 32/32 · 引擎未受影响 · `git status` 仅显示 `tools/` + 3 垫片 ✓
+- **待办**：轨道结束后 `git rm ai_test/{run_tracks,build_facs,cross_pool_review}.py` 删掉垫片。
+
+#### 1.16-旧（原「待决策」说明，保留备查）
 
 `.gitignore` 写着「临时诊断脚本/产物（可随时删）」，注释成立的前提是 `ai_test/` 只放一次性脚本。
 **但现在已经不是**：
 
 | 文件 | 角色 |
 |---|---|
-| `ai_test/run_tracks.py` | **多池轨道驱动器**（生产路径，唯一入口）|
-| `ai_test/build_facs.py` | **收尾① 因子值落地**（`--only-new`）|
-| `ai_test/cross_pool_review.py` | **收尾② L2 跨池 + L3 精选池** |
-| `ai_test/critic_sensor_report.py` | B角 传感器审计（§1.1 的证据来源）|
-| `ai_test/fix_csv_schema.py` / `backfill_library_pool.py` | 收尾数据体检 |
+| `tools/run_tracks.py` | **多池轨道驱动器**（生产路径，唯一入口）|
+| `tools/build_facs.py` | **收尾① 因子值落地**（`--only-new`）|
+| `tools/cross_pool_review.py` | **收尾② L2 跨池 + L3 精选池** |
+| `tools/critic_sensor_report.py` | B角 传感器审计（§1.1 的证据来源）|
+| `tools/fix_csv_schema.py` / `backfill_library_pool.py` | 收尾数据体检 |
 | `ai_test/_test_*.py` | **回归测试** |
 | `ai_test/_tracks/*.log` | 轨道产物（**该忽略**）|
 
@@ -863,7 +884,7 @@ python ai_test/cleanup_repo.py --apply # ③ 执行（先写清单；归档可�
 5. **改「报告生成段」的代码，`py_compile` 通过 ≠ 没问题** ⇒ **必须真跑一次**（该段只在主流程末尾执行）。
 6. **`subprocess.run(stdout=<文本文件对象>)` 的编码坑**：Python 只把**底层 fd** 交给子进程 ⇒ 子进程按**自己的**编码写（Windows cp936/GBK），父进程按 utf-8 读 ⇒ **日志中文全乱码**。修：子进程设 `PYTHONIOENCODING=utf-8` + 读取端用「utf-8→gbk 逐个试」的宽容读。
 7. **`Start-Process -ArgumentList` 不自动加引号** ⇒ 参数被按空格拆开、**静默丢失**（`night_pipeline.py` 手动解析 argv、未知参数直接忽略，**不报错**）。修：写**纯 ASCII 的 .ps1**，里面用 `& $py @argl`，再 `Start-Process` 启动它。
-8. **中文里写 ASCII 双引号 = `SyntaxError`**（一天犯 4 次）⇒ 改用 **「」/（）**。**权威判据永远是 `py_compile`**；`ai_test/_check_quotes.py` 只是早期预警，**启发式必然有假阳性**。
+8. **中文里写 ASCII 双引号 = `SyntaxError`**（一天犯 4 次）⇒ 改用 **「」/（）**。**权威判据永远是 `py_compile`**；`tools/_check_quotes.py` 只是早期预警，**启发式必然有假阳性**。
 9. **用「恒等不变量测试」抓计算错误**：市值加权基准的「mcap=常数 ⇒ 必须逐位等于等权」抓出 **5.1e-06** 偏差（市值 28.6% 为 NaN，分子分母口径不一致）⇒ `5e-06` 量级**肉眼看数值"很合理"绝对发现不了**。**凡新增计算路径，先找一个"退化时必须逐位相等"的测试。**
 10. **★★ `fnmatch` 的 `*` 会跨越 `/`**（2026-09-14 实录）：`fnmatch('docs/history/cleanup_X/docs/a.bak', 'docs/*.bak_*')` ⇒ **True**
     ⇒ 我写的清理脚本用 `docs/*.bak_*` 匹配"docs 下一层"，实际匹配了**任意深度**
@@ -934,26 +955,26 @@ python ai_test/cleanup_repo.py --apply # ③ 执行（先写清单；归档可�
 
 | 类别 | 工具 | 用途 |
 |---|---|---|
-| **状态** | `ai_test/tracks_status.py` | ★ 三/四池轨道一屏（驱动日志 / 各池 journal+bank / 在跑的池 / **进度+ETA** / 内存） |
+| **状态** | `tools/tracks_status.py` | ★ 三/四池轨道一屏（驱动日志 / 各池 journal+bank / 在跑的池 / **进度+ETA** / 内存） |
 | | `ai_test/status_all.py` | 夜间流水线状态 |
 | **跑**（全 detached） | `ai_test/night_pipeline.py` | 夜间流水线（多池多轮 + 自动出报告） |
-| | `ai_test/run_tracks.py` | ★ 多池轨道驱动器（**引擎参数已写死在里面**，见 §0.1） |
+| | `tools/run_tracks.py` | ★ 多池轨道驱动器（**引擎参数已写死在里面**，见 §0.1） |
 | | `ai_test/chain_validation.py` · `chain_interpret.py` · `chain_tilt.py` · `chain_stdtest_check.py` | 接力：等空闲 → 跑 → 出报告 → 判读 |
 | **判读/报告** | `ai_test/valid_report.py --new_from=N` | 按 gen 切分的对照表 |
 | | `ai_test/interpret_valid.py` | ★ 决策树 → **结论 + 下一步确切命令**（写死，不依赖会话） |
-| | `ai_test/critic_sensor_report.py` | ★ B角建议 vs LLM建议 vs 实际产出（§1.1 用） |
+| | `tools/critic_sensor_report.py` | ★ B角建议 vs LLM建议 vs 实际产出（§1.1 用） |
 | | `ai_test/run_reports.py` · `night_report.py` | 重出报告（含 `tilt`） |
 | **库/因子** | `ai_test/library_kpi.py` | ★ 库独立性 KPI（**秒级、不需面板**） |
 | | `ai_test/inspect_bank.py` · `export_bank.py` | 看库 / 导出 pkl 给 `standard_test` |
-| | `ai_test/backfill_library_pool.py` | ★ 补录池 `factor_library_*.md`（§8.44） |
+| | `tools/backfill_library_pool.py` | ★ 补录池 `factor_library_*.md`（§8.44） |
 | | `ai_test/backfill_pool_tags.py` | 补池标签 |
 | **分析** | `ai_test/diag_gate_chain.py` | ★ 逐门诊断（门槛到底砍在哪一道） |
 | | `ai_test/calib_pool_gate.py` · `calib_gates.py` | 门槛标定 |
-| | `ai_test/analyze_diversity.py` · `analyze_turnover.py` | 结构多样性 / 换手分析 |
+| | `tools/analyze_diversity.py` · `analyze_turnover.py` | 结构多样性 / 换手分析 |
 | | `ai_test/test_combine.py` | 合成 vs 个体（**必须用 `ex` 口径**） |
 | | `ai_test/combo_build.py` · `combo_score.py` · `combo_calib.py` | 合成因子构建 / 选股 / 标定 |
-| **修复/体检** | `ai_test/fix_csv_schema.py` | ★ 追加加列导致的混合宽度（§8.30/§8.44）；**先 DRY-RUN** |
-| | `ai_test/_check_quotes.py` | 中文里的 ASCII 引号（**早期预警，非权威** —— 权威判据是 `py_compile`） |
+| **修复/体检** | `tools/fix_csv_schema.py` | ★ 追加加列导致的混合宽度（§8.30/§8.44）；**先 DRY-RUN** |
+| | `tools/_check_quotes.py` | 中文里的 ASCII 引号（**早期预警，非权威** —— 权威判据是 `py_compile`） |
 | | `ai_test/_kill.ps1 -Pat <模式>` | 通用按模式杀 python 进程（**纯 ASCII**） |
 | **QA（改引擎后必跑）** | `engine/qa_mine_pool.py` | 池挖掘 QA |
 | | `engine/qa_bench_cw.py` | 市值加权基准的**恒等不变量**测试 |
@@ -997,8 +1018,8 @@ python ai_test/cleanup_repo.py --apply # ③ 执行（先写清单；归档可�
 | 部件 | 说明 |
 |---|---|
 | 任务真相源 | **本文件** —— 任何新会话先读 §0/§1 |
-| 长跑本体 | `ai_test/night_pipeline.py` / `ai_test/run_tracks.py` / `ai_test/chain_*.py`（全部 **detached**，不依赖任何会话） |
-| 机械判读 | `ai_test/interpret_valid.py`（决策树→结论+命令）· `ai_test/valid_report.py`（按 gen 切分）· `ai_test/critic_sensor_report.py`（三方对比） |
+| 长跑本体 | `ai_test/night_pipeline.py` / `tools/run_tracks.py` / `ai_test/chain_*.py`（全部 **detached**，不依赖任何会话） |
+| 机械判读 | `ai_test/interpret_valid.py`（决策树→结论+命令）· `ai_test/valid_report.py`（按 gen 切分）· `tools/critic_sensor_report.py`（三方对比） |
 | 互斥 | §3「当前占用」+ 40 分钟时间戳 |
 | 有界 | 每轮 ≤10 分钟；做不完把进度写回本文件 |
 
