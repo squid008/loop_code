@@ -218,7 +218,7 @@ _GEN_SYSTEM_FALLBACK = (
     "  ★指数均线(1参, 2026-09-15 新增): ema5 ema12 ema20 ema26 ema60 "
     "(指数加权, 衰减因子 2/(n+1)。与 ts_mean 的**等权**不同 ⇒ 提供另一条平滑通道; "
     "注意 ema12/ema26 可组合出 MACD: sub(ema12(A), ema26(A)))\n"
-    "  ★回归族(1参, 2026-09-15 新增): ts_slope5/20/60  ts_rsqr5/20/60  ts_resi5/20/60 "
+    "  ★回归族(1参, 2026-09-15 新增): ts_slope5/10/20/60  ts_rsqr5/10/20/60  ts_resi5/10/20/60 "
     "(对时间做滚动线性回归: slope=趋势斜率(方向+强度); rsqr=拟合度R²(路径多接近直线, "
     "**但不含方向** ⇒ 建议与 slope 组合: mul(ts_rsqr20(close), ts_slope20(close))); "
     "resi=最后一点相对趋势线的偏离。注意: 它们描述**趋势**而非**水平**, 与 ts_mean 是不同通道)\n"

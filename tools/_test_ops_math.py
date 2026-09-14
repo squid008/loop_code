@@ -196,27 +196,73 @@ def t_engine():
     print('\n[7] 引擎接通 + A角 prompt 同步')
     import loop_engine as LE
     import loop_critic as C
-    need = ('ts_slope5', 'ts_slope20', 'ts_slope60', 'ts_rsqr5', 'ts_rsqr20', 'ts_rsqr60',
-            'ts_resi5', 'ts_resi20', 'ts_resi60', 'ts_skew20', 'ts_skew60',
-            'ts_kurt20', 'ts_kurt60')
+    need = ('ts_slope5', 'ts_slope10', 'ts_slope20', 'ts_slope60',
+            'ts_rsqr5', 'ts_rsqr10', 'ts_rsqr20', 'ts_rsqr60',
+            'ts_resi5', 'ts_resi10', 'ts_resi20', 'ts_resi60',
+            'ts_skew20', 'ts_skew60', 'ts_kurt20', 'ts_kurt60')
     miss = [k for k in need if k not in LE.UNARY]
-    chk(not miss, '13 个新算子全部注册进 `UNARY`（缺 {}）'.format(miss or '无'))
+    chk(not miss, '16 个新算子全部注册进 `UNARY`（缺 {}）'.format(miss or '无'))
     chk(set(C._ops_of('mul(ts_rsqr20(close), ts_slope20(close))')) >=
         {'mul', 'ts_rsqr20', 'ts_slope20'},
         'B角 `_ops_of` 能认出（已改成派生 ⇒ 自动覆盖）✓')
     # ⚠⚠ **prompt 覆盖检查不在这里做**（2026-09-15 实录）：
     #   我在本文件里写了朴素的 `k in src`，而 prompt 用的是**斜杠简写**
-    #   （`ts_slope5/20/60`）⇒ `ts_slope20` **不是 literal 子串** ⇒ **误报 13 个"缺失"** ✗
+    #   （`ts_slope5/10/20/60`）⇒ `ts_slope20` **不是 literal 子串** ⇒ **误报"缺失"** ✗
     #   ★★★ 这**正是** `roadmap §8.48` 记下的那个坑 —— **我第二次犯了** ✗
     #   ⇒ 该检查**只在 `tools/_test_ops_sync.py [3]` 做一次**（那里有 `_expand_abbrev` 展开器 ✓）
     #   ⇒ **教训：同一件事别写两个检查** —— 弱的那份只会制造假警报。
     chk(True, 'A角 prompt 覆盖检查见 `tools/_test_ops_sync.py [3]`（含斜杠简写展开）')
     B = {'close': np.random.RandomState(1).randn(400, 3).astype('float32').cumsum(axis=0) + 50}
     for ex in ('ts_rsqr20(close)', 'mul(ts_rsqr20(close), ts_slope20(close))',
-               'ts_resi20(log(close))', 'ts_skew60(ts_delta5(close))'):
+               'ts_rsqr10(close)', 'ts_resi20(log(close))', 'ts_skew60(ts_delta5(close))'):
         nd = LE.parse_expr(ex)
         chk(nd is not None and LE.eval_expr(nd, B, {}).shape == (400, 3),
             '引擎解析+求值：%s ✓' % ex)
+
+
+def t_window_policy():
+    """★★ 窗口档位**原则**（2026-09-15 用户问「为啥不做 10/15/30」后定下来，固定成测试）。
+
+    ## 三条原则（为什么不是"档位越多越好"）
+
+    ① **近似等比**（短端密、长端疏）—— 因为**短端的相对差异才是信息**
+       （`5` vs `10` 差 2 倍；`60` vs `65` 没意义）⇒ 回归族 `5/10/20/60` 间距 `2×/2×/3×` ✓
+    ② **优先复用项目已有档位**，别引入新档 ——
+       实测（本项目 `UNARY`）：`w=20` 被 **13** 个算子用 · `w=60` 被 **10** 个 · `w=5` 被 **6** 个；
+       而 **`w=15` / `w=30` 全项目从未出现** ⇒ 加了就是**引入新档** ⇒ **不加** ✓
+    ③ **别加冗余档**：趋势类在**相邻窗口高度相关**（`slope10` ≈ `slope5`/`slope20` 的混合），
+       不像 `ts_mean` 那样正交 ⇒ 间距不能太密 ✓
+       （对比：`ts_mean` 有 8 档是因为它要做**比值/叠加**，如 `ts_mean(x,5)/ts_mean(x,200)`）
+    ④ **短窗对高阶矩无意义**：偏度/峰度是**高阶矩**，样本太少估计极不稳
+       ⇒ `ts_skew`/`ts_kurt` **只给 20/60，不给 5** ✓
+
+    ★ 本质：**窗口档位不是"越多越好"，而是"尺度分得开 + 不引入新档"** ✓
+    """
+    print('\n[8] ★ 窗口档位原则（防"随手加档位"）')
+    import re
+    import loop_engine as LE
+    fam = {}
+    for k in LE.UNARY:
+        m = re.match(r'^([a-z_]+?)(\d+)$', k)
+        if m:
+            fam.setdefault(m.group(1), []).append(int(m.group(2)))
+    # ① 回归族必须是 5/10/20/60（等比序列）
+    for f in ('ts_slope', 'ts_rsqr', 'ts_resi'):
+        got = sorted(fam.get(f, []))
+        chk(got == [5, 10, 20, 60],
+            '`%s` 窗口 = %s（**等比序列 5/10/20/60**，间距 2×/2×/3×）' % (f, got))
+    # ② 全项目不该出现 15 / 30（从未有算子用过 ⇒ 加了就是引入新档）
+    allw = sorted({w for v in fam.values() for w in v})
+    chk(15 not in allw and 30 not in allw,
+        '★ 全项目**没有** `w=15`/`w=30`（从未出现过的档位；实得全部档位 %s）' % allw)
+    # ③ 高阶矩不给短窗（样本太少估计不稳）
+    chk(5 not in fam.get('ts_skew', []) and 5 not in fam.get('ts_kurt', []),
+        '★ `ts_skew`/`ts_kurt` **不给 w=5**（高阶矩需要足够样本；实得 %s / %s）'
+        % (sorted(fam.get('ts_skew', [])), sorted(fam.get('ts_kurt', []))))
+    # ④ 项目"默认档"必须覆盖（w=20 是事实默认档，13 个算子用）
+    chk(all(20 in fam.get(f, []) for f in ('ts_slope', 'ts_rsqr', 'ts_resi',
+                                          'ts_skew', 'ts_kurt')),
+        '★ `w=20`（项目事实默认档，13 个算子用）必须覆盖全部 5 个新族 ✓')
 
 
 def main():
@@ -230,6 +276,7 @@ def main():
     t_discipline()
     t_perf()
     t_engine()
+    t_window_policy()
     print('\n' + '=' * 96)
     print('通过 {}/{}'.format(OK[0] - OK[1], OK[0]) + ('' if OK[1] else '  ✓ 全部通过'))
     return 1 if OK[1] else 0
