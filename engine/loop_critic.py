@@ -59,6 +59,117 @@ RULE_NAMES = {
 #   ⇒ 连续 2 代足以判定"它不是自适应，是固定动作"，无需等到更多代才叫停。
 SAT_N = 2
 COOL_N = 3
+
+# =====================================================================
+# ★★★ 动作「有效性」追踪（2026-09-14, docs/loop_todo.md §1.15）
+# ---------------------------------------------------------------------
+# **要解决什么**：饱和检测只回答"**别重复**"，**不回答"为什么无效"**。
+#   ★ 实测（全A 池 gen61~gen73）：`r1_leaf_conc` **连续 13 代**都在压同一个叶子
+#     `barra_residual_volatility`，而 `leaf_conc` **始终回到 62%~100%**
+#     ⇒ **动作施加了，但完全无效** ✗
+#   **根因**：压权重治不了"它是当前面板里最强的信号源" —— 压到 0.25 只是**降低出现频率**，
+#     不改变"它一出现就赢"。
+# ⇒ 所以必须**记住施加前的指标基线**，等它下次有机会再施加时，**先算账**：
+#   施加了一段(含冷却期)之后，**目标指标真的改善了吗**？没改善 ⇒ **判定无效**。
+#
+# 判"改善"的方向与容差：
+#   `up=True`  = 越大越好（如 struct_div / n_pass / stab_med）
+#   `up=False` = 越小越好（如 leaf_conc / fail_* / known_ratio）
+#   `EPS` = **必须超过的改善幅度**（否则视为噪声）—— 不能设 0，否则同值也会算"没恶化"。
+#   ⚠ 指标**缺失**时**一律不判定**（不臆造，roadmap §8.45 铁律）。
+ACTION_METRIC = {
+    'r1_leaf_conc':    ('leaf_conc',   False),
+    'r2_stab_low':     ('stab_med',    True),
+    'r3_struct_div':   ('struct_div',  True),
+    'r4_fail_turn':    ('fail_turn',   False),
+    'r5_calmar_cross': ('fail_pool_calmar', False),   # 池口径优先，缺失时退回 fail_calmar
+    'r6_known_ratio':  ('known_ratio', False),
+    'r7_zero_pass':    ('n_pass',      True),
+}
+METRIC_EPS = 0.02          # 必须改善的最小幅度（低于此视为噪声/无效）
+INEFF_MUTE_N = 2           # 判「无效」达到该次数 ⇒ **永久停用**（与 LLM 否决同级的证伪）
+INVALID_COOL_MULT = 2      # 判无效一次 ⇒ 冷却时长**翻倍**（3 -> 6 -> 12 ...）
+
+
+def _metric_of(diag, aid):
+    """取该动作的**目标指标**当前值；取不到返回 `None`（⇒ **不判定**，不臆造）。"""
+    key, up = ACTION_METRIC.get(aid, (None, None))
+    if key is None:
+        return None, None, None
+    v = diag.get(key)
+    if v is None and aid == 'r5_calmar_cross':
+        key, v = 'fail_calmar', diag.get('fail_calmar')      # 池口径缺失 -> 退回全A 口径
+    try:
+        fv = float(v)
+    except (TypeError, ValueError):
+        return None, None, None
+    return (fv if np.isfinite(fv) else None), up, key
+
+
+def _improved(old, new, up):
+    """`new` 相对 `old` 是否**有实质改善**（方向 + 容差）。"""
+    if old is None or new is None:
+        return None                       # 不可比 ⇒ 不判定
+    d = (new - old) if up else (old - new)
+    return bool(d > METRIC_EPS)
+
+
+def _rollback_plan(s, aid, base):
+    """★ §1.1「参数棘轮」的**保守回退**：只回退**本动作确实改过、且之后没人再动**的参数。
+
+    ## 要解决什么
+    饱和/永久闭嘴只阻止动作**继续**施加，**不会撤销它已经改过的值**。
+    ★ 实测：gen1 的 `r5`+`r7` 把 `depth` 推到 `[3,4,5]`，此后即使永久闭嘴，
+      `depth` **仍停在 `[3,4,5]`**（LLM 建议的是 `[2,3]`）⇒ **历史漂移永久固化** ✗
+
+    ## 为什么"保守"（判据 = 当前值是否仍等于本动作写入的值）
+    多个动作会改**同一个参数**（`r2` 与 `r4` 都改 `min_stab`；`r5` 与 `r7` 都改 `depth`）
+    ⇒ 无脑恢复会**覆盖掉别的动作的修改** ✗
+    ⇒ 只在「**该参数当前值 == 本动作最后写入的值**」时才回退（= 之后没人动过它 ⇒ 安全）；
+      否则**跳过并留痕**（宁可少回退，不可误撤）。
+
+    :param base: `{参数名: (旧值, 新值)}`（只含**本动作**改过的）
+    :return: (恢复列表 [(参数, 恢复为)], 跳过列表 [(参数, 原因)])
+    """
+    done, skip = [], []
+    for p, (old, new) in (base or {}).items():
+        cur = _get_param(s, p)
+        if cur is None:
+            skip.append((p, '参数不存在'))
+            continue
+        if cur != new:
+            skip.append((p, '已被后续动作改过（当前 {} ≠ 本动作写入 {}）'.format(_fmtv(cur), _fmtv(new))))
+            continue
+        _set_param(s, p, old)
+        done.append((p, old))
+    return done, skip
+
+
+def _get_param(s, p):
+    """扁平参数名 -> 值（`leaf_w.<leaf>` / `op_bias.<op>` 走嵌套）。取不到返回 `None`。"""
+    if '.' in p:
+        head, sub = p.split('.', 1)
+        return (s.get(head) or {}).get(sub)
+    return s.get(p)
+
+
+def _set_param(s, p, v):
+    """扁平参数名 -> 写回（嵌套同理）。"""
+    if '.' in p:
+        head, sub = p.split('.', 1)
+        s.setdefault(head, {})[sub] = v
+    else:
+        s[p] = v
+
+
+def _fmtv(v):
+    """紧凑打印参数值（列表如 `depth`/`mix` 用 `[3,4,5]`）。"""
+    if isinstance(v, (list, tuple)):
+        return '[{}]'.format(','.join(('%g' % x) if isinstance(x, (int, float)) else str(x)
+                                      for x in v))
+    if isinstance(v, float):
+        return '%.3f' % v
+    return str(v)
 # 特殊常量：★ LLM 否决专用**持久哨兵**（2026-09-14 用户拍板「**让它永久闭嘴**」）。
 #   语义与"冷却"完全不同：冷却到期会**自动解禁**（规则还会再来一遍）；
 #   哨兵 = **一旦被 LLM 否决过，该动作对后续所有代永久失效**，直到人工改 `_muted`。
@@ -299,16 +410,133 @@ def suggest(diag, cur=None):
              decorr=cur.get('decorr', 0.75),
              fsa_th=cur.get('fsa_th', 0.15),
              bank_skel_max=cur.get('bank_skel_max', 1))
-    # ★ 这三个键**必须原样带下去**（引擎会把 s 存进 state 的 cfg）—— 否则跨代就忘了:
+    # ★ 这些键**必须原样带下去**（引擎会把 s 存进 state 的 cfg）—— 否则跨代就忘了:
     #   `_act` = 动作施加史 · `_veto` = LLM 否决史 · `_cool` = 冷却解禁代
+    #   `_base` = ★ 施加前快照（§1.15 指标基线 + §1.1 参数旧值）· `_ineff` = ★ 判无效史
+    #   `_cool_mul` = ★ 某动作的冷却倍率（判无效后翻倍，见 §1.15）
     s['_act'] = {k: list(v) for k, v in (cur.get('_act') or {}).items()}
     s['_veto'] = {k: list(v) for k, v in (cur.get('_veto') or {}).items()}
     s['_cool'] = dict(cur.get('_cool') or {})
+    s['_base'] = {k: dict(v) for k, v in (cur.get('_base') or {}).items()}
+    s['_ineff'] = {k: list(v) for k, v in (cur.get('_ineff') or {}).items()}
+    s['_cool_mul'] = dict(cur.get('_cool_mul') or {})
     s['_sat_n'], s['_cool_n'] = SAT_N, COOL_N
     reasons = []
     tgt = gen + 1        # ★ 本策略服务的**目标代**：代首(gen=args.gen-1)/代末(gen=args.gen) 恒等 ✓
     act, veto, cool = s['_act'], s['_veto'], s['_cool']
+    base, ineff, cmul = s['_base'], s['_ineff'], s['_cool_mul']
     n_blocked = [0]
+    n_ineff = [0]
+
+    # ---- ★ 当前动作上下文：让 `_set()` 自动把"改了哪些参数"归到**本动作**名下 ----
+    #   为什么用上下文而不是让每个调用点手写旧值：
+    #     同一代内**多个动作会改同一个参数**（`r2`/`r4` 都改 `min_stab`；`r5`/`r7` 都改 `depth`）
+    #     旧值必须取"**本动作下手之前**"的值 —— 每个调用点手写极易写错，且新增动作时必然漏。
+    _ctx = {'aid': None, 'pre': {}}
+
+    def _set(p, v):
+        """改一个参数（**唯一入口**）—— 自动登记"本动作名下该参数的首个旧值"。
+
+        ⚠ 所有动作改 `s` 都必须走它，否则该改动**不会进入快照** ⇒ 将来无法回退（静默漏记）。
+        """
+        if _ctx['aid'] is not None:
+            _ctx['pre'].setdefault(p, _get_param(s, p))
+        _set_param(s, p, v)
+
+    def _ineff_muted(aid):
+        """是否已被"**实测无效**"永久停用（与 LLM 否决同级，但来源可辨）。"""
+        v = ineff.get(aid) or []
+        return MUTE in v
+
+    def _settle(aid):
+        """★★ §1.15：给**上一段施加**算账 —— 目标指标真的改善了吗？
+
+        ## ⚠ 时机（2026-09-14 首版写错，被既有测试当场抓到）
+        §1.15 原文是「**冷却解禁时**比对」—— 即必须等**一段真正闭合**（判过饱和并冷却过）
+        才结算。首版写成"只要即将重新施加就结算" ⇒ **在第二次施加前就下结论**，
+        而那时指标只过了 1 代，**样本太短**（而且会让"连续 SAT_N 代"这条路径根本走不到，
+        破坏既有语义）✗
+        ⇒ 现在用 `due` 标记：**只有 `_saturated` 分支才置 `due`**（= 一段结束、要结算了）✓
+
+        :return: True=可以继续施加本代；False=**刚判无效并拦下本代**（同一动作刚被证伪，
+                 本代不该再压一次）
+        """
+        b = base.get(aid) or {}
+        mrec = b.get('metric')
+        if not mrec or not b.get('due'):
+            return True                     # 没有基线 / 一段还没闭合 ⇒ 不结算（不臆造）
+        old_v, _g0, key = mrec[0], mrec[1], mrec[2]
+        new_v, up, key2 = _metric_of(diag, aid)
+        if new_v is None:
+            _no_fire(reasons, aid, '有效性待评：本代取不到目标指标 `{}` ⇒ **不判定**（不臆造）'
+                                   .format(key2 or key))
+            return True
+        verdict = _improved(old_v, new_v, up)
+        if verdict is None:
+            return True
+        arrow = '↑' if up else '↓'
+        if verdict:
+            reasons.append('【{}】✅ 有效性复核：`{}` {} → {}（期望{}）⇒ **有效**，'
+                           '继续施加'.format(aid, key2 or key, _fmtv(old_v), _fmtv(new_v), arrow))
+            # 本段已结清 ⇒ 下段重新记基线（`due` 也要清，否则下段刚记基线就会被误结算）
+            base[aid].pop('metric', None)
+            base[aid].pop('due', None)
+            return True
+        # ---- 判无效 ----
+        n_ineff[0] += 1
+        hist = ineff.setdefault(aid, [])
+        hist.append(tgt)
+        n_times = len([g for g in hist if g is not MUTE])
+        cmul[aid] = min(cmul.get(aid, 1) * INVALID_COOL_MULT, 64)
+        cool[aid] = tgt + COOL_N * cmul[aid]
+        msg = ('❌ 有效性判定：`{}` {} → {}（期望{}，需 >{:.2f}）⇒ **施加无效**'
+               '（第 {} 次判定；冷却×{} ⇒ 到第 {} 代再评估）'.format(
+                   key2 or key, _fmtv(old_v), _fmtv(new_v), arrow, METRIC_EPS,
+                   n_times, cmul[aid], cool[aid]))
+        base[aid].pop('metric', None)
+        base[aid].pop('due', None)
+        if n_times >= INEFF_MUTE_N:
+            hist.append(MUTE)
+            _rollback(s, aid, base, reasons, '实测无效 {} 次'.format(n_times))
+            msg += ' ⇒ 累计 {} 次判无效 -> **永久停用**（等同被证伪）'.format(n_times)
+        reasons.append('【{}】{}'.format(aid, msg))
+        n_blocked[0] += 1
+        return False
+
+    def _rollback(s_, aid, base_, reasons_, why, quiet=False):
+        """★ §1.1「参数棘轮」：某动作被**永久停用**时，**保守回退**它改过的参数。
+
+        只回退「本动作确实改过、且**之后没人再动过**」的参数（见 `_rollback_plan` 的说明）。
+        全程写进 `reasons_` ⇒ journal 里可复核、可人工恢复 ✓
+
+        ## ★★ 为什么要能**重试**（`quiet=True`）—— 2026-09-14 实测发现的顺序问题
+        多个动作会改同一参数，而"永久停用"是**逐个动作触发**的（`_guard` 里的检查顺序固定）。
+        实测：`r5`/`r7` **都改 `depth`**，且**都判无效** ⇒ 应当**两个都撤、回到最初值**；
+        但 `r5` 先被处理时，`depth` 还是 `r7` 写的值 ⇒ 判据不匹配 ⇒ **跳过** ✗
+        等 `r7` 撤完（`depth` 回到 `r5` 写的值）时，`r5` 已经不再检查 ⇒ **停在半路** ✗
+        ⇒ 修法：**被永久停用的动作每次被拦时都重试一次回退**（`_rollback_plan` 会自然收敛：
+          跳过时**保留** `params` 记录）。**不需要给动作排序**，多试几次就一致了 ✓
+        ⇒ 而 `quiet=True` 让"重试但没进展"不留痕（否则每代刷屏）。
+        """
+        done, skip = _rollback_plan(s_, aid, (base_.get(aid) or {}).get('params'))
+        if done or (skip and not quiet):
+            reasons_.append('【{}】↩ 参数棘轮（因{}）：恢复 {}；跳过 {}'.format(
+                aid, why,
+                ', '.join('{}={}'.format(p, _fmtv(v)) for p, v in done) or '（无）',
+                ', '.join('{}（{}）'.format(p, r) for p, r in skip) or '（无）'))
+        # ★★ 只清理**已成功恢复**的记录，**保留跳过的** —— 否则重试机制失效 ✗
+        #   （2026-09-14 实录：初版写 `if done: pop('params')`，把跳过的 `depth` 记录一起丢了
+        #    ⇒ 下次 `_guard` 重试时 `params` 为空 ⇒ **永远停在半路** ✗）
+        pr = (base_.get(aid) or {}).get('params')
+        if pr:
+            for p, _v in done:
+                pr.pop(p, None)
+            if not pr:
+                (base_.get(aid) or {}).pop('params', None)
+
+    def _begin(aid):
+        """`_guard` 通过 ⇒ 进入"本动作"上下文（之后的 `_set` 都归到它名下）。"""
+        _ctx['aid'], _ctx['pre'] = aid, {}
 
     def _guard(aid):
         """动作闸门。返回 True=可施加；False=已拦下并**写明原因**（绝不静默）。"""
@@ -316,10 +544,21 @@ def suggest(diag, cur=None):
             _no_fire(reasons, aid, 'LLM 已【永久】否决，后续各代一律不再施加')
             n_blocked[0] += 1
             return False
+        if _ineff_muted(aid):
+            # ★★ 补做未完成的回退（见 `_rollback` 的"为什么要能重试"）：
+            #   多个动作改同一参数且都判无效时，先处理的那个会因"当前值还是后处理者写的"而跳过；
+            #   等后处理者撤完，这里再试一次就能撤到最初值 ⇒ **自然收敛，无需排序** ✓
+            if (base.get(aid) or {}).get('params'):
+                _rollback(s, aid, base, reasons, '实测无效（补做未完成的回退）', quiet=True)
+            _no_fire(reasons, aid, '已被【实测无效】永久停用（连续 {} 次判无效），'
+                                   '后续各代一律不再施加'.format(INEFF_MUTE_N))
+            n_blocked[0] += 1
+            return False
         _vg = [g for g in (veto.get(aid) or []) if g is not MUTE]
         if tgt in _vg:
             if len(_vg) >= LLM_MUTE_N:
                 veto.setdefault(aid, []).append(MUTE)
+                _rollback(s, aid, base, reasons, 'LLM 连续否决 {} 次 -> 永久停用'.format(len(_vg)))
                 _no_fire(reasons, aid, 'LLM 连续否决 {} 次 -> 升级为【永久】停用'.format(len(_vg)))
             else:
                 _no_fire(reasons, aid, 'LLM 本代明确否决（第 {} 次）'.format(len(_vg)))
@@ -330,41 +569,63 @@ def suggest(diag, cur=None):
             n_blocked[0] += 1
             return False
         if _saturated(act, aid, tgt):
-            cool[aid] = tgt + COOL_N
+            cool[aid] = tgt + COOL_N * cmul.get(aid, 1)
+            # ★ §1.15：一段到此**闭合** ⇒ 标记 `due`，等解禁后重触发时**结算有效性** ✓
+            base.setdefault(aid, {})['due'] = True
             _no_fire(reasons, aid, '已连续 {} 代施加 -> 判为饱和（条件恒真=固定偏移），'
                                    '冷却到第 {} 代再评估'.format(SAT_N, cool[aid]))
             n_blocked[0] += 1
             return False
+        # ★★ §1.15：即将重新施加 ⇒ 先给上一段算账（可能刚判无效、把本代也拦下）
+        if not _settle(aid):
+            return False
+        _begin(aid)
         return True
 
     def _mark(aid, txt):
-        """登记施加 + 留痕（ID 前缀便于在 journal 里 grep 审计）。"""
+        """登记施加 + 留痕（ID 前缀便于在 journal 里 grep 审计）+ **写施加前快照**。
+
+        快照两用：§1.15 用 `metric` 判有效性；§1.1 用 `params` 做棘轮回退。
+        """
         _fired(act, aid, tgt)
+        b = base.setdefault(aid, {})
+        # ---- §1.15 指标基线：**只在本段第一次施加时记**（同一段重复施加不覆盖）----
+        m, up, key = _metric_of(diag, aid)
+        if m is not None and 'metric' not in b:
+            b['metric'] = [m, tgt, key]
+        # ---- §1.1 参数旧值：本动作名下、该参数的**首个**旧值 ----
+        if _ctx['pre']:
+            pr = b.setdefault('params', {})
+            for p, oldv in _ctx['pre'].items():
+                if p not in pr:
+                    pr[p] = [oldv, _get_param(s, p)]
+                else:
+                    pr[p][1] = _get_param(s, p)      # 同段内又改同参数 -> 更新「最后写入」
         reasons.append('【{}】{}'.format(aid, txt))
 
     # 1) 叶子过度集中 -> 压低该叶子
     if diag.get('leaf_conc', 0) > 0.40 and _guard('r1_leaf_conc'):
         top = diag['leaf_top'][0]
-        s['leaf_w'][top] = 0.25
+        _set('leaf_w.' + top, 0.25)
         _mark('r1_leaf_conc', f"叶子[{top}]占比{diag['leaf_conc']:.0%}过高 -> 权重压到0.25, 逼引擎换字段")
     # 2) 稳定性差 -> 抬高门槛 + 偏好长周期算子
     if (diag.get('stab_med', 1) < 0.60 or diag.get('stab_lt50', 0) > 0.40) and _guard('r2_stab_low'):
-        s['min_stab'] = min(0.60, s['min_stab'] + 0.15)
+        _set('min_stab', min(0.60, s['min_stab'] + 0.15))
         for o in SLOW_OPS:
-            s['op_bias'][o] = 1.8
+            _set('op_bias.' + o, 1.8)
         for o in FAST_OPS:
-            s['op_bias'][o] = 0.4
+            _set('op_bias.' + o, 0.4)
         _mark('r2_stab_low', f"稳定性中位{diag.get('stab_med',0):.2f}(低) -> min_stab提到{s['min_stab']:.2f}, "
                              f"偏好长周期算子")
     # 3) 结构多样性低 -> 加强探索(随机槽固定15%走数据驱动加权, 故提变异逼换新信号源)
     if diag.get('struct_div', 1) < 0.35 and _guard('r3_struct_div'):
         m = s['mix']
-        s['mix'] = [min(0.40, m[0] + 0.10), max(0.10, m[1] - 0.10), m[2], m[3], m[4]]
+        _set('mix', [min(0.40, m[0] + 0.10), max(0.10, m[1] - 0.10), m[2], m[3], m[4]])
         _mark('r3_struct_div', f"结构多样性{diag.get('struct_div',0):.2f}(同质化) -> "
                                f"变异预算提至{s['mix'][0]:.0%}逼探索新信号源")
     # 4) L2 主要因换手失败 -> 再抬稳定性
     if diag.get('fail_turn', 0) > 0.40 and _guard('r4_fail_turn'):
-        s['min_stab'] = min(0.75, s['min_stab'] + 0.10)
+        _set('min_stab', min(0.75, s['min_stab'] + 0.10))
         _mark('r4_fail_turn', f"L2中{diag['fail_turn']:.0%}因换手过高失败 -> min_stab再+0.10")
     # 5) L2 主要因 Calmar 不足 -> 加强交叉(把已有信号组合起来) / 深度加深
     #    ★ (C) **判据选"真正卡住的那道门"**：池内模式下池口径才是真实卡点。
@@ -382,8 +643,8 @@ def suggest(diag, cur=None):
         _sig_src = '全A 口径: Calmar <= {:g}'.format(float(diag.get('gate_min_calmar', 0.5)))
     if _sig is not None and _sig > 0.55 and diag.get('n_l2', 0) >= 8 and _guard('r5_calmar_cross'):
         m = s['mix']
-        s['mix'] = [m[0] * 0.85, min(0.45, m[1] + 0.15), m[2], m[3], m[4]]
-        s['depth'] = [3, 4, 4]
+        _set('mix', [m[0] * 0.85, min(0.45, m[1] + 0.15), m[2], m[3], m[4]])
+        _set('depth', [3, 4, 4])
         _mark('r5_calmar_cross', f"L2中{_sig:.0%}因Calmar不足[{_sig_src}] -> 交叉+15%, 深度加深")
     # 6) 又绕回已知族 -> 收紧去相关阈值(对象=人工基准+历代入库bank, 对齐中金"入库IC<0.70")
     #    ⚠ 原实现 known_ratio 高时放宽到0.85是反的: 已知族候选占满L1却无法入库,
@@ -391,7 +652,7 @@ def suggest(diag, cur=None):
     if diag.get('known_ratio', 0) > 0.60 and _guard('r6_known_ratio'):
         floor = 0.65 if diag.get('n_pass', 0) == 0 else 0.70
         if s['decorr'] > floor:
-            s['decorr'] = max(floor, s['decorr'] - 0.05)
+            _set('decorr', max(floor, s['decorr'] - 0.05))
             _mark('r6_known_ratio', f"{diag['known_ratio']:.0%}候选仍含已知族字段 -> decorr收紧到"
                                     f"{s['decorr']:.2f}(0.70≈中金入库IC相关口径)")
         else:
@@ -399,7 +660,7 @@ def suggest(diag, cur=None):
                                     f"但 decorr={s['decorr']:.2f} 已达 floor={floor:.2f} -> 不重复收紧")
     # 7) 连续无产出 -> 换方向: 提高深度 + 提高随机
     if diag.get('n_pass', 0) == 0 and diag.get('n_l2', 0) >= 10 and _guard('r7_zero_pass'):
-        s['depth'] = [3, 4, 5]
+        _set('depth', [3, 4, 5])
         _mark('r7_zero_pass', "本代0通过 -> 深度放宽到3~5, 探索更复杂结构")
     if not reasons:
         reasons.append("各项指标正常, 维持当前策略")
@@ -414,6 +675,13 @@ def suggest(diag, cur=None):
         reasons.append(f"配比护栏: 变异/交叉各≥{MIX_MIN:.0%}且合计50%重归一化, "
                        f"扰动/引导/随机固定15/20/15(中金规格) -> "
                        f"mix={[round(x, 3) for x in s['mix']]}")
+        # ★★ 必须**同步快照里的「新值」**（2026-09-14）：`guard_mix` 在动作之后改了 `mix`，
+        #   而 §1.1 的回退判据是「**当前值 == 本动作写入的值**」⇒ 不同步的话
+        #   `mix` 永远匹配不上 ⇒ **回退被静默跳过**（棘轮对 mix 失效）✗
+        for _aid, _b in base.items():
+            _pm = (_b.get('params') or {}).get('mix')
+            if _pm and list(_pm[1]) != list(s['mix']):
+                _pm[1] = list(s['mix'])
     return s, reasons
 
 
