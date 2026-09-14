@@ -15,18 +15,17 @@
 > `--decorr`/`--dup_ex_corr` 的对照集变弱 ⇒ 引擎更容易重复挖 ⇒ 又被拦 ⇒ **死循环**。
 > ⇒ **`bank` 照旧长（它是对照集，越大去重力越强）**，另设本精选层。
 
-## 精选清单（8 个）
+## 精选清单（7 个）
 
 | # | 因子 | 剥风格档 | 剥Calmar | 剥超额 | 原Calmar | 表达式 |
 |---|---|---|---|---|---|---|
 | 1 | `F07` | **A** | **1.228** | +5.3% | 0.820 | `ts_std100(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn` |
-| 2 | `F04_500` | **A** | **0.667** | +4.3% | 0.577 | `max(fa_np_margin, ts_max100(barra_residual_volatility))` |
-| 3 | `F35` | **A** | **0.604** | +2.6% | 1.077 | `mul(ts_max20(max(max(barra_residual_volatility, div(barra_` |
-| 4 | `F25` | **A** | **0.551** | +3.9% | 1.295 | `max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage))` |
-| 5 | `F07_1000` | **A** | **0.519** | +6.3% | 0.506 | `ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(b` |
-| 6 | `F33` | **A** | **0.400** | +3.9% | 0.847 | `ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size))` |
-| 7 | `F21` | **A** | **0.351** | +2.2% | 0.868 | `max(add(barra_residual_volatility, barra_leverage), max(ts` |
-| 8 | `F05_500` | **A** | **0.349** | +2.3% | 0.802 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` |
+| 2 | `F35` | **A** | **0.604** | +2.6% | 1.077 | `mul(ts_max20(max(max(barra_residual_volatility, div(barra_` |
+| 3 | `F25` | **A** | **0.551** | +3.9% | 1.295 | `max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage))` |
+| 4 | `F07_1000` | **A** | **0.519** | +6.3% | 0.506 | `ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(b` |
+| 5 | `F33` | **A** | **0.400** | +3.9% | 0.847 | `ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size))` |
+| 6 | `F21` | **A** | **0.351** | +2.2% | 0.868 | `max(add(barra_residual_volatility, barra_leverage), max(ts` |
+| 7 | `F05_500` | **A** | **0.349** | +2.3% | 0.802 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` |
 
 ## ⚠ 被淘汰（同族重复，**留痕可查**）
 
@@ -35,10 +34,12 @@
 
 | 被淘汰 | 与谁相关 ≥0.70 | 保留者 | 保留者剥Calmar | 被淘汰者剥Calmar |
 |---|---|---|---|---|
-| `F17` | （同组） | `F04_500` | **0.667** | 0.543 |
-| `F18` | 0.701 | `F04_500` | **0.667** | 0.423 |
+| `F04_500` | （同组） | `F07` | **1.228** | 0.667 |
 | `F05` | 0.887 | `F07` | **1.228** | 0.623 |
 | `F08` | 0.899 | `F07` | **1.228** | 0.651 |
+| `F10_1000` | 0.719 | `F07` | **1.228** | 0.587 |
+| `F17` | （同组） | `F07` | **1.228** | 0.543 |
+| `F18` | （同组） | `F07` | **1.228** | 0.423 |
 | `F28` | （同组） | `F25` | **0.551** | 0.314 |
 | `F30` | （同组） | `F25` | **0.551** | 0.311 |
 | `F31` | 0.724 | `F25` | **0.551** | 0.415 |
