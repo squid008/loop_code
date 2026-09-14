@@ -17,15 +17,160 @@
 
 ## 精选清单（7 个）
 
-| # | 因子 | 剥风格档 | 剥Calmar | 剥超额 | 原Calmar | 表达式 |
+> ★ **表达式是完整的**（不截断）—— 本文件可直接给下游用，不必回各池库翻。
+> 需要**可复制的全文** / `sign` / h5 路径 → 见下方「[精选因子明细](#精选因子明细可直接复制使用)」。
+
+| # | 因子 | 剥风格档 | 剥Calmar | 剥超额 | 原Calmar | 表达式（完整） |
 |---|---|---|---|---|---|---|
-| 1 | `F07` | **A** | **1.228** | +5.3% | 0.820 | `ts_std100(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn` |
-| 2 | `F35` | **A** | **0.604** | +2.6% | 1.077 | `mul(ts_max20(max(max(barra_residual_volatility, div(barra_` |
-| 3 | `F25` | **A** | **0.551** | +3.9% | 1.295 | `max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage))` |
-| 4 | `F07_1000` | **A** | **0.519** | +6.3% | 0.506 | `ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(b` |
-| 5 | `F33` | **A** | **0.400** | +3.9% | 0.847 | `ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size))` |
-| 6 | `F21` | **A** | **0.351** | +2.2% | 0.868 | `max(add(barra_residual_volatility, barra_leverage), max(ts` |
+| 1 | `F07` | **A** | **1.228** | +5.3% | 0.820 | `ts_std100(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))` |
+| 2 | `F35` | **A** | **0.604** | +2.6% | 1.077 | `mul(ts_max20(max(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std100(barra_residual_volatility))))), corr100(true_range, mf_m_buy))` |
+| 3 | `F25` | **A** | **0.551** | +3.9% | 1.295 | `max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage)), ts_min20(cs_rank(barra_leverage)))), barra_residual_volatility)` |
+| 4 | `F07_1000` | **A** | **0.519** | +6.3% | 0.506 | `ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))` |
+| 5 | `F33` | **A** | **0.400** | +3.9% | 0.847 | `ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_beta), ts_std150(mf_x_bqty))))` |
+| 6 | `F21` | **A** | **0.351** | +2.2% | 0.868 | `max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_ocf_yoy, fa_gm))), barra_residual_volatility))` |
 | 7 | `F05_500` | **A** | **0.349** | +2.3% | 0.802 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` |
+
+---
+
+## 精选因子明细（可直接复制使用）
+
+> 每个精选因子一节：**完整表达式** + **`sign`** + **因子值 h5 路径** + 各项指标。
+> ⚠ **`sign` 必须用**：因子值要乘 `sign` 才是"越大越好"的方向（引擎求值时就是这个约定；不乘 ⇒ **方向反了**，组合会反向选股）。
+
+### 1. `F07`
+
+**完整表达式**
+```
+ts_std100(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
+```
+
+| 项 | 值 |
+|---|---|
+| **`sign`（方向，必须乘）** | **-1** |
+| 因子值 h5 | `facs/4f/F07/values.h5` |
+| 快查副本（uint8，截面秩） | `facs/4f/F07/values_q.h5` |
+| 形状 | 3309 日 × 5384 股 |
+| 来源 | `lib:all:genNone` |
+| 建于 | 2026-09-14 20:44:26 |
+| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后 Calmar 1.228 ≥ 0.30）|
+| 剥风格后 Calmar / 超额 | **1.228** / +5.3% |
+| 原（未剥）Calmar / 超额 / IC | 0.820 / +6.0% / 0.052 |
+
+### 2. `F35`
+
+**完整表达式**
+```
+mul(ts_max20(max(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std100(barra_residual_volatility))))), corr100(true_range, mf_m_buy))
+```
+
+| 项 | 值 |
+|---|---|
+| **`sign`（方向，必须乘）** | **-1** |
+| 因子值 h5 | `facs/8e/F35/values.h5` |
+| 快查副本（uint8，截面秩） | `facs/8e/F35/values_q.h5` |
+| 形状 | 3309 日 × 5384 股 |
+| 来源 | `lib:all:genNone` |
+| 建于 | 2026-09-14 20:57:40 |
+| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后 Calmar 0.604 ≥ 0.30）|
+| 剥风格后 Calmar / 超额 | **0.604** / +2.6% |
+| 原（未剥）Calmar / 超额 / IC | 1.077 / +4.6% / 0.037 |
+
+### 3. `F25`
+
+**完整表达式**
+```
+max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage)), ts_min20(cs_rank(barra_leverage)))), barra_residual_volatility)
+```
+
+| 项 | 值 |
+|---|---|
+| **`sign`（方向，必须乘）** | **-1** |
+| 因子值 h5 | `facs/d4/F25/values.h5` |
+| 快查副本（uint8，截面秩） | `facs/d4/F25/values_q.h5` |
+| 形状 | 3309 日 × 5384 股 |
+| 来源 | `lib:all:genNone` |
+| 建于 | 2026-09-14 20:53:31 |
+| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后 Calmar 0.551 ≥ 0.30）|
+| 剥风格后 Calmar / 超额 | **0.551** / +3.9% |
+| 原（未剥）Calmar / 超额 / IC | 1.295 / +5.6% / 0.055 |
+
+### 4. `F07_1000`
+
+**完整表达式**
+```
+ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))
+```
+
+| 项 | 值 |
+|---|---|
+| **`sign`（方向，必须乘）** | **1** |
+| 因子值 h5 | `facs/20/F07_1000/values.h5` |
+| 快查副本（uint8，截面秩） | `facs/20/F07_1000/values_q.h5` |
+| 形状 | 3309 日 × 5384 股 |
+| 来源 | `lib:1000:genNone` |
+| 建于 | 2026-09-14 21:02:55 |
+| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后 Calmar 0.519 ≥ 0.30）|
+| 剥风格后 Calmar / 超额 | **0.519** / +6.3% |
+| 原（未剥）Calmar / 超额 / IC | 0.506 / +7.0% / 0.017 |
+
+### 5. `F33`
+
+**完整表达式**
+```
+ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_beta), ts_std150(mf_x_bqty))))
+```
+
+| 项 | 值 |
+|---|---|
+| **`sign`（方向，必须乘）** | **-1** |
+| 因子值 h5 | `facs/93/F33/values.h5` |
+| 快查副本（uint8，截面秩） | `facs/93/F33/values_q.h5` |
+| 形状 | 3309 日 × 5384 股 |
+| 来源 | `lib:all:genNone` |
+| 建于 | 2026-09-14 20:56:41 |
+| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后 Calmar 0.400 ≥ 0.30）|
+| 剥风格后 Calmar / 超额 | **0.400** / +3.9% |
+| 原（未剥）Calmar / 超额 / IC | 0.847 / +11.3% / 0.027 |
+
+### 6. `F21`
+
+**完整表达式**
+```
+max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_ocf_yoy, fa_gm))), barra_residual_volatility))
+```
+
+| 项 | 值 |
+|---|---|
+| **`sign`（方向，必须乘）** | **-1** |
+| 因子值 h5 | `facs/0a/F21/values.h5` |
+| 快查副本（uint8，截面秩） | `facs/0a/F21/values_q.h5` |
+| 形状 | 3309 日 × 5384 股 |
+| 来源 | `lib:all:genNone` |
+| 建于 | 2026-09-14 20:51:29 |
+| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后 Calmar 0.351 ≥ 0.30）|
+| 剥风格后 Calmar / 超额 | **0.351** / +2.2% |
+| 原（未剥）Calmar / 超额 / IC | 0.868 / +5.5% / 0.053 |
+
+### 7. `F05_500`
+
+**完整表达式**
+```
+corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)
+```
+
+| 项 | 值 |
+|---|---|
+| **`sign`（方向，必须乘）** | **-1** |
+| 因子值 h5 | `facs/dc/F05_500/values.h5` |
+| 快查副本（uint8，截面秩） | `facs/dc/F05_500/values_q.h5` |
+| 形状 | 3309 日 × 5384 股 |
+| 来源 | `lib:500:genNone` |
+| 建于 | 2026-09-14 21:01:53 |
+| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后 Calmar 0.349 ≥ 0.30）|
+| 剥风格后 Calmar / 超额 | **0.349** / +2.3% |
+| 原（未剥）Calmar / 超额 / IC | 0.802 / +4.0% / 0.009 |
+
+---
 
 ## ⚠ 被淘汰（同族重复，**留痕可查**）
 

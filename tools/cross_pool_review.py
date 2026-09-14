@@ -122,7 +122,11 @@ def main():
 
     # ---- 载入（优先 uint8 副本 ⇒ 快；副本缺失回退 float32 并求秩）----
     names, mats, meta = [], {}, {}
+    # ★ 明细段要用的原始信息：h5 路径 + h5 attrs（sign / source / shape / created_at ...）
+    #   （2026-09-14：用户指出精选池的表达式被截断 ⇒ 明细段必须给"可直接复制使用"的全文）
+    fpath, fattrs = {}, {}
     for nm, p, at in fsd:
+        fpath[nm], fattrs[nm] = p, at
         try:
             with FS.FactorStore().open(nm, quant=True) as st:
                 d = np.asarray(st.full()[:])
@@ -220,15 +224,60 @@ def main():
           '> ★ 为什么闸门放在这一层、而**不在入库**：如果入库就拦，`bank` 不增长 ⇒',
           '> `--decorr`/`--dup_ex_corr` 的对照集变弱 ⇒ 引擎更容易重复挖 ⇒ 又被拦 ⇒ **死循环**。',
           '> ⇒ **`bank` 照旧长（它是对照集，越大去重力越强）**，另设本精选层。', '']
+    # ★★ 2026-09-14 修（用户反馈）：**原表格把表达式截断到 58 字符** ⇒
+    #   而这**是唯一给出表达式的文件**（它没有"明细段"，不像 `factor_library*.md`
+    #   有「总览（截断）+ 明细（全文）」两层）⇒ 一截就**无处可查**，
+    #   用户被迫"去对应的因子库翻表达式" ✗
+    #   ⇒ ① 表格**不截断**；② 另加「因子明细」段（全文 + 可复制的代码块 + `sign` + h5 路径）。
+    #   ⚠ 顺带修一个隐患：Markdown 表格里若出现 `|` 会**静默切断单元格** ⇒ 统一转义。
+    def _cell(s):
+        return str(s).replace('|', '\\|')
+
     L += ['## 精选清单（{} 个）'.format(len(sel)), '',
-          '| # | 因子 | 剥风格档 | 剥Calmar | 剥超额 | 原Calmar | 表达式 |',
+          '> ★ **表达式是完整的**（不截断）—— 本文件可直接给下游用，不必回各池库翻。',
+          '> 需要**可复制的全文** / `sign` / h5 路径 → 见下方「[精选因子明细](#精选因子明细可直接复制使用)」。', '',
+          '| # | 因子 | 剥风格档 | 剥Calmar | 剥超额 | 原Calmar | 表达式（完整） |',
           '|---|---|---|---|---|---|---|']
     for i, n in enumerate(sel, 1):
         r = strip.get(n) or {}
         L.append('| {} | {}{}{} | **A** | **{}** | {} | {} | {}{}{} |'.format(
             i, BT, n, BT, _f(r.get('strip_calmar')), _pct(r.get('strip_ann_ex')),
-            _f(r.get('calmar')), BT, meta[n]['expr'][:58], BT))
-    L += ['', '## ⚠ 被淘汰（同族重复，**留痕可查**）', '',
+            _f(r.get('calmar')), BT, _cell(meta[n]['expr']), BT))
+
+    # ---- ★ 精选因子明细（可直接复制使用）----
+    #   为什么要有：下游（组合/回测/看板）真正需要的是"**能直接拿来算的**"三件东西
+    #   —— ① 完整表达式 ② `sign`（**方向**！不乘它因子就是反的）③ 因子值 h5 路径。
+    #   原来这三样一样都不在本文件里 ⇒ 每个用户都要自己去翻 ✗
+    L += ['', '---', '', '## 精选因子明细（可直接复制使用）', '',
+          '> 每个精选因子一节：**完整表达式** + **`sign`** + **因子值 h5 路径** + 各项指标。',
+          '> ⚠ **`sign` 必须用**：因子值要乘 `sign` 才是"越大越好"的方向'
+          '（引擎求值时就是这个约定；不乘 ⇒ **方向反了**，组合会反向选股）。', '']
+    for i, n in enumerate(sel, 1):
+        r = strip.get(n) or {}
+        at = fattrs.get(n) or {}
+        rel = os.path.relpath(fpath[n], ROOT).replace('\\', '/') if fpath.get(n) else '（未在 facs/ 找到）'
+        q = os.path.join(os.path.dirname(rel), 'values_q.h5').replace('\\', '/')
+        L += ['### {}. `{}`'.format(i, n), '',
+              '**完整表达式**',
+              '```',
+              meta[n]['expr'],
+              '```', '',
+              '| 项 | 值 |',
+              '|---|---|',
+              '| **`sign`（方向，必须乘）** | **{}** |'.format(at.get('sign')),
+              '| 因子值 h5 | `{}` |'.format(rel),
+              '| 快查副本（uint8，截面秩） | `{}` |'.format(q),
+              '| 形状 | {} 日 × {} 股 |'.format(*(at.get('shape') or ('?', '?'))),
+              '| 来源 | `{}` |'.format(at.get('source')),
+              '| 建于 | {} |'.format(str(at.get('created_at') or '').strip() or '—'),
+              '| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后 Calmar {} ≥ 0.30）|'.format(
+                  _f(r.get('strip_calmar'))),
+              '| 剥风格后 Calmar / 超额 | **{}** / {} |'.format(
+                  _f(r.get('strip_calmar')), _pct(r.get('strip_ann_ex'))),
+              '| 原（未剥）Calmar / 超额 / IC | {} / {} / {} |'.format(
+                  _f(r.get('calmar')), _pct(r.get('ann_ex')), _f(r.get('ic'))),
+              '']
+    L += ['---', '', '## ⚠ 被淘汰（同族重复，**留痕可查**）', '',
           '淘汰**不是删除** —— 它们仍在各池库里（`factor_library_{pool}.md`），只是不进精选池。',
           '★ 留痕是硬要求（§8.44 教训：**被拦的必须查得到**）。', '',
           '| 被淘汰 | 与谁相关 ≥{:.2f} | 保留者 | 保留者剥Calmar | 被淘汰者剥Calmar |'.format(a.thr),
@@ -248,8 +297,13 @@ def main():
     print('\n[DONE] -> {}'.format(outp))
     print('  精选 **{} 个**（准入 {} → 去重后 {}）'.format(len(sel), len(pool), len(sel)))
     for n in sel:
-        print('    [{:<10s}] 剥Calmar {:>7s}  {}'.format(
-            n, _f(strip.get(n, {}).get('strip_calmar')), meta[n]['expr'][:52]))
+        # ⚠ 控制台这里**仍然截断**（终端要能一行放下）—— 这是**有正当理由的**；
+        #   而**写进文件**的表达式绝不能截断（文件是给人复制去用的）。两者别混为一谈。
+        _e = meta[n]['expr']
+        print('    [{:<10s}] 剥Calmar {:>7s}  sign={:<3}  {}'.format(
+            n, _f(strip.get(n, {}).get('strip_calmar')),
+            str((fattrs.get(n) or {}).get('sign')), _e[:52] + ('…' if len(_e) > 52 else '')))
+    print('  （控制台为一行预览；**文件里是完整表达式** + `sign` + h5 路径，见「精选因子明细」）')
     return 0
 
 
