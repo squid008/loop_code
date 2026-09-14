@@ -701,6 +701,52 @@ def _pool_best(pool_rows):
     return out
 
 
+def combine_ok(ok_base, ok_q, ok_pool, ok_hard, pool_gate_on, or_all):
+    """L2 入库判定的组合逻辑 —— **单一事实源**（2026-09-14 从内联代码提取，见 loop_todo §1.17）
+
+    :param ok_base: `factor_miner.pass_filter` 的结果（11 项基础标准）
+    :param ok_q:    「全A 量化口径」= `calmar>min_calmar 且 sharpe>min_sharpe`（+分段，见调用点）
+    :param ok_pool: 「池内量化口径」= 任一/全部池 `calmar > min_pool_calmar`；**`None` = 无从判定**
+    :param ok_hard: **硬门槛**（剥风格 + 分段独立验证）—— 与"选哪个口径"**无关**，必须**无条件**生效
+    :param pool_gate_on: `--min_pool_calmar >= 0`
+    :param or_all:       `--pool_gate_or_all`
+
+    ★★★ 为什么必须把 `ok_hard` 独立出来（本次修的 bug）：
+
+    原实现（L2015-2024）：
+    ```python
+    _ok_prev = ok                     # 快照取在 _ok_q **之前**
+    ok = ok and _ok_q
+    ...
+    ok = ok and seg_ok                # 分段独立验证
+    ok = ok and strip_ok              # 剥风格门槛
+    ...
+    elif _pool_gate_or_all:
+        ok = _ok_prev and (_ok_q or _pok)      # ★ 用旧快照**整个重建**
+    ```
+    注释本意是「**只撤掉 `_ok_q`**」（否则 OR 退化成 AND），但 `_ok_prev` 取在 `_ok_q` 之前
+    ⇒ 它**同时撤掉了后面才 AND 进去的 `seg_ok` 与 `strip_ok`**。
+
+    **实测后果**：`--pool_gate_or_all` 一旦开启（§8.26，2026-09-13 起），池轨道的
+    「剥风格门槛」与「分段独立验证」**完全失效且无告警** —— 池后缀 13 个入库因子里
+    **8 个是「纯风格」（C 档，`strip_calmar` 全为负）**，本该被 `--min_strip_calmar=0.15` 全部拦下。
+
+    ⇒ **OR 只该作用于「全A 口径 **vs** 池内口径」这个二选一**；
+      剥风格 / 分段验证是**因子本身的品质关**，与选哪个口径无关 ⇒ 记进 `ok_hard`，
+      在池门槛段**之后**统一 AND 回来，**不参与 OR**。
+
+    ⚠ `ok_pool is None`（未开 `--pool_obs` / 计算失败）⇒ **放行不误杀**（与 strip/LLM 同一铁律），
+      但调用点要计数并在代末上报，否则门槛静默失效而无人察觉。
+    """
+    if not pool_gate_on or ok_pool is None:
+        ok = bool(ok_base and ok_q)
+    elif or_all:
+        ok = bool(ok_base and (ok_q or ok_pool))
+    else:
+        ok = bool(ok_base and ok_q and ok_pool)
+    return bool(ok and ok_hard)          # ★ 硬门槛最后统一 AND，**不参与 OR**
+
+
 def _mk_library_skeleton(fname):
     """为某个池创建 `factor_library_{pool}.md` 的最小骨架（2026-09-13, roadmap §8.44）。
 
@@ -1985,8 +2031,15 @@ def run(args):
         #   ok, 后面再写 `ok and (_ok_q or _pok)` 会退化成 AND(ok 里已含 _ok_q)。
         #   (2026-09-13, roadmap §8.26)
         _ok_q = (rr['calmar'] > args.min_calmar and rr['sharpe'] > _min_sharpe)
-        _ok_prev = ok          # 快照: 尚未并入 _ok_q 的结果(供 OR 语义重建, 见池门槛段)
+        _ok_prev = ok          # 快照: 仅含 pass_filter(尚未并入 _ok_q) —— OR 语义重建的**基底**
         ok = ok and _ok_q
+        # ★★★ 2026-09-14（loop_todo §1.17）：「硬门槛」与「可参与 OR 的量化口径」**分开存**。
+        #   为什么：`--pool_gate_or_all` 用 `_ok_prev and (_ok_q or _pok)` 重建 ok，
+        #   而 `_ok_prev` 取在 `_ok_q` 之前 ⇒ 它会把**后面才 AND 进去的 seg/strip 一起撤掉**
+        #   （实测：池库 13 个入库因子里 8 个是纯风格，本该被 `--min_strip_calmar` 拦下）。
+        #   ⇒ 剥风格 / 分段验证记进 `_ok_hard`，在池门槛段**之后**统一 AND 回来，**不参与 OR**。
+        #   判定组合的**单一事实源** = `combine_ok()`（上方，可单元测试）。
+        _ok_hard = True
         # ★分段独立验证(防伪衰减): 把费后日超额序列均分 N 个不相交子区间,
         #   各段须同号(累计费后超额>0)的段数达标才通过 —— 拦"靠单段大行情撑
         #   全样本高t、一出该段即失效"的候选(F12 型)。样本不足自动放行不误杀。
@@ -1996,34 +2049,38 @@ def run(args):
                 rr.get('ex'), args.seg_n, args.seg_need)
             ok = ok and seg_ok
             _ok_q = _ok_q and seg_ok        # 分段也算「全A 量化口径」的一部分(供 OR 用)
+            _ok_hard = _ok_hard and seg_ok  # ★ 同时记进硬门槛(§1.17: OR 不该撤掉它)
         # ---- 剥风格入库门槛(2026-09-12, 默认关) ----
         #  args.min_strip_calmar <= 0 -> 只记录不拦(默认行为不变)。
         #  ⚠ strip_rec is None(未开/计算失败)时**放行不误杀** —— 与 LLM 审查同一条铁律。
         if _strip_style and args.min_strip_calmar > 0 and strip_rec is not None:
-            ok = ok and strip_rec['strip_calmar'] > args.min_strip_calmar
+            _pass_strip = bool(strip_rec['strip_calmar'] > args.min_strip_calmar)
+            ok = ok and _pass_strip
+            _ok_hard = _ok_hard and _pass_strip   # ★ 同时记进硬门槛(§1.17: OR 不该撤掉它)
         # ---- 池门槛(2026-09-12, 默认关; **用户选定 C** = 排除 csi_all_only) ----
         #  语义: --pool_gate_mode=any(默认) 要求**至少一个池**达标(=C, 滤掉"只在全A有效");
         #        all 要求**所有池**都达标(=更严, "真 alpha")。
         #  口径: 池内 Calmar vs --min_pool_calmar(与 --min_calmar 同口径; Calmar>0 = 该池有效)。
         #  ⚠ 无池结果(未开 --pool_obs / 计算失败) -> **放行不误杀**(与 strip/LLM 同一铁律),
         #    但要计数并在代末上报, 否则门槛静默失效而无人察觉。
+        _pok = None
         if _pool_gate_on:
             _pok, _pv = pool_gate_ok([q.get('calmar') for q in pool_rec],
                                      _min_pool_calmar, _pool_gate_mode)
             if _pok is None:                 # 无从判定 -> 放行不误杀, 但计数上报
                 n_pool_nogate += 1
-            elif _pool_gate_or_all:
-                # ★ OR 语义(2026-09-13, roadmap §8.26; 新开关 --pool_gate_or_all, 默认关):
-                #   「全A 量化口径达标」**或**「池内达标」。
-                #   依据: 池内有效与全A 有效**基本不同源** —— 300 池"池内有效但全A 无效"有 31 个,
-                #   是"两者都有效"15 个的两倍; AND 会把这 31 个全砍掉(自相矛盾:
-                #   对"只在池内有效"的因子, 同时要求全A 达标是逻辑冲突)。
-                #   组合标定(ai_test/combo_calib.py): AND 最优只保留 5/167(lift 2.73×, 召回 8%),
-                #   而 OR 可保留 41/167、精率 59%、召回 49%、lift 2.00× ⇒ 保留量约 6 倍。
-                #   实现要点: 必须用 _ok_prev 重建(撤掉已 AND 进去的 _ok_q), 否则退化回 AND。
-                ok = _ok_prev and (_ok_q or _pok)
-            else:
-                ok = ok and _pok
+        # ★★★ 判定组合逻辑统一走 `combine_ok()`（**单一事实源**，可单元测试）。
+        #   语义（roadmap §8.26 + loop_todo §1.17）：
+        #     · 无池门槛 / `_pok is None`   -> `_ok_prev && _ok_q`（放行不误杀）
+        #     · `--pool_gate_or_all` 且可用 -> `_ok_prev && (_ok_q || _pok)`  ← OR 只作用于这两个口径
+        #     · 否则                        -> `_ok_prev && _ok_q && _pok`
+        #     · **最后无条件 `&& _ok_hard`**（剥风格 + 分段）—— 见函数 docstring 的 bug 说明
+        #
+        #   ⚠ 原实现在 `elif _pool_gate_or_all:` 分支里写 `ok = _ok_prev and (_ok_q or _pok)`，
+        #     而 `_ok_prev` 取在 `_ok_q` **之前** ⇒ 把**之后**才 AND 进去的 seg/strip **一起撤掉**
+        #     ⇒ 池轨道 13 个入库因子里 8 个是「纯风格」（本该被 `--min_strip_calmar=0.15` 拦下）。
+        ok = combine_ok(_ok_prev, _ok_q, _pok, _ok_hard,
+                        bool(_pool_gate_on), bool(_pool_gate_or_all))
         # ★ 收益流去重(2026-09-13, roadmap §8.34, --dup_ex_corr): 算本候选 vs 历史库收益流的
         #   最大 |相关|。**止血**机制 —— 实测库内 30 个因子的收益流两两相关中位 **0.967**
         #   ⇒ 再攒同类因子等于没攒(合成 Calmar 还低于最好的单因子)。

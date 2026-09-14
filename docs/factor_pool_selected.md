@@ -15,7 +15,7 @@
 > `--decorr`/`--dup_ex_corr` 的对照集变弱 ⇒ 引擎更容易重复挖 ⇒ 又被拦 ⇒ **死循环**。
 > ⇒ **`bank` 照旧长（它是对照集，越大去重力越强）**，另设本精选层。
 
-## 精选清单（7 个）
+## 精选清单（8 个）
 
 | # | 因子 | 剥风格档 | 剥Calmar | 剥超额 | 原Calmar | 表达式 |
 |---|---|---|---|---|---|---|
@@ -23,9 +23,10 @@
 | 2 | `F04_500` | **A** | **0.667** | +4.3% | 0.577 | `max(fa_np_margin, ts_max100(barra_residual_volatility))` |
 | 3 | `F35` | **A** | **0.604** | +2.6% | 1.077 | `mul(ts_max20(max(max(barra_residual_volatility, div(barra_` |
 | 4 | `F25` | **A** | **0.551** | +3.9% | 1.295 | `max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage))` |
-| 5 | `F33` | **A** | **0.400** | +3.9% | 0.847 | `ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size))` |
-| 6 | `F21` | **A** | **0.351** | +2.2% | 0.868 | `max(add(barra_residual_volatility, barra_leverage), max(ts` |
-| 7 | `F05_500` | **A** | **0.349** | +2.3% | 0.802 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` |
+| 5 | `F07_1000` | **A** | **0.519** | +6.3% | 0.506 | `ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(b` |
+| 6 | `F33` | **A** | **0.400** | +3.9% | 0.847 | `ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size))` |
+| 7 | `F21` | **A** | **0.351** | +2.2% | 0.868 | `max(add(barra_residual_volatility, barra_leverage), max(ts` |
+| 8 | `F05_500` | **A** | **0.349** | +2.3% | 0.802 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` |
 
 ## ⚠ 被淘汰（同族重复，**留痕可查**）
 
