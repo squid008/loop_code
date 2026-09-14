@@ -47,8 +47,24 @@ def load_mod():
     return m
 
 
-COLS = ['name', 'pool', 'expr', 'ic', 'calmar', 'ann_ex',
-        'strip_ic', 'strip_calmar', 'strip_ann_ex', 'strip_sharpe', 'grade']
+# ★ 2026-09-14：**不再硬编码列** —— `build_facs.py` 加列（日频 dd_d/calmar_d/strip_dd_d...）
+#   会让硬编码的 COLS 与真实 schema 脱节，测试自己先炸（本次实录）。
+#   ⇒ 改为**运行时从真实文件取列**（文件不存在时才用兜底）。
+_FALLBACK_COLS = ['name', 'pool', 'expr', 'ic', 'calmar', 'ann_ex',
+                  'dd_d', 'calmar_d',
+                  'strip_ic', 'strip_calmar', 'strip_ann_ex', 'strip_sharpe',
+                  'strip_dd_d', 'strip_calmar_d', 'strip_sharpe_d', 'grade']
+
+
+def _real_cols():
+    import csv as _c
+    p = os.path.join(DOCS, 'loop_strip_style_bank.csv')
+    if os.path.exists(p):
+        with io.open(p, encoding='utf-8-sig', newline='') as fh:
+            rd = _c.DictReader(fh)
+            if rd.fieldnames:
+                return list(rd.fieldnames)
+    return list(_FALLBACK_COLS)
 
 
 def t_merge():
@@ -69,6 +85,7 @@ def t_merge():
            dict(name='F07', pool='all', expr='overwritten', ic=9.9, calmar=9.9,
                 ann_ex=9.9, strip_ic=9.9, strip_calmar=9.9, strip_ann_ex=9.9,
                 strip_sharpe=9.9, grade='C')]
+    COLS = _real_cols()          # ★ 动态取真实 schema（不再硬编码，见上）
     n1 = m._merge_csv(tmp, new, COLS)
     rows = list(csv.DictReader(io.open(tmp, encoding='utf-8-sig', newline='')))
     names = [r['name'] for r in rows]

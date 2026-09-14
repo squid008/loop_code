@@ -287,14 +287,23 @@ def recount_tag(rec, pools):
       每个来源各自贡献"它测到的那些池"的结果 ⇒ 合并后 `okp` 覆盖得更全（这正是本视图的价值）。
     """
     a = rec.get('allA') or {}
+    # ★ 2026-09-14（§1.19 ③）：Calmar **优先日频**，缺失回退期频（旧数据不炸）
+    _ac = a.get('calmar_d')
+    _ac = _ac if (_ac is not None and np.isfinite(_san(_ac))) else a.get('calmar')
     ok_all = (a.get('ann_ex') is not None and np.isfinite(_san(a.get('ann_ex')))
               and float(a['ann_ex']) > 0
-              and np.isfinite(_san(a.get('calmar')))
-              and float(a['calmar']) >= LP.TAG_CAL_MIN)
+              and np.isfinite(_san(_ac))
+              and float(_ac) >= LP.TAG_CAL_MIN)
     okp = {}
     for p, met in rec['pool_met'].items():
+        # met = (calmar, ann_ex, ...) —— ★ 池内也要卡 Calmar（§1.18 B；原来只要超额>0）
+        _pc = met[2] if len(met) > 2 else met[0]        # 日频 calmar（若视图里有）
+        if _pc is None or not np.isfinite(_san(_pc)):
+            _pc = met[0]
         okp[p] = (met[0] is not None and np.isfinite(_san(met[0]))
-                  and float(met[0]) > LP.TAG_POOL_FLOOR)
+                  and float(met[0]) > LP.TAG_POOL_FLOOR
+                  and np.isfinite(_san(_pc))
+                  and float(_pc) >= LP.TAG_POOL_FLOOR_CAL)
     tested = [p for p in pools if p in rec['pool_met']]
     if not tested:
         return ('none' if not ok_all else 'csi_all_only'), ok_all, tested, okp

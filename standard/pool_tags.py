@@ -51,6 +51,28 @@ def _ensure_engine_on_path():
 _ensure_engine_on_path()
 import loop_pools as LP                                   # noqa: E402
 CAL_MIN, POOL_FLOOR = LP.TAG_CAL_MIN, LP.TAG_POOL_FLOOR
+# ★ 2026-09-14（§1.18 用户拍板 B + §1.19 ③）：**池内也要卡 Calmar**（原来只要超额>0 ⇒
+#   `all3` 名不副实），且**一律用日频**（日频缺失回退期频）。
+POOL_FLOOR_CAL = LP.TAG_POOL_FLOOR_CAL
+
+
+def _cal_d(row):
+    """取**日频** Calmar；缺列/NaN 时**回退期频**（旧 CSV 无 `calmar_d` 列时不炸）。
+
+    ★ 为什么一律优先日频（2026-09-14, §1.19 ③）：期频 `nav=(1+ex).cumprod()` 只在每换仓期末
+      打点 ⇒ 漏掉持有期内回撤 ⇒ 回撤被系统性低估（实测折比中位 0.928）⇒ 判据偏松。
+    """
+    try:
+        v = row.get('calmar_d', None)
+        if v is not None and np.isfinite(float(v)):
+            return float(v)
+    except (TypeError, ValueError):
+        pass
+    try:
+        v = row.get('calmar', None)
+        return float(v) if (v is not None and np.isfinite(float(v))) else np.nan
+    except (TypeError, ValueError):
+        return np.nan
 for a in sys.argv[1:]:
     if a.startswith('--cal-min='):
         CAL_MIN = float(a[10:])
@@ -93,19 +115,23 @@ def main():
         ar = pd.read_csv(ARCHIVE)
         for _, r in ar.iterrows():
             allm[(int(r['gen']), str(r['expr']))] = (r.get('ann_ex', np.nan),
-                                                     r.get('calmar', np.nan))
+                                                     _cal_d(r))
     else:
         print(f"[!] 无 {ARCHIVE} -> 无法判 全A 口径(全A 视为不通过)")
 
     # ---- 逐池透视 ----
+    #  ★ 2026-09-14：pivot 带上 `calmar_d`（日频）。旧 CSV 没这列 ⇒ 下面的 `_cal_d` 回退期频 ✓
+    _vals = ['ann_ex', 'calmar', 'ic'] + (['calmar_d'] if 'calmar_d' in obs.columns else [])
     piv = obs.pivot_table(index=['gen', 'expr'], columns='pool',
-                          values=['ann_ex', 'calmar', 'ic'], aggfunc='last')
+                          values=_vals, aggfunc='last')
 
     L = [f"# 入库池标签（`pool_tag`）报告", "",
          f"来源 `{os.path.relpath(POOL_OBS, ROOT)}`（{len(obs)} 行, 池={pools}）", "",
          "判定口径（**改阈值只需重跑本脚本**，标签会重算）：",
-         f"- 池内通过 = 费后超额 > **{POOL_FLOOR:g}**",
-         f"- 全A通过 = 费后超额 > 0 **且 Calmar ≥ {CAL_MIN:g}**", "",
+         f"- 池内通过 = 费后超额 > **{POOL_FLOOR:g}** **且 Calmar ≥ {POOL_FLOOR_CAL:g}**"
+         f"（★ 2026-09-14 新增后半个条件：原来只要超额>0 ⇒ `all3` 名不副实，见 §1.18）",
+         f"- 全A通过 = 费后超额 > 0 **且 Calmar ≥ {CAL_MIN:g}**",
+         f"- ⚠ **Calmar 一律取「日频」口径**（缺列时回退期频）—— 期频漏掉持有期内回撤", "",
          "| 标签 | 含义 |", "|---|---|",
          "| `all3` | 全A + **所有**池都通过（真 alpha） |",
          "| `csi_all_only` | **只有全A通过** -> 小盘/流动性溢价嫌疑 |",
@@ -121,8 +147,13 @@ def main():
             ex = piv.loc[(g, e), ('ann_ex', p)] if ('ann_ex', p) in piv.columns else np.nan
             cal = piv.loc[(g, e), ('calmar', p)] if ('calmar', p) in piv.columns else np.nan
             ic = piv.loc[(g, e), ('ic', p)] if ('ic', p) in piv.columns else np.nan
+            _cd = (piv.loc[(g, e), ('calmar_d', p)]
+                   if ('calmar_d', p) in piv.columns else None)
+            cal = _cd if (_cd is not None and np.isfinite(_cd)) else cal   # ★ 日频优先
             rec[f'ic_{p}'], rec[f'ann_ex_{p}'], rec[f'calmar_{p}'] = ic, ex, cal
-            ok_pool[p] = bool(np.isfinite(ex) and ex > POOL_FLOOR)
+            # ★ 池内也要卡 Calmar（§1.18 B）：原来只要 `ex > POOL_FLOOR` ⇒ 误标 `all3`
+            ok_pool[p] = bool(np.isfinite(ex) and ex > POOL_FLOOR
+                              and np.isfinite(cal) and cal >= POOL_FLOOR_CAL)
         ae, ac = allm.get((int(g), str(e)), (np.nan, np.nan))
         rec['all_ann_ex'], rec['all_calmar'] = ae, ac
         ok_all = bool(np.isfinite(ae) and ae > 0 and np.isfinite(ac) and ac >= CAL_MIN)

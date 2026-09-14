@@ -839,10 +839,20 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
             _sg = (strip_grades or {}).get(expr)
             if _sg:
                 _sg_k, _sg_txt = _sg[0], _sg[1]
+                #  ★ 2026-09-14（§1.19）：判据已改**日频** ⇒ 文档里同时给日频（可缺）
+                _scd, _sddd = (_sg[4] if len(_sg) > 4 else None,
+                               _sg[5] if len(_sg) > 5 else None)
+                _ddtxt = ''
+                if _scd is not None and np.isfinite(_scd):
+                    _ddtxt = '；**日频** 剥后 Calmar %.3f' % _scd
+                    if _sddd is not None and np.isfinite(_sddd):
+                        _ddtxt += '，日频回撤 %.1f%%' % (_sddd * 100)
+                        if _sddd <= _lp.TAG_STRIP_DD_MIN:
+                            _ddtxt += ' ⚠（劣于上限 %.2f ⇒ 只给 B）' % _lp.TAG_STRIP_DD_MIN
                 _sg_line = ('- 剥风格：**`%s`** %s'
-                            '（原 Calmar %.3f → 剥后 %.3f；超额 %+.1f%% → %+.1f%%）\n'
+                            '（原 Calmar %.3f → 剥后 %.3f；超额 %+.1f%% → %+.1f%%%s）\n'
                             % (_sg_k, _sg_txt, r['calmar'], _sg[2],
-                               r['ann_ex'] * 100, _sg[3] * 100))
+                               r['ann_ex'] * 100, _sg[3] * 100, _ddtxt))
             else:
                 _sg_line = ('- 剥风格：**未测**（本代未开 `--strip_style`）'
                             '⇒ ⚠ **不可断言它是独立 alpha**（见 roadmap §8.45 / loop_todo §1.9）\n')
@@ -1938,8 +1948,11 @@ def run(args):
                 v = -v
             fac = pd.DataFrame(v, index=dates, columns=cols)
             f = cs_rank(fac.astype('float64'))
+            # ★ with_daily(2026-09-14, §1.19): 同时产出**日频**风险口径(dd_d/calmar_d) ——
+            #   档位阈值与池门槛已改用日频（期频漏掉持有期内回撤、回撤被低估，实测折比中位 0.928）。
+            #   成本：只多算一条净值序列（不重新选股），每候选 +~4s。
             rr = evaluate_real(f, close, str(nd), cost=args.cost,
-                               window=args.window, with_ex=True)
+                               window=args.window, with_ex=True, with_daily=True)
             # ---- 剥风格(2026-09-12, --strip_style; 见 docs/factor_roadmap.md §8.13) ----
             #  口径与 standard_test.py【6】逐位一致: rank(因子) 对 rank(lncap)+rank(lnamt)
             #  逐日截面 OLS 取残差 -> **再 rank** -> 重跑同一套费后回测。
@@ -1953,13 +1966,18 @@ def run(args):
                                        [STYLE_FULL['lncap'], STYLE_FULL['lnamt']])
                     rr_s = evaluate_real(pd.DataFrame(_fn, index=dates, columns=cols),
                                          close, str(nd) + '#strip',
-                                         cost=args.cost, window=args.window)
+                                         cost=args.cost, window=args.window, with_daily=True)
                     if rr_s is not None:
                         strip_rec = dict(
                             gen=args.gen, expr=str(nd),
                             ic=rr['ic'], calmar=rr['calmar'], ann_ex=rr['ann_ex'],
+                            dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'),
                             strip_ic=rr_s['ic'], strip_calmar=rr_s['calmar'],
-                            strip_ann_ex=rr_s['ann_ex'], strip_sharpe=rr_s['sharpe'])
+                            strip_ann_ex=rr_s['ann_ex'], strip_sharpe=rr_s['sharpe'],
+                            # ★ 剥风格后的**日频**口径（§1.19）—— 档位阈值现在就吃这几个
+                            strip_dd_d=rr_s.get('dd_d'),
+                            strip_calmar_d=rr_s.get('calmar_d'),
+                            strip_sharpe_d=rr_s.get('sharpe_d'))
                 except Exception as e_s:
                     # 无人值守铁律: 剥风格失败**不得**影响主流程, 也不得据此拦候选
                     print(f"  [{j}] 剥风格失败(不影响主流程): {type(e_s).__name__}: {e_s}")
@@ -1975,12 +1993,19 @@ def run(args):
                         _fp = cs_rank(pd.DataFrame(_vp, index=dates, columns=cols))
                         _rp = evaluate_real(_fp, close, f"{nd}#pool{_tg}",
                                             cost=args.cost, window=args.window,
-                                            mcap=MCAP)   # ★同时给「市值加权基准」(§8.28)
+                                            mcap=MCAP,   # ★同时给「市值加权基准」(§8.28)
+                                            with_daily=True)   # ★池门槛/池标签也吃日频(§1.19)
                         if _rp is not None:
                             pool_rec.append(dict(
                                 gen=args.gen, expr=str(nd), pool=_tg,
+                                # ★ `pools_scope`(2026-09-14, §1.5)：记录**当次 `--pools` 集合** ——
+                                #   否则"只在两池测过"会被误读成"池内无效"（跨批次比标签会错）。
+                                #   以后任何时候都能还原"这行标签是在哪些池上算的"。
+                                pools_scope=','.join(_pools),
                                 ic=_rp['ic'], ic_ir=_rp['ic_ir'], calmar=_rp['calmar'],
                                 ann_ex=_rp['ann_ex'], dd=_rp['dd'],
+                                # ★ 日频口径（§1.19）：池门槛/池标签用这几个
+                                dd_d=_rp.get('dd_d'), calmar_d=_rp.get('calmar_d'),
                                 sharpe=_rp['sharpe'], turn=_rp.get('turn', np.nan),
                                 # 市值加权基准口径(§8.28): calmar_cw ≈ 对真实指数的超额
                                 #  tilt = ann_ex_cw - ann_ex = 「池内规模倾斜」贡献(越大越可疑)
@@ -1998,21 +2023,38 @@ def run(args):
                 #   与 `standard/pool_tags.py` 派生 docs/pool_tags.csv 同口径)。
                 #   用户诉求:「一眼看出这个因子是全A+哪个池好用、还是只有全A好用」。
                 try:
+                    # ★★ 2026-09-14（§1.18 用户拍板 B + §1.19 用户拍板 ③）：
+                    #   ① **修判据不对称** —— 原来「全A 要 calmar>=0.30、池内**只要超额>0**」
+                    #      ⇒ `all3`（"所有池都通过 = 真 alpha"）名不副实（实测 F10_1000 误标）。
+                    #   ② **口径统一到日频** —— 期频漏掉持有期内回撤，回撤被低估（折比中位 0.928）。
+                    #      日频缺失时**回退期频**（旧数据/未开 with_daily 时不炸、不误杀）。
+                    def _cal_d(_d):
+                        """取日频 Calmar，缺失则回退期频（**回退要留痕**在 CSV 列里可辨）。"""
+                        _v = _d.get('calmar_d')
+                        return _v if (_v is not None and np.isfinite(_v)) else _d.get('calmar')
                     _okp = {q['pool']: bool(np.isfinite(q['ann_ex'])
-                                            and q['ann_ex'] > _lp.TAG_POOL_FLOOR)
+                                            and q['ann_ex'] > _lp.TAG_POOL_FLOOR
+                                            and np.isfinite(_cal_d(q))
+                                            and _cal_d(q) >= _lp.TAG_POOL_FLOOR_CAL)
                             for q in pool_rec}
                     _oka = bool(np.isfinite(rr['ann_ex']) and rr['ann_ex'] > 0
-                                and np.isfinite(rr['calmar'])
-                                and rr['calmar'] >= _lp.TAG_CAL_MIN)
+                                and np.isfinite(_cal_d(rr))
+                                and _cal_d(rr) >= _lp.TAG_CAL_MIN)
                     _tag_by_expr[str(nd)] = _lp.derive_tag(_oka, _okp, _pools)
                     # ★ 剥风格档（**并列**记录，不改池标签语义）—— 分档规则在
                     #   `loop_pools.strip_grade`（单一事实源，脚本与引擎共用一套）。
+                    #   ⚠ 传**日频**口径 + 日频回撤（§1.19 ③：A 档 = 日频 calmar>=0.30 且 dd_d>-0.20）
                     if strip_rec is not None:
-                        _sg_k, _sg_t = _lp.strip_grade(strip_rec.get('strip_calmar'),
-                                                       strip_rec.get('strip_ann_ex'))
+                        _sg_k, _sg_t = _lp.strip_grade(strip_rec.get('strip_calmar_d'),
+                                                       strip_rec.get('strip_ann_ex'),
+                                                       strip_rec.get('strip_dd_d'))
+                        # 元组：档位 / 说明 / 期频剥后 Calmar / 剥后超额 / **日频剥后 Calmar** / **日频剥后回撤**
+                        #   ★ 后两项 2026-09-14（§1.19）新增 —— 判据已改日频 ⇒ 文档要能看见它。
                         _strip_by_expr[str(nd)] = (_sg_k, _sg_t,
                                                    strip_rec.get('strip_calmar'),
-                                                   strip_rec.get('strip_ann_ex'))
+                                                   strip_rec.get('strip_ann_ex'),
+                                                   strip_rec.get('strip_calmar_d'),
+                                                   strip_rec.get('strip_dd_d'))
                 except Exception as e_t:
                     print(f"  [{j}] 池标签派生失败(不影响主流程): {type(e_t).__name__}: {e_t}")
             del f
@@ -2097,6 +2139,9 @@ def run(args):
                          window=args.window, cost=args.cost,
                          ic=rr['ic'], ic_ir=rr['ic_ir'],
                          ann_ex=rr['ann_ex'], dd=rr['dd'], calmar=rr['calmar'],
+                         # ★ 日频口径（§1.19）：供**离线重算池标签**用（判据已改用日频）。
+                         #   ⚠ 加列安全：本文件走 `append_csv_schema_safe`（§8.30 根治）。
+                         dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'),
                          sharpe=rr['sharpe'], last_yr=rr['last_yr'],
                          turn=rr.get('turn', np.nan),
                          neg_yr=sum(1 for v in yr.values() if v <= 0),

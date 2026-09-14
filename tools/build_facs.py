@@ -371,7 +371,9 @@ def main():
                 rr_s = evaluate_real(pd.DataFrame(fn, index=dates, columns=cols), close,
                                      expr + '#strip', cost=0.004, window=5, with_daily=True)
                 if rr_s is not None:
-                    k, t = LE_pools_grade(rr_s['calmar'], rr_s['ann_ex'])
+                    # ★ 档位吃**日频**（§1.19 ③）；日频缺失回退期频
+                    k, t = LE_pools_grade(rr_s.get('calmar_d'), rr_s['ann_ex'],
+                                          rr_s.get('dd_d'), rr_s['calmar'])
                     strip_rows.append(dict(name=nm, pool=it['pool'], expr=expr,
                                            ic=rr['ic'], calmar=rr['calmar'], ann_ex=rr['ann_ex'],
                                            dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'),
@@ -454,10 +456,19 @@ def _fallback_name(expr):
     return 'X' + hashlib.md5(expr.encode()).hexdigest()[:6]
 
 
-def LE_pools_grade(strip_calmar, strip_ann_ex):
-    """分档（调用 `loop_pools.strip_grade` = **单一事实源**）。"""
+def LE_pools_grade(calmar_d, strip_ann_ex, dd_d=None, calmar_p=None):
+    """分档（调用 `loop_pools.strip_grade` = **单一事实源**）。
+
+    ★ 2026-09-14（`loop_todo §1.19 ③`，用户拍板）：**优先用「日频」口径**；
+      日频缺失时**回退期频**（旧数据 / 未开 `with_daily` 时不炸、不误杀）。
+
+    :param calmar_d: 剥风格后**日频** Calmar（首选）
+    :param calmar_p: 剥风格后**期频** Calmar（日频缺失时的回退）
+    :param dd_d:     剥风格后**日频**回撤（`TAG_STRIP_DD_MIN` 判据用）
+    """
     import loop_pools as LP
-    return LP.strip_grade(strip_calmar, strip_ann_ex)
+    _c = calmar_d if (calmar_d is not None and np.isfinite(calmar_d)) else calmar_p
+    return LP.strip_grade(_c, strip_ann_ex, dd_d)
 
 
 if __name__ == '__main__':

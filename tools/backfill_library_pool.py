@@ -284,12 +284,23 @@ def main():
                 s2 = (o[o['expr'].astype(str) == e]
                       if ('expr' in getattr(o, 'columns', [])) else pd.DataFrame())
                 if len(s2) and 'pool' in s2.columns:
-                    okp = {str(p): bool(np.isfinite(v) and v > LP.TAG_POOL_FLOOR)
-                           for p, v in zip(s2['pool'], s2['ann_ex'])}
+                    # ★ 2026-09-14（§1.18 B + §1.19 ③）：池内**也要卡 Calmar**（原来只要超额>0
+                    #   ⇒ F10_1000 被误标 all3）；Calmar **优先日频**、缺失回退期频。
+                    def _c(rw, key_d='calmar_d'):
+                        v = rw.get(key_d, None)
+                        if v is not None and np.isfinite(v):
+                            return float(v)
+                        v = rw.get('calmar', None)
+                        return float(v) if (v is not None and np.isfinite(v)) else np.nan
+                    okp = {str(p): bool(np.isfinite(v) and v > LP.TAG_POOL_FLOOR
+                                        and np.isfinite(_c(rw_))
+                                        and _c(rw_) >= LP.TAG_POOL_FLOOR_CAL)
+                           for p, v, rw_ in zip(s2['pool'], s2['ann_ex'], s2.to_dict('records'))}
                 else:
                     okp = {}
+                _cA = _c(r, 'calmar_d')
                 oka = bool(np.isfinite(r['ann_ex']) and r['ann_ex'] > 0
-                           and np.isfinite(r['calmar']) and r['calmar'] >= LP.TAG_CAL_MIN)
+                           and np.isfinite(_cA) and _cA >= LP.TAG_CAL_MIN)
                 tags[e] = LP.derive_tag(oka, okp, ['300', '500', '1000'])
             n_before += len(res)
             LE._lib_sync(int(g), res, n_before, list(res['expr']), by_expr, pool_tags=tags)

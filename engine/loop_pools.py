@@ -143,7 +143,17 @@ def parse_pools(text):
 #   今起**本模块是唯一事实源**，`standard/pool_tags.py` 与引擎都 import 它。
 # 判定口径（与 §8.13 的 bank 诊断一致；改阈值只需改这两个常数并重跑派生脚本）：
 TAG_POOL_FLOOR = 0.0      # 池内通过 = 该池费后超额 > 此值
-TAG_CAL_MIN = 0.30        # 全A通过 = 费后超额 > 0 且 Calmar >= 此值
+TAG_CAL_MIN = 0.30        # 全A通过 = 费后超额 > 0 且 Calmar >= 此值（**日频**口径，§1.19）
+# ★★★ 新增（2026-09-14，loop_todo §1.18 用户拍板 B）：**池内 Calmar 下限**
+#   修的是一个**判据不对称**（`engine/loop_engine.py` 的 `_okp` vs `_oka`）：
+#     全A：`ann_ex > 0` **且** `calmar >= TAG_CAL_MIN(0.30)`   ← 严
+#     池内：**只要** `ann_ex > 0`                              ← 松（**完全不卡 Calmar**）
+#   ⇒ 于是 `derive_tag` 的 `all3`（"全A 且**所有池都通过** = 真 alpha"）实际只要求"池内超额>0"
+#   ⇒ **实测 `F10_1000`**：300 池 calmar **0.0589**、500 池 **0.0233**（都 < `--min_pool_calmar=0.15`）
+#     却被标成 **`all3`** ⇒ 而日频复核 300 池**回撤 −41%**、500 池超额仅 +0.41% ⇒ **大中盘段无效**
+#   ⇒ 下游按 `all3` 筛"真 alpha"会**误选**。
+#   取值 = 与 `--min_pool_calmar` 对齐（0.15）—— 让"标签判据"和"入库门槛"用同一个尺子。
+TAG_POOL_FLOOR_CAL = 0.15
 
 TAG_DESC = {
     'none': '全不通过',
@@ -183,33 +193,54 @@ def derive_tag(ok_all, ok_by_pool, pools):
 # ★ 这一档**并列**于 `derive_tag`（**不改** `ok_all`），because：
 #   ① 历史标签语义突变会让 journal/文档前后不可比；
 #   ② 剥风格结果可能缺失（未开 `--strip_style`）⇒ 需要一个 **'D 未测'** 的诚实档位。
-TAG_STRIP_CAL_MIN = 0.30     # 「独立有效」档，与 TAG_CAL_MIN 对齐（口径一致）
+# ★★ 口径（2026-09-14, loop_todo §1.19 ③，用户拍板）：**本组阈值一律是「日频」口径**
+#   为什么：期频 `nav=(1+ex).cumprod()` 只在**每换仓期末**打点 ⇒ 漏掉持有期内回撤
+#   ⇒ 实测折算比（日/期）中位 **0.928**（A/B 档 31 个），区间 0.741~0.992 ⇒ 回撤普遍被低估。
+#   ⇒ 阈值沿用 0.30（因为折比接近 0.93 ⇒ "同等严格度"的新阈值 ≈ 0.28，取 0.30 略严更稳）。
+TAG_STRIP_CAL_MIN = 0.30     # 「独立有效」档（**日频**），与 TAG_CAL_MIN 对齐（口径一致）
+# ★★ 新增（2026-09-14，用户拍板 ②）：**日频回撤上限** —— 光看 Calmar 不够。
+#   实测有一批因子 `calmar > 0`（旧判据判"可用"）但**日频回撤 −21%~−35%**：
+#     `F03_1000` 期0.064/**日dd −35.3%** · `F11` 0.042/**−23.1%** · `F40` 0.001/**−21.2%`
+#   ⇒ 对**真中性增强**（产品端回撤是硬约束）尤其致命 ⇒ 回撤超限**不给 A**（降到 B）。
+#   ⚠ 只降档、不判 C —— "回撤大"不等于"是纯风格"，两者是不同的病。
+TAG_STRIP_DD_MIN = -0.20
 
 STRIP_DESC = {
-    'A': '独立有效（剥风格后 Calmar 仍 >= {:.2f}）'.format(TAG_STRIP_CAL_MIN),
-    'B': '弱独立（剥风格后 Calmar 在 0~{:.2f}）'.format(TAG_STRIP_CAL_MIN),
+    'A': '独立有效（剥风格后**日频** Calmar >= {:.2f}，且**日频**回撤 > {:.2f}）'.format(
+        TAG_STRIP_CAL_MIN, TAG_STRIP_DD_MIN),
+    'B': '弱独立（剥风格后日频 Calmar 在 0~{:.2f}，或回撤劣于 {:.2f}）'.format(
+        TAG_STRIP_CAL_MIN, TAG_STRIP_DD_MIN),
     'C': '**纯风格**（剥掉 lncap+lnamt 后超额/Calmar 转负）⇒ 指数增强不可用',
     'D': '未测（该代没开 `--strip_style`）',
 }
 
 
-def strip_grade(strip_calmar, strip_ann_ex):
-    """剥风格分档（**单一事实源**；引擎、`tools/check_strip_style_pool.py`、
-    `tools/build_crosspool_view.py` 全部 import 本函数，避免三处各写一套漂移）。
+def strip_grade(calmar, ann_ex, dd_d=None):
+    """剥风格分档（**单一事实源**；引擎、`tools/build_facs.py`、`tools/check_strip_style_pool.py`、
+    `tools/build_crosspool_view.py` 全部 import 本函数，避免多处各写一套漂移）。
+
+    :param calmar: 剥风格后的 Calmar
+    :param ann_ex: 剥风格后的年化超额
+    :param dd_d:   剥风格后的**日频回撤**（可选）。
+                   `None` ⇒ **不启用**回撤判据（向后兼容：老调用方行为不变）
+    ⚠⚠ **`calmar` / `ann_ex` 必须传「日频」口径**（2026-09-14 起，§1.19 ③ 用户拍板）——
+       期频口径漏掉持有期内回撤、回撤被系统性低估（实测折比中位 0.928）。
+       参数名不带 `strip_` 前缀正是为了提醒："**传什么口径由调用方负责**"。
 
     返回 (档位, 说明)：
-      **A 独立有效** `strip_calmar >= TAG_STRIP_CAL_MIN`
-      **B 弱独立**   0 < strip_calmar < TAG_STRIP_CAL_MIN
-      **C 纯风格**   `strip_ann_ex <= 0` 或 `strip_calmar <= 0` ⇒ **剥完就没了/变负**
+      **A 独立有效** `calmar >= TAG_STRIP_CAL_MIN` **且**（若给了 `dd_d`）`dd_d > TAG_STRIP_DD_MIN`
+      **B 弱独立**   `0 < calmar < TAG_STRIP_CAL_MIN`，**或**日频回撤劣于 `TAG_STRIP_DD_MIN`
+      **C 纯风格**   `ann_ex <= 0` 或 `calmar <= 0` ⇒ **剥完就没了/变负**
       **D 未测**     取不到剥风格数据（**宁可标"未测"，绝不臆断**）
 
     ⚠ 判 `C` 用**两个条件或**：超额转负是最直接的证据；Calmar<=0 是必要补充
       （避免"超额微正但风险调整后为负"漏判）。
+    ⚠ **回撤超限只降到 B、不降到 C** —— "回撤大"与"是纯风格"是两种不同的病，混在一起会误导。
     """
-    if strip_calmar is None or strip_ann_ex is None:
+    if calmar is None or ann_ex is None:
         return 'D', STRIP_DESC['D']
     try:
-        sc, sa = float(strip_calmar), float(strip_ann_ex)
+        sc, sa = float(calmar), float(ann_ex)
     except (TypeError, ValueError):
         return 'D', STRIP_DESC['D']
     if not (np.isfinite(sc) and np.isfinite(sa)):
@@ -217,6 +248,14 @@ def strip_grade(strip_calmar, strip_ann_ex):
     if sa <= 0 or sc <= 0:
         return 'C', STRIP_DESC['C']
     if sc >= TAG_STRIP_CAL_MIN:
+        # ★ 回撤上限（2026-09-14 用户拍板 ②）：给了 dd_d 才判定
+        if dd_d is not None:
+            try:
+                _ddd = float(dd_d)
+            except (TypeError, ValueError):
+                _ddd = None
+            if _ddd is not None and np.isfinite(_ddd) and _ddd <= TAG_STRIP_DD_MIN:
+                return 'B', STRIP_DESC['B']      # 仅降档，不判 C
         return 'A', STRIP_DESC['A']
     return 'B', STRIP_DESC['B']
 
