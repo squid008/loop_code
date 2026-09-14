@@ -20,7 +20,16 @@ except Exception:
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 DOCS = os.path.join(ROOT, 'docs')
-LOGD = os.path.join(HERE, '_tracks')
+# ⚠⚠ 2026-09-15 修：`LOGD` 必须与 `run_tracks.py` 的**保持同一处** ——
+#   原先本文件写 `HERE/_tracks`（= `tools/_tracks`），而 `run_tracks.py` 写
+#   `ROOT/ai_test/_tracks`。
+#   根因：`run_tracks.py` 后来**迁入 `tools/`**，而本文件仍按旧位置推算 ⇒ **两个目录分家了** ⇒
+#   结果 `[1] 驱动器日志` / `[4] 最近日志` / `[6] 在跑的代进度` **全是空的**（它一直在找 `tools/_tracks`）✗
+#   ⇒ 现在**按 `run_tracks.py` 的定义**取，并保留历史目录回退（将来再挪也不会查空）✓
+LOGD_CANDS = [os.path.join(ROOT, 'ai_test', '_tracks'),   # 现址（与 run_tracks.py 一致）
+              os.path.join(HERE, '_tracks'),              # 旧址（迁入 tools/ 之前）
+              os.path.join(ROOT, 'ai_test', '_night')]    # 更早的夜间跑
+LOGD = next((d for d in LOGD_CANDS if os.path.isdir(d)), LOGD_CANDS[0])
 sys.path.insert(0, os.path.join(ROOT, 'engine'))
 
 
