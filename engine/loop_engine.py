@@ -1441,7 +1441,7 @@ def _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool
     top = l1.head(args.l2)
     _t_l2 = time.time()
     print(f"\nL2 费后精筛 {len(top)} 个 ...")
-    # 池成员 PIT 掩码(2026-09-12, --pool_obs; 见 docs/factor_roadmap.md §8.9 B+B′)
+    # 池成员 PIT 掩码(2026-09-12, --pool_obs; 见 docs/log/2026-09.md §8.9 B+B′)
     #  ★ 建在**全量面板**上(池股天然都在, 面板覆盖率 99.3%/99.8%) ⇒ **不需要扩 L1 子面板列**。
     #   (L1 层池感知才需要"随机2000 ∪ 池union2701 ≈ 3700 列 = +85% 成本", 那是后续的事。)
     POOL_M = {}
@@ -1983,10 +1983,10 @@ def run(args):
     _score_mode = getattr(args, 'score_mode', 'old') or 'old'
     _style_obs = bool(getattr(args, 'style_obs', False))
     _shape_neutral = bool(getattr(args, 'shape_neutral', 0))   # 形状量用风格中性收益(§8.5.1 行动①)
-    # 剥风格入库判据(2026-09-12, 见 docs/factor_roadmap.md §8.13): L2 记录(可选门槛)
+    # 剥风格入库判据(2026-09-12, 见 docs/log/2026-09.md §8.13): L2 记录(可选门槛)
     # 把因子对 lncap+lnamt 秩中性化后重跑回测 —— 判"超额是否只是市值/成交额风格暴露"。
     _strip_style = bool(getattr(args, 'strip_style', False))
-    # 池内指标(2026-09-12, 见 docs/factor_roadmap.md §8.9 B+B′): L2 在**池内**重跑回测,
+    # 池内指标(2026-09-12, 见 docs/log/2026-09.md §8.9 B+B′): L2 在**池内**重跑回测,
     # 用于给入库因子打「300好用/300+500好用/全都好用/只有全A好用」标签, 供将来因子库 PG 筛选。
     # ★关键: L2 用的是**全量面板**(5384列), 池股天然都在里面 -> **不需要扩 L1 子面板列**
     #  (那是 L1 层池感知才需要的代价: 随机2000 ∪ 池union2701 ≈ 3700 列 = +85% 成本)。
@@ -2409,7 +2409,7 @@ def run(args):
             #   成本：只多算一条净值序列（不重新选股），每候选 +~4s。
             rr = evaluate_real(f, close, str(nd), cost=args.cost,
                                window=args.window, with_ex=True, with_daily=True)
-            # ---- 剥风格(2026-09-12, --strip_style; 见 docs/factor_roadmap.md §8.13) ----
+            # ---- 剥风格(2026-09-12, --strip_style; 见 docs/log/2026-09.md §8.13) ----
             #  口径与 standard_test.py【6】逐位一致: rank(因子) 对 rank(lncap)+rank(lnamt)
             #  逐日截面 OLS 取残差 -> **再 rank** -> 重跑同一套费后回测。
             #  为什么: 30 个入库因子剥成交额后**仅 3 个**超额仍为正、沪深300 内**仅 3/30** 有效
@@ -2647,7 +2647,7 @@ def run(args):
     # ---- B角: 诊断本代 + 给出下一代策略 + 写日志 ----
     critic, diag, res_c = _critic_diagnose(args, fam_blocked, l1, pool_rows, res, seg_ok_list)
     # ---- 风格暴露诊断聚合(2026-09-11, --style_obs): 落盘已在 L1 求值后完成, 此处只做分组聚合 ----
-    #  判读(见 docs/factor_roadmap.md §8.3/§8.4): new vs old 两组对比, 若 L2 候选/通过集的
+    #  判读(见 docs/log/2026-09.md §8.3/§8.4): new vs old 两组对比, 若 L2 候选/通过集的
     #  |lntr|、|lnamt| 中位显著上升 -> 确诊"新排序分在低换手/低成交额方向加倍下注"。
     next_cfg, reasons = _agg_style_diag(_k, cfg, critic, diag, e, l1, obs_df, r, res)
     # ---- 生成侧 LLM 引导留痕(独立引用体小节, 与 ai_review 块同风格) ----
