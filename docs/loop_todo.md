@@ -390,7 +390,7 @@ python tools/_audit_deadcode.py    # ★ 死代码（ast 精确判定，避免 f
 | **C7** | `standard/style_paired_analysis.py` + `docs/loop_style_paired.md` | 2026-09-11 **批1 一次性配对验证**（结论已落 §8.5）| **可归档** | ✅ 是 |
 | **C8** | `standard/prof_evalreal.py`（性能剖析，一次性）| — | **可归档** | ✅ 是 |
 | **C9** | ⚠ **`docs/*.csv` 全部是"引擎输出"**（`loop_archive*`/`loop_pool_obs*`/`loop_strip_style*`/`loop_style_obs`/`pool_tags*`，共 **19 个**）| `tools/_audit_files.py` 判为 **★引擎写**；且**被 `.gitignore` 排除**（= 运行产物）| ★ **不是垃圾**：`loop_archive*.csv` = **入库清单（权威）**；是回测/组合输入 ⇒ **保留** | ⚠ 若嫌乱可按池归档 |
-| **C10** | ⚠ **`loop_journal_50.md`(9.7KB) / `loop_archive_50.csv` / `loop_pool_obs_50.csv` / `loop_strip_style_50.csv`** | 是 **`pool=50` 轨道**的产物 ⇒ **引擎写**，不是历史 | ⚠ **50 池还跑吗？**（当前跑 300/500/1000）⇒ 还跑则保留 | ✅ **是**（要问）|
+| **C10** | ⚠ **`loop_journal_50.md`(9.7KB) / `loop_archive_50.csv` / `loop_pool_obs_50.csv` / `loop_strip_style_50.csv`** | 是 **`pool=50` 轨道**的产物 ⇒ **引擎写**，不是历史 | ★★ **2026-09-15 晚已恢复回 `docs/`**（前端已展示 50 池 ⇒ 数据要留）⇒ **保留** | ✅ 已办 |
 | **C11** | ⚠ **`standard/pool_tags.py`(9.3KB) 与 `qa_style_obs.py`(4.5KB) 被 `engine/` 引用** | `loop_engine.py`/`loop_pools.py`/`loop_metrics.py` | ★ **是生产依赖**，**不是**"标准测试的附属" ⇒ **不能动** | 否 |
 | **C12** | `standard/*_report.md`（`pool_tags_report.md` 21KB / `obs_analysis_report.md`）| `.gitignore` 已排除 ⇒ **脚本产物** | **可归档**（会被重生成）| ✅ 是 |
 
@@ -407,7 +407,7 @@ python tools/_audit_deadcode.py    # ★ 死代码（ast 精确判定，避免 f
 | **C7** | ✅ 已归档 → `history/20260915_cleanup/standard/` |
 | **C8** | ✅ 已归档 → 同上 |
 | **C9** | ✅ **保留**（确认为引擎输出，非垃圾）—— 结论：`loop_archive*.csv` 是**入库清单（权威）** |
-| **C10** | ✅ **用户确认归档**（`POOLS['50'] = 000016.XSHG` = **上证50**）→ `history/20260915_cleanup/50pool/`；★ `engine/loop_state_50.pkl`（该池因子库）**未动** |
+| **C10** | ✅ 曾归档（`POOLS['50'] = 000016.XSHG` = **上证50**）→ `history/20260915_cleanup/50pool/`；★ `engine/loop_state_50.pkl`（该池因子库）**未动**<br>★★ **2026-09-15 晚：已「恢复」回 `docs/`**（用户：「我看你都把前端加上上证50池子了……那就别归档了，重新拖出来」）⇒ `loop_journal_50.md` / `loop_archive_50.csv` / `loop_pool_obs_50.csv` / `loop_strip_style_50.csv` 全部迁回 ✓ |
 | **C11** | ✅ 确认是生产依赖 ⇒ **未动**（`standard/pool_tags.py` · `qa_style_obs.py`）|
 | **C12** | ✅ 已归档 → `history/20260915_cleanup/standard/` |
 
@@ -522,7 +522,7 @@ handler 结束时**隐式 `del e`** ⇒ 那样"绑过"的名字到调用行**必
 ```bash
 # ---- 池与观测 ----
 --pool_obs                # 测池内指标（★ 只"测"，不参与判定，见下方概念要点）
---pools=300,500,1000      # 三个池（`50`=上证50 数据已备但**不跑**，其产物已归档）
+--pools=300,500,1000      # 三个池（`50`=上证50 **数据已备、产物在 `docs/`**，但默认**不跑**）
 --strip_style             # L2 每候选额外算"剥 lncap+lnamt"后的 IC/超额/Calmar
 --style_obs               # ★ 记录每个被求值 L1 候选对 lncap/lnamt/lntr/lnpx 的截面秩相关
                           #   （2026-09-15 补上：此前 `extra` 从未透传 ⇒ 风格观测一直没采）
