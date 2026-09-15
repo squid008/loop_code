@@ -91,3 +91,6 @@ _commit_msg.txt
 
 # ★ TS 增量构建产物（2026-09-15，误跟踪过一次）
 *.tsbuildinfo
+
+# ★ .codebuddy 下嵌套重复目录（2026-09-15 归档，早期快照，无独有内容）
+history/codebuddy_nested_20260915/
