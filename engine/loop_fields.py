@@ -35,7 +35,17 @@ BARRA_KEYS = ['size', 'non_linear_size', 'momentum', 'liquidity', 'book_to_price
               'comovement']
 BARRA_LEAVES = ['barra_' + k for k in BARRA_KEYS]
 FA_LEAVES = ['fa_np_yoy', 'fa_rev_yoy', 'fa_op_yoy', 'fa_ocf_yoy',
-             'fa_gm', 'fa_np_margin', 'fa_roe', 'fa_lev']
+             'fa_gm', 'fa_np_margin', 'fa_roe', 'fa_lev',
+             # ★ 2026-09-15 扩展 +7（用户问起「财报数据不是有一堆吗」；roadmap §8.51）
+             #   ⚠ **必须追加在末尾** —— 本文件注释写明「顺序即 loop_critic 结构去重时
+             #     字符串替换的优先级, 追加新族时放到末尾」✓
+             #   实测**逐日截面 rank 相关**（引擎的真实口径）：
+             #     fa_pb 最独立（与所有旧叶子最高才 +0.063）· 其余 0.14~0.54 ✓
+             #   ⚠ 试过但删掉的 5 个（见 `engine/build_fa_pit.py` 顶部详述）：
+             #     覆盖率不够：fa_int_cov(0.01%) · fa_rnd(9.95%) · fa_rnd_cap(2.29%)
+             #     信息重复：  fa_roe_wa(与 fa_roe 截面 0.855) · fa_roa(与 fa_np_margin 0.867)
+             'fa_pb', 'fa_accrual', 'fa_asset_turn', 'fa_gw',
+             'fa_inv_turn', 'fa_recv_turn', 'fa_sell_exp']
 
 # ---- 派生/衍生叶子(loop_engine.base_fields 运行时计算, 生成与诊断均可见) ----
 LEAVES_DERIVED = ['vwap', 'ret', 'turn_ratio', 'ln_mktcap', 'ln_volume',

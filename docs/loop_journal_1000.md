@@ -473,3 +473,53 @@ leaf_w={'barra_beta': 0.25, 'overnight': 0.25}
 > 否决: r1_leaf_conc
 
 **⚖️ 规则动作否决（机器读取）**: `r1_leaf_conc`（叶子过度集中 -> 压低该叶子权重）
+
+## 第 12 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 18 | 0.016 | 0.032 | 0.997 | 0.000 | 0.444 | 0.889 | 1 | 0.500 | 18 | 0 | 0.064 | 0.000 | 0.150 | 0.444 | 0.444 | 0.333 | 0.000 | 0.889 | 0.056 | 0.611 | 0.389 |
+
+叶子使用: {'overnight': 8, 'barra_beta': 5, 'mktcap': 4, 'barra_residual_volatility': 4, 'turnover': 4, 'hl_ratio': 4}
+
+**B角建议(下一代策略)**:
+- 【r1_leaf_conc】叶子[overnight]占比44%过高 -> 权重压到0.25, 逼引擎换字段
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 1 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 5]  min_stab=0.3  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'barra_beta': 0.25, 'overnight': 0.25}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [10, 11, 13] 代
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [4, 5] 代（**已永久关闭**）
+- `r6_known_ratio` 候选仍绕已知族 -> decorr 收紧 —— 施加于第 [10] 代
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [9, 10] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r7_zero_pass`
+
+**LLM 引导(A角 12代)**: 调用3次, 解析通过46条, 引导位使用46条
+> 隔夜跳空与日内收益的背离反映信息吸收与次日情绪修正的不对称，叠加beta暴露的短期漂移，能预测未来5日截面收益。
+
+
+**LLM 候选审查(B角 12代)**: 深判 5 个, KILL 3 个(剔除出 L2 费后回测)
+- KILL `ts_mean120(ts_mean200(corr20(hl_ratio, ts_rank60(turnover))))`
+  > 理由: 多层同源均值嵌套冗余，hl_ratio与turnover相关性含义模糊，疑参数海捞针
+- KILL `ts_mean120(ts_mean200(ts_min100(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(mktcap))))))`
+  > 理由: 多层嵌套同源时序均值+市值混乘，无清晰量价机制，属参数冗余拼凑
+- KILL `corr200(ts_mean10(ts_mean60(low)), corr200(turn_ratio, hl_ratio))`
+  > 理由: 嵌套corr与多层均值冗余，经济含义拼凑，属参数海捞针
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根: 因子全挤在overnight/mktcap/beta等已知风格族上, IC天花板低(0.032)且neg_yr普遍4~5年, 是"换皮不换骨"而非深度不足。
+> 
+> (2) r1_leaf_conc对症但权重0.25过猛, 会把唯一有效信号源打散; r6_known_ratio与r1方向一致却同时收紧decorr到0.65, 双重压制易致种群早熟; 深度放宽3~5对neg_yr无解, 属无效动作。
+> 
+> (3) mix=[0.15,0.35,0.15,0.2,0.15] depth=[2,3,4] min_stab=0.5 decorr=0.55; 理由: 先保结构多样性、松decorr让新族进场, 深度回退避免过拟合长窗。
+> 
+> 否决: r6_known_ratio
+
+**⚖️ 规则动作否决（机器读取）**: `r6_known_ratio`（候选仍绕已知族 -> decorr 收紧）
