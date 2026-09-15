@@ -740,6 +740,15 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
                  没跑到 `--pool_obs` 时字典为空 -> 该行写"未测(--pool_obs 未开)"，**不写未知标签**。"""
     import re
     import io
+    # ★★★ 2026-09-15 修（P0-2 重构时被"名字封闭性检查"照出来的**潜伏 bug**）：
+    #   本函数用了 `_lp.TAG_STRIP_DD_MIN`，但 `_lp` **没有可解析来源** ——
+    #     · `_tag_desc` 里的 `import loop_pools as _lp` 是**它的局部**，与本函数无关 ✗
+    #     · 模块级也没有 `_lp`（`dir(loop_engine)` 已确认）✗
+    #   ⇒ 一旦 `strip_grades` 带日频回撤（即 `--strip_style` 开过）⇒ **`NameError`** ✗
+    #   ★★ 而本函数 docstring 写着"任何失败仅告警, 绝不影响入库主流程" ⇒ 被 try 吞掉
+    #     ⇒ **静默失败**：因子库文档不更新，且不报错（正是本项目反复踩的那类坑）✗✗
+    #   ⇒ 补上 import（最小修法，零行为变化）✓
+    import loop_pools as _lp
     try:
         if not added_exprs:
             return
@@ -1207,6 +1216,527 @@ def batch_ic(Fs, fwd_ret, U, dates=None, start=START):
 
 
 # ===================== 5. 主循环 =====================
+def _critic_review_prev(_prev_pool_map, args, cfg, prev_l1, prev_l2):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: B角: 先审查上一代, 再据此定本代搜索策略
+    """
+    import loop_critic as critic
+    if prev_l1 is not None and len(prev_l1):
+        # ★ 传 gate + pool_map（2026-09-14, §1.1 修法①②）：让 B角 的传感器与**实际生效的门槛**对账，
+        #   并在池内模式下改看**池口径**（那才是真实卡点）。代首用上一代存的 `last_pool_map`。
+        diag = critic.diagnose(prev_l1, prev_l2, args.gen - 1,
+                               gate=_gate_of(args), pool_map=_prev_pool_map)
+        cfg, reasons = critic.suggest(diag, cfg)
+        print("\n[B角建议] 本代搜索策略:")
+        for r in reasons:
+            print("  -", r)
+    else:
+        print("\n[B角] 首代, 使用默认策略")
+    return (cfg, critic, diag, r, reasons)
+
+
+def _build_fam_blacklist(args, cfg, critic, f, frozen, prev_l1, seeds):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: 结构族黑名单(QuantaAlpha 正交思想, gen31): 上代 L1 霸榜模板族
+    """
+    block_fams, fam_black_txt = set(), ''
+    if prev_l1 is not None and len(prev_l1):
+        fam_cnt = {}
+        for nd in list(prev_l1['node']):
+            f = root_fam(nd)
+            fam_cnt[f] = fam_cnt.get(f, 0) + 1
+        n_pv = len(prev_l1)
+        tops = sorted(fam_cnt.items(), key=lambda x: -x[1])
+        if args.fam_block_thr > 0 and tops and tops[0][1] / n_pv >= args.fam_block_thr:
+            block_fams = {tops[0][0]}
+        fam_black_txt = '；'.join(f'「{f}」({c}/{n_pv}条)' for f, c in tops[:2])
+    if block_fams:
+        print(f"  [族黑名单] 上代 L1 同模板族占比>={args.fam_block_thr:.0%} -> "
+              f"本代生成端禁产该模板族, 强制结构换血")
+    # 五维配比护栏(与 critic.suggest 出口同源): 即使旧state cfg 漂移且本轮无规则触发
+    # (如无上一代), 本代实际生效 mix 也强制回到中金规格内(变异/交叉≥10%、槽位15/20/15)
+    cfg['mix'] = critic.guard_mix(cfg.get('mix'))
+    print(f"  五维配比 mix={[round(x, 3) for x in cfg['mix']]} "
+          f"(变异/交叉自适应≥{critic.MIX_MIN:.0%}, 扰动/引导/随机=15/20/15)")
+    # B角建议落地(命令行显式指定则优先)
+    if args.decorr < 0:
+        args.decorr = cfg.get('decorr', 0.0)
+    if args.fsa_th < 0:
+        args.fsa_th = cfg.get('fsa_th', 0.0)   # 0=关闭FSA冻结
+    args.min_stab = cfg.get('min_stab', args.min_stab)
+    args.bank_skel_max = cfg.get('bank_skel_max', args.bank_skel_max)
+    print(f"  本代参数: min_stab={args.min_stab:.2f}  decorr={args.decorr:.2f}  "
+          f"fsa_th={args.fsa_th:.2f}  bank同骨架上限={args.bank_skel_max}  "
+          f"depth={cfg['depth']}")
+    # ★ 亲本策略必须**可审计**（2026-09-14, §1.3-C）：它改变的是"**从哪些亲本出发**"，
+    #   一旦候选质量变化，没有这行就**无法归因**是策略换了还是别的原因。
+    #   （写进**本代日志** + LLM 上下文；**不改 journal 格式** —— 那会打断下游解析）
+    print(f"  本代亲本策略: parent_sel={getattr(args, 'parent_sel', 'uniform')}"
+          + (f"(top_pct={getattr(args, 'parent_top_pct', 0.30):.2f})"
+             if getattr(args, 'parent_sel', 'uniform') == 'top_percent_plus_random' else '')
+          + f"  种子池={len(seeds)}个(上一代L1头部, 按score降序)")
+    if frozen:
+        print(f"  [FSA] 本代生效冻结骨架 {len(frozen)} 个(生成时禁止复用)")
+    return (block_fams, f, fam_black_txt, nd)
+
+
+def _load_fail_lib(args, cfg, fail_lib):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: 失败模式库: 载入后按滚动窗口算出本代应排除的'坏骨架'
+    """
+    if args.dim_review < 0:
+        args.dim_review = 1                      # 跨量纲审查默认开启
+    # 命令行显式指定则优先, 否则用 B角cfg(默认开: fail_rate=0.6, min_fail=3)
+    if args.fail_rate < 0:
+        args.fail_rate = cfg.get('fail_rate', 0.6)
+    if args.min_fail <= 0:
+        args.min_fail = cfg.get('min_fail', 3)
+    bad = bad_skels(fail_lib, args.gen, min_fail=args.min_fail,
+                    rate=args.fail_rate) if args.fail_rate > 0 else set()
+    if bad:
+        print(f"  [失败库] 本代排除坏骨架 {len(bad)} 个"
+              f"(失败>={args.min_fail}次 全败率>={args.fail_rate:.0%})")
+    return bad
+
+
+def _rand_explore(bank, cfg, prev_l1):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: 随机探索: 数据驱动特征分布引导(中金"随机探索15%=数据驱动分布, 防局部最优")
+    """
+    ev_nodes = list(bank) + (list(prev_l1['node'])
+                             if prev_l1 is not None and len(prev_l1) else [])
+    cfg_r = dict(cfg)
+    prof = data_profile(ev_nodes)
+    if prof:
+        cfg_r['leaf_w'] = _mix_weights(cfg.get('leaf_w', {}), prof['leaf'], LEAVES)
+        cfg_r['op_bias'] = _mix_weights(cfg.get('op_bias', {}), prof['op'],
+                                        list(UNARY.keys()) + list(BINARY.keys()),
+                                        family=True)
+        print(f"  [随机探索] 数据驱动特征分布: 叶子证据{len(prof['leaf'])}种 / "
+              f"算子族{len(prof['op'])}种 -> 随机位按证据加权探索")
+    else:
+        print("  [随机探索] 无历史证据(首代) -> 随机位退化均匀")
+    return cfg_r
+
+
+def _gen_candidates(args, cfg, seeds):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: 生成候选(按B角给的五维配比)
+    """
+    m = cfg['mix']
+    cut = [m[0], m[0] + m[1], m[0] + m[1] + m[2], m[0] + m[1] + m[2] + m[3]]
+    # ★ 亲本选择策略（2026-09-14, §1.3-C）—— `uniform` 是默认 = **现状行为不变**
+    _psel = getattr(args, 'parent_sel', None) or 'uniform'
+    if _psel not in PARENT_SEL_MODES:
+        print(f"  [亲本] [!] 未知 --parent_sel={_psel!r} -> 回退 uniform（可选: "
+              f"{'/'.join(PARENT_SEL_MODES)}）")
+        _psel = 'uniform'
+    _ptop = float(getattr(args, 'parent_top_pct', 0.30) or 0.30)
+    if _psel != 'uniform':
+        print(f"  [亲本] 策略={_psel}"
+              + (f"（top {_ptop:.0%} 保底 + 余量随机；种子池 {len(seeds)} 个"
+                 f" ⇒ top 段 {max(1, int(len(seeds) * _ptop))} 个）"
+                 if _psel == 'top_percent_plus_random' else "（纯取第 1 名）")
+              + " —— ⚠ 与 `uniform` 是**不同搜索行为**，跨代对比时勿混用")
+    return (_psel, _ptop, cut, m)
+
+
+def _run_l1(U, base, fwd_ret):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: L1 批量 IC(★分批处理 + 子面板 + 跨批LRU)
+    """
+    Bsub = base['B_sub']
+    Usub = U[np.ix_(L1_ROWS, L1_COLS)]
+    if L1_POOL_MASK is not None:
+        # ★池内挖掘(§8.19): L1 的 IC = **池内 IC**。这一步是"三池并行"起作用的核心 ——
+        #   目标函数里不再有全A 的小盘/低流动性溢价, 风格暴露因子在 L1 就挣不到分。
+        Usub = Usub & L1_POOL_MASK
+    Rsub = fwd_ret[np.ix_(L1_ROWS, L1_COLS)]
+    print(f"L1 子面板 {len(L1_ROWS)}日 x {len(L1_COLS)}股 "
+          f"(全量 {U.shape[0]}x{U.shape[1]}) -> 数据量约 1/{U.size/max(Usub.size,1):.0f}")
+    return (Bsub, Rsub, Usub)
+
+
+def _apply_fam_quota(args, l1):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: 结构族配额(QuantaAlpha 冗余检测移植, gen31)
+    """
+    fam_blocked = 0
+    if args.fam_quota > 0 and len(l1):
+        n_pre = len(l1)
+        l1, nfam, n_blocked = fam_quota_rows(l1, quota=args.fam_quota,
+                                             use_sole=args.fam_sole)
+        fam_blocked = n_blocked
+        if n_blocked:
+            print(f"  [族配额] 模板族 {nfam} 个(含单叶变换维度={'开' if args.fam_sole else '关'})"
+                  f" -> 结构冗余拦 {n_blocked}/{n_pre} (剩 {len(l1)}, 每族<={args.fam_quota})")
+    return (fam_blocked, l1)
+
+
+def _fsa_stats(args, cands, frozen, fsa, l1, nd, r, s):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: FSA 骨架统计(对齐中金: 抽象因子结构/剥离窗口参数)
+    """
+    fsa['v2'] = True
+    for nd in list(l1['node']) + [c for c in cands[:50]]:
+        for s in subtree_skels(nd):
+            fsa[s] = fsa.get(s, 0) + 1
+    # 冻结判定(滚动口径, 对齐中金"定期扫描>15%即禁复用"):
+    #   ①本代L1候选中覆盖占比 >= fsa_th 的骨架 -> 新冻结
+    #   ②上代冻结骨架若本代已完全不再出现 -> 自动解冻(防冻结集永久膨胀、搜索空间缩死)
+    if args.fsa_th > 0 and len(l1):
+        thr = max(2, int(round(len(l1) * args.fsa_th)))
+        cov = {}
+        for _, r in l1.iterrows():
+            for s in subtree_skels(r['node']):
+                cov[s] = cov.get(s, 0) + 1
+        old = set(frozen)
+        new_frozen = sorted(s for s, c in cov.items() if c >= thr)
+        frozen = sorted((old & set(cov)) | set(new_frozen))
+        if new_frozen or len(old - set(frozen)):
+            print(f"  [FSA] 覆盖>={thr}/{len(l1)}候选({args.fsa_th:.0%}): "
+                  f"新冻结{len(new_frozen)} 解冻{len(old - set(frozen))} "
+                  f"冻结中{len(frozen)}")
+            for s in new_frozen[:6]:
+                print(f"     冻结骨架: {s}")
+    return (frozen, nd, r, s)
+
+
+def _jury_deep_review(args, l1, loop_llm, rng):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: 中金【审查】环节: B角候选级 LLM 精判(硬滤后抽5深判, 与生成侧隔离防自证)
+    """
+    kills_j, n_jury_rev, n_jury_kill, jury_lines = set(), 0, 0, []
+    jury_on = getattr(args, 'ai_jury', 'auto')
+    if jury_on != 'off' and len(l1):
+        import loop_llm
+        if not loop_llm.api_key():
+            if jury_on == 'on':
+                print("  [LLM审查] --ai_jury=on 但未找到 key -> 跳过(纯硬规则审查)")
+        else:
+            jmodel = getattr(args, 'ai_jury_model', None) or loop_llm.DEFAULT_MODEL
+            kills_j, n_jury_rev, n_jury_kill, jury_lines = \
+                llm_jury(args, rng, l1, model=jmodel)
+            if kills_j:
+                l1 = l1[~l1['expr'].isin(kills_j)]
+                print(f"  [LLM审查] KILL {len(kills_j)} 个候选剔除出 L2, "
+                      f"剩余 {len(l1)} 个进入费后回测")
+    return (jury_lines, l1, n_jury_kill, n_jury_rev)
+
+
+def _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool_gate_or_all, _pool_obs, _pools, args, cols, dates, e, l1):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: L2 费后精筛
+    """
+    top = l1.head(args.l2)
+    _t_l2 = time.time()
+    print(f"\nL2 费后精筛 {len(top)} 个 ...")
+    # 池成员 PIT 掩码(2026-09-12, --pool_obs; 见 docs/factor_roadmap.md §8.9 B+B′)
+    #  ★ 建在**全量面板**上(池股天然都在, 面板覆盖率 99.3%/99.8%) ⇒ **不需要扩 L1 子面板列**。
+    #   (L1 层池感知才需要"随机2000 ∪ 池union2701 ≈ 3700 列 = +85% 成本", 那是后续的事。)
+    POOL_M = {}
+    import loop_pools as _lp          # ★ 池标签派生用(§8.42); 本地 import 避免与顶层名冲突
+    if _pool_obs:
+        try:
+            _t_pool = time.time()
+            for _tg in _pools:
+                POOL_M[_tg] = pool_mask(_tg, dates, cols)
+            _sz = ', '.join(f"{t}:{int(POOL_M[t].sum())}格" for t in _pools)
+            _gate_txt = ((f"**入库门槛: {'任一' if _pool_gate_mode == 'any' else '全部'}池 "
+                          f"Calmar > {_min_pool_calmar:g}"
+                          + ("　**或**　全A 口径(calmar>%.2f & sharpe>%.2f & 分段)**"
+                             % (args.min_calmar, _min_sharpe) if _pool_gate_or_all
+                             else "**（与全A 口径 AND）") )
+                         if _pool_gate_on else "仅记录不设门槛(默认)")
+            print(f"  [池指标] 已启用 池={_pools} (PIT掩码 {_sz}; "
+                  f"用时 {time.time() - _t_pool:.0f}s) -> {POOL_OBS}; {_gate_txt}")
+        except Exception as e:
+            print(f"  [池指标] [!] 掩码构建失败 -> 本代跳过池指标: {type(e).__name__}: {e}")
+            POOL_M = {}
+    return (POOL_M, _lp, _t_l2, _tg, e, top)
+
+
+def _dump_strip_detail(_strip_style, e, strip_rows):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: 剥风格明细落盘(2026-09-12, --strip_style; 独立文件, 不进 archive 表头)
+    """
+    if _strip_style and strip_rows:
+        try:
+            _sd = pd.DataFrame(strip_rows)
+            # ★ schema-aware 追加(2026-09-13, §8.30): 加列时会**重写并救回旧行**, 不再产生混合宽度
+            _st, _sn = append_csv_schema_safe(STRIP_OBS, _sd)
+            _n_pos = int((_sd['strip_ann_ex'] > 0).sum())
+            print(f"已存 {STRIP_OBS} ({_st}, 本代 {len(_sd)} 条 L2 候选; "
+                  f"剥风格后超额仍为正 {_n_pos}/{len(_sd)})")
+        except Exception as e:
+            print(f"  [剥风格] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
+    return e
+
+
+def _dump_pool_obs(POOL_M, _pools, args, e, fail_lib, nd, pool_rows, r_, rows, top):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: 池内指标落盘(2026-09-12, --pool_obs; **长表**, 独立文件)
+    """
+    if POOL_M and pool_rows:
+        try:
+            _pdd = pd.DataFrame(pool_rows)
+            # ★ schema-aware 追加(2026-09-13, §8.30): 见 append_csv_schema_safe 的 docstring
+            _pst, _psn = append_csv_schema_safe(POOL_OBS, _pdd)
+            if 'rewritten' in _pst:
+                print(f"  [池指标] schema 变化 -> 已重写 {os.path.basename(POOL_OBS)}: {_pst}")
+            _n_cand = len(_pdd) // max(len(_pools), 1)
+            _msg = ', '.join(
+                f"{t}: 超额>0 {int((_pdd.loc[_pdd['pool'] == t, 'ann_ex'] > 0).sum())}"
+                f"/{int((_pdd['pool'] == t).sum())}" for t in _pools)
+            print(f"已存 {POOL_OBS} (追加, 本代 {len(_pdd)} 行 = {_n_cand} 候选 x "
+                  f"{len(_pools)} 池; 池内超额>0 -> {_msg})")
+        except Exception as e:
+            print(f"  [池指标] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
+    res = pd.DataFrame(rows)
+    # 失败模式库: L2 费后结果落地成败(中金: 失败表达式写入失败库, 生成阶段排除)
+    top_node = {str(r['node']): r['node'] for _, r in top.iterrows()}
+    for _, r_ in res.iterrows():
+        nd = top_node.get(r_['expr'])
+        if nd is not None:
+            flib_mark(fail_lib, nd, args.gen, bool(r_['passed']),
+                      '' if r_['passed'] else 'l2')
+    if len(res):
+        # 逐代累积流水(带 gen/cat/leaf 列): 文件缺失/为空时写表头, 其后追加
+        # —— 每代 L2 明细永久留档(gen16 前旧快照已归 docs/history/loop_archive.legacy_pre_gen16.csv)
+        res.insert(0, 'gen', args.gen)
+        # ★ schema-aware 追加(2026-09-13, §8.44): 原先是"只判文件有无/为空"决定写不写表头,
+        #   而 §8.34 给本表加了 `max_ex_corr`(第 17 列) ⇒ `loop_archive_300/500.csv` 变成
+        #   「16列旧行 + 17列新行」混合宽度 ⇒ `pd.read_csv` 报
+        #   `Expected 16 fields in line 165, saw 17`。**同一个坑的第三处**
+        #   (前两处: loop_pool_obs_* / loop_strip_style_*, 见 `tools/fix_csv_schema.py`)。
+        _ast, _asn = append_csv_schema_safe(ARCHIVE, res)
+        if 'rewritten' in _ast:
+            print(f"  [流水] schema 变化 -> 已重写 {os.path.basename(ARCHIVE)}: {_ast}")
+        print(f"\n已存 {ARCHIVE} ({_ast}, 本代 {len(res)} 条)")
+        p = res[res['passed']]
+        print(f"L2 通过 {len(p)}/{len(res)} 个")
+        if len(p):
+            print(p.round(4).to_string(index=False))
+    return (e, nd, res)
+
+
+def _critic_diagnose(args, fam_blocked, l1, pool_rows, res, seg_ok_list):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: B角: 诊断本代 + 给出下一代策略 + 写日志
+    """
+    import loop_critic as critic
+    # 给 critic 的副本附 seg_ok 列(不进 archive, 避免破坏累积流水表头)
+    res_c = res.copy() if len(res) else res
+    if len(seg_ok_list) == len(res_c):
+        res_c['seg_ok'] = seg_ok_list
+    # ★ 传 gate + pool_map（2026-09-14, §1.1 修法①②）：代末用**本代刚算出的**池结果，
+    #   这样 `fail_pool_calmar` 反映的是"刚才那批候选离池门槛差多远"（真实卡点）。
+    diag = critic.diagnose(l1, res_c if len(res_c) else None, args.gen,
+                           gate=_gate_of(args), pool_map=_pool_best(pool_rows))
+    diag['fam_blocked'] = fam_blocked
+    return (critic, diag, res_c)
+
+
+def _agg_style_diag(_k, cfg, critic, diag, e, l1, obs_df, r, res):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: 风格暴露诊断聚合(2026-09-11, --style_obs): 落盘已在 L1 求值后完成, 此处只做分组聚合
+    """
+    if obs_df is not None and len(obs_df):
+        try:
+            _grp = {'st_l1_': set(l1['expr']) if len(l1) else set()}
+            if 'expr' in getattr(res, 'columns', []):     # --l2=0 时 res 无列, 只报 L1 组
+                _grp['st_l2_'] = set(res['expr'])
+                if 'passed' in res.columns:
+                    _grp['st_ok_'] = set(res.loc[res['passed'], 'expr'])
+            for _tag, _es in _grp.items():
+                _df = obs_df[obs_df['expr'].isin(_es)]
+                if not len(_df):
+                    continue
+                for _k in STYLE_KEYS:
+                    diag[_tag + _k] = float(np.nanmedian(np.abs(_df['st_' + _k])))
+        except Exception as e:
+            print(f"  [风格观测] 聚合失败(不影响主流程): {type(e).__name__}: {e}")
+    next_cfg, reasons = critic.suggest(diag, cfg)
+    print("\n[B角建议] 下一代:")
+    for r in reasons:
+        print("  -", r)
+    critic.report(diag, next_cfg, reasons, JOURNAL)
+    print(f"诊断已写入 {JOURNAL}")
+    return (next_cfg, reasons)
+
+
+def _log_llm_hint(args, jury_lines, llm_hyp, llm_on, n_jury_kill, n_jury_rev, n_llm_call, n_llm_hit, n_llm_parse):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: 生成侧 LLM 引导留痕(独立引用体小节, 与 ai_review 块同风格)
+    """
+    if llm_on and n_llm_call:
+        llm_journal_block(args.gen, n_llm_call, n_llm_parse, n_llm_hit,
+                          llm_hyp, JOURNAL)
+        print(f"LLM 引导小结已写入 {JOURNAL}")
+    if n_jury_rev:
+        llm_jury_block(args.gen, n_jury_rev, n_jury_kill, jury_lines, JOURNAL)
+        print(f"LLM 候选审查小结已写入 {JOURNAL}")
+
+
+def _critic_llm_review(_v, args, critic, diag, l1, next_cfg, reasons, res_c):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: B角 LLM 审查(DeepSeek, --ai_critic auto/on/off, 默认auto=有key即启用)
+    """
+    ai = getattr(args, 'ai_critic', 'auto')
+    if ai != 'off':
+        _airv = critic.ai_review(diag, l1, res_c if len(res_c) else None, args.gen,
+                                 JOURNAL, reasons=reasons, sug=next_cfg, force=(ai == 'on'))
+        # ★★★ 把 LLM 的否决**真正交回决策链**（2026-09-14, §1.1 修法④）——
+        #   此前 `ai_review()` 的返回值**只用于打印、从不回写 `sug`**
+        #   ⇒ 实测 **85/98 次**独立、跨池一致的反驳（"深度加深会加剧过拟合"）**全部被浪费**。
+        #   现在写进 `next_cfg['_veto']`（键=**目标代**），下一代 `suggest()` 会**真的跳过**该动作；
+        #   连续否决达 `critic.LLM_MUTE_N` 次则升级为**永久哨兵**（用户原话:「让它永久闭嘴」）。
+        _vt = (_airv or {}).get('veto') or []
+        if _vt:
+            _tgt = args.gen + 1
+            _v = next_cfg.setdefault('_veto', {})
+            for _aid in _vt:
+                _g = _v.setdefault(_aid, [])
+                if not isinstance(_g, list):        # 防御: 旧 state 里的脏数据
+                    _g = _v[_aid] = []
+                if critic.MUTE not in _g and _tgt not in _g:
+                    _g.append(_tgt)
+            print("  [否决] 第 {} 代将跳过: {}".format(
+                _tgt, ', '.join('{}（{}）'.format(a, critic.RULE_NAMES.get(a, '?')) for a in _vt)))
+    return _v
+
+
+def _save_state(_dup_ex_corr, _e, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, f, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: 保存状态
+    """
+    new_seeds = list(l1.head(30)['node'])
+    if len(res) and res['passed'].any():
+        new_seeds = list(l1.head(20)['node'])
+    # 入库因子库 bank: 本代通过者入列(node级去重), 供下代 decorr 对比
+    # 对齐中金: ①冻结骨架禁入 ②同结构参数变体上限有限(bank_skel_max) 防窗口变体堆叠
+    if len(res) and res['passed'].any():
+        by_expr = {str(r['node']): r['node'] for _, r in top.iterrows()}
+        skel_cnt = skeleton_freq(bank)
+        fset = set(frozen) if args.fsa_th > 0 else set()
+        n_bank_old = len(bank)
+        lib_added = []
+        for expr in res.loc[res['passed'], 'expr'].tolist():
+            nd = by_expr.get(expr)
+            if nd is None or any(str(x) == expr for x in bank):
+                continue
+            s = skeleton(nd)
+            if s in fset:
+                print(f"  [FSA] 通过但不入库: 骨架已冻结 -> {s}")
+                continue
+            if skel_cnt.get(s, 0) >= args.bank_skel_max:
+                print(f"  [FSA] 通过但不入库: 骨架 {s} 已有 {skel_cnt.get(s,0)} "
+                      f"个(上限{args.bank_skel_max})")
+                continue
+            # ★ 收益流去重(2026-09-13, roadmap §8.34, --dup_ex_corr): **止血**闸门。
+            #   bank_ex 会在本循环里随入库增长 ⇒ 同时防"与历史库重复"与"同代内近重复"。
+            #   ⚠ 拿不到收益流(旧 state / 回测失败)则**放行不误杀**(与本项目其它闸门同一铁律)。
+            _ex_i = _ex_by_expr.get(expr)
+            if _dup_ex_corr > 0 and _ex_i is not None:
+                _mc2, _mw2 = ex_max_corr(_ex_i, _cmp_lib(bank_ex, bank_ex_ext))   # ★ 含外部池库(§1.8)
+                if _mc2 is not None and _mc2 > _dup_ex_corr:
+                    _n_dup_ex += 1
+                    print(f"  [收益流去重] 不入库: 与库内收益流相关 {_mc2:.3f} > "
+                          f"{_dup_ex_corr:.2f}（对方 {str(_mw2)[:66]}）")
+                    continue
+            bank.append(nd)
+            skel_cnt[s] = skel_cnt.get(s, 0) + 1
+            lib_added.append(expr)
+            if _ex_i is not None:
+                bank_ex[expr] = _ex_i          # 入库 -> 其收益流进对照集
+        if _n_dup_ex:
+            print(f"  [收益流去重] 本代拦下 {_n_dup_ex} 个「与库内赚同一块钱」的因子"
+                  f"(阈值 |corr|>{_dup_ex_corr:.2f})")
+        if len(bank) > n_bank_old:
+            print(f"  入库 {len(bank)-n_bank_old} 个新因子, 累计 {len(bank)} 个")
+            # 入库文档自动同步(factor_library.md): 只增不改, 失败不影响入库
+            # ★ 带池标签(§8.42): 入库条目里写明"适用哪个池"
+            _lib_sync(args.gen, res, len(bank), lib_added, by_expr,
+                      pool_tags=_tag_by_expr, strip_grades=_strip_by_expr)
+            # ★ 剥风格档汇总（2026-09-14, §1.9）：**"纯风格"必须吼出来** —— 它是"全A 口径漂亮
+            #   但剥掉 lncap+lnamt 后转负"的因子，入库后**指数增强不可用**，不吼会被忽略。
+            if _strip_by_expr:
+                _sc_cnt = {}
+                for _e in lib_added:
+                    _v = _strip_by_expr.get(_e)
+                    if _v:
+                        _sc_cnt[_v[0]] = _sc_cnt.get(_v[0], 0) + 1
+                if _sc_cnt:
+                    print("  [剥风格档] 本代入库因子: " + ", ".join(
+                        "{}x{}".format(k, v) for k, v in sorted(_sc_cnt.items())))
+                _n_c = sum(v for k, v in _sc_cnt.items() if k == 'C')
+                if _n_c:
+                    print("  [!][剥风格档] **{} 个是「纯风格」**（剥掉 lncap+lnamt 后超额/Calmar 转负）"
+                          "⇒ 指数增强不可用 ⇒ 检查 `--min_strip_calmar` 是否已设".format(_n_c))
+            if _tag_by_expr:
+                _tg_cnt = {}
+                for _e in lib_added:
+                    _t = _tag_by_expr.get(_e)
+                    if _t:
+                        _tg_cnt[_t] = _tg_cnt.get(_t, 0) + 1
+                if _tg_cnt:
+                    print("  [池标签] 本代入库因子: " + ", ".join(
+                        "{}x{}".format(k, v) for k, v in sorted(_tg_cnt.items())))
+    for k, v in DEFAULT_CFG.items():
+        next_cfg.setdefault(k, v)      # critic.suggest 重建dict可能丢键 -> 兜底补齐
+    next_cfg.setdefault('bank_skel_max', args.bank_skel_max)
+    fail_lib = fail_lib_cleanup(fail_lib, args.gen)
+    # ★ 原子写(2026-09-12 加固): 先写 .tmp 再 os.replace 原子替换。
+    #   原因: 原 `open(STATE,'wb')` 会**立刻把旧 state 截断成 0 字节**, 一旦 dump 中途异常
+    #   (或进程被杀), 就得到一个 0 字节坏状态 —— 而 journal 已写了"第 N 代完成"
+    #   ⇒ 下次续跑会拿坏状态接代数, 静默错乱。实录见 roadmap §8.23。
+    _tmp = STATE + '.tmp'
+    with open(_tmp, 'wb') as f:
+        pickle.dump(dict(seeds=new_seeds[:60], fsa=fsa,
+                         # ★ 入库库**全量保存**(2026-09-12 去掉 `bank[-30:]` 上限, 用户选定):
+                         #  截断会丢掉最老的入库因子 -> ①--decorr 不再对照它们 ->
+                         #  引擎可能重新发现旧因子("打转"的隐藏成因); ②引擎 bank 与
+                         #  docs/factor_library.md(append-only) 数量不一致(实录 30 vs 32)。
+                         #  代价: --decorr 每候选要跟整库逐个比, 成本 O(len(bank)) ->
+                         #  若库显著增长, 见去相关段的计时输出(实测 30 库/432 候选 = 276s)。
+                         bank=bank,
+                         # ★ 收益流库(§8.34): {表达式: 每期费后超额 Series}。
+                         #   体积很小(每条 ~400 期 float64 ≈ 3KB; 100 个因子 ≈ 0.3MB)。
+                         bank_ex=bank_ex,
+                         frozen=frozen,
+                         fail_lib=fail_lib,
+                         n_tested=n_tested_prev + len(cands),
+                         last_l1=l1, last_l2=res if len(res) else None,
+                        # ★ 池口径传感器（2026-09-14, §1.1 修法②）: {expr: 最好的池 calmar}。
+                        #   代首"重审上一代"时必须用它才能算出**池口径**失败率 ——
+                        #   `last_l2` 只有全A 口径，回答不了"离池门槛差多远"。
+                        #   体积很小（每代候选数个小 float），可忽略。
+                        last_pool_map=_pool_best(pool_rows),
+                         cfg=next_cfg), f)
+    os.replace(_tmp, STATE)        # 原子替换: 要么全新状态, 要么保持旧状态, 不会出现半成品
+    # ⚠ 日志口径: 打印的必须是**实际持久化**的数量(此前截断时打内存值 -> 与落盘不一致)
+    print(f"\n保存状态: 种子 {len(new_seeds[:60])} 个, 入库因子 {len(bank)} 个(全量), "
+          f"收益流库 {len(bank_ex)} 条, 冻结骨架 {len(frozen)} 个, 失败库 {len(fail_lib)} 条, "
+          f"耗时 {time.time()-t0:.0f}s")
+
+
 def run(args):
     t0 = time.time()
     rng = random.Random(args.seed)
@@ -1318,110 +1848,25 @@ def run(args):
                   "（外部池库不算本轨道的产出）")
 
     # ---- B角: 先审查上一代, 再据此定本代搜索策略 ----
-    import loop_critic as critic
-    if prev_l1 is not None and len(prev_l1):
-        # ★ 传 gate + pool_map（2026-09-14, §1.1 修法①②）：让 B角 的传感器与**实际生效的门槛**对账，
-        #   并在池内模式下改看**池口径**（那才是真实卡点）。代首用上一代存的 `last_pool_map`。
-        diag = critic.diagnose(prev_l1, prev_l2, args.gen - 1,
-                               gate=_gate_of(args), pool_map=_prev_pool_map)
-        cfg, reasons = critic.suggest(diag, cfg)
-        print("\n[B角建议] 本代搜索策略:")
-        for r in reasons:
-            print("  -", r)
-    else:
-        print("\n[B角] 首代, 使用默认策略")
+    cfg, critic, diag, r, reasons = _critic_review_prev(_prev_pool_map, args, cfg, prev_l1, prev_l2)
     # ---- 结构族黑名单(QuantaAlpha 正交思想, gen31): 上代 L1 霸榜模板族 ----
     # 上代同模板族(叶子身份无关指纹)占比 >= FAM_BLOCK_THR -> 本代生成端禁产(硬闸换血);
     # top2 模板文本另注入 A角 LLM 提示词(软约束)。根治"同族霸榜 -> 0 通过"空转。
-    block_fams, fam_black_txt = set(), ''
-    if prev_l1 is not None and len(prev_l1):
-        fam_cnt = {}
-        for nd in list(prev_l1['node']):
-            f = root_fam(nd)
-            fam_cnt[f] = fam_cnt.get(f, 0) + 1
-        n_pv = len(prev_l1)
-        tops = sorted(fam_cnt.items(), key=lambda x: -x[1])
-        if args.fam_block_thr > 0 and tops and tops[0][1] / n_pv >= args.fam_block_thr:
-            block_fams = {tops[0][0]}
-        fam_black_txt = '；'.join(f'「{f}」({c}/{n_pv}条)' for f, c in tops[:2])
-    if block_fams:
-        print(f"  [族黑名单] 上代 L1 同模板族占比>={args.fam_block_thr:.0%} -> "
-              f"本代生成端禁产该模板族, 强制结构换血")
-    # 五维配比护栏(与 critic.suggest 出口同源): 即使旧state cfg 漂移且本轮无规则触发
-    # (如无上一代), 本代实际生效 mix 也强制回到中金规格内(变异/交叉≥10%、槽位15/20/15)
-    cfg['mix'] = critic.guard_mix(cfg.get('mix'))
-    print(f"  五维配比 mix={[round(x, 3) for x in cfg['mix']]} "
-          f"(变异/交叉自适应≥{critic.MIX_MIN:.0%}, 扰动/引导/随机=15/20/15)")
-    # B角建议落地(命令行显式指定则优先)
-    if args.decorr < 0:
-        args.decorr = cfg.get('decorr', 0.0)
-    if args.fsa_th < 0:
-        args.fsa_th = cfg.get('fsa_th', 0.0)   # 0=关闭FSA冻结
-    args.min_stab = cfg.get('min_stab', args.min_stab)
-    args.bank_skel_max = cfg.get('bank_skel_max', args.bank_skel_max)
-    print(f"  本代参数: min_stab={args.min_stab:.2f}  decorr={args.decorr:.2f}  "
-          f"fsa_th={args.fsa_th:.2f}  bank同骨架上限={args.bank_skel_max}  "
-          f"depth={cfg['depth']}")
-    # ★ 亲本策略必须**可审计**（2026-09-14, §1.3-C）：它改变的是"**从哪些亲本出发**"，
-    #   一旦候选质量变化，没有这行就**无法归因**是策略换了还是别的原因。
-    #   （写进**本代日志** + LLM 上下文；**不改 journal 格式** —— 那会打断下游解析）
-    print(f"  本代亲本策略: parent_sel={getattr(args, 'parent_sel', 'uniform')}"
-          + (f"(top_pct={getattr(args, 'parent_top_pct', 0.30):.2f})"
-             if getattr(args, 'parent_sel', 'uniform') == 'top_percent_plus_random' else '')
-          + f"  种子池={len(seeds)}个(上一代L1头部, 按score降序)")
-    if frozen:
-        print(f"  [FSA] 本代生效冻结骨架 {len(frozen)} 个(生成时禁止复用)")
+    block_fams, f, fam_black_txt, nd = _build_fam_blacklist(args, cfg, critic, f, frozen, prev_l1, seeds)
 
     # ---- 失败模式库: 载入后按滚动窗口算出本代应排除的'坏骨架' ----
-    if args.dim_review < 0:
-        args.dim_review = 1                      # 跨量纲审查默认开启
-    # 命令行显式指定则优先, 否则用 B角cfg(默认开: fail_rate=0.6, min_fail=3)
-    if args.fail_rate < 0:
-        args.fail_rate = cfg.get('fail_rate', 0.6)
-    if args.min_fail <= 0:
-        args.min_fail = cfg.get('min_fail', 3)
-    bad = bad_skels(fail_lib, args.gen, min_fail=args.min_fail,
-                    rate=args.fail_rate) if args.fail_rate > 0 else set()
-    if bad:
-        print(f"  [失败库] 本代排除坏骨架 {len(bad)} 个"
-              f"(失败>={args.min_fail}次 全败率>={args.fail_rate:.0%})")
+    bad = _load_fail_lib(args, cfg, fail_lib)
 
     # ---- 随机探索: 数据驱动特征分布引导(中金"随机探索15%=数据驱动分布, 防局部最优") ----
     # 证据分布 = 历代入库因子 + 上一代 L1 通过候选 的叶子/算子族频率;
     # 随机位按该分布抽样(探索有苗头方向的新组合), 无证据时退化为 cfg 权重(均匀)。
-    ev_nodes = list(bank) + (list(prev_l1['node'])
-                             if prev_l1 is not None and len(prev_l1) else [])
-    cfg_r = dict(cfg)
-    prof = data_profile(ev_nodes)
-    if prof:
-        cfg_r['leaf_w'] = _mix_weights(cfg.get('leaf_w', {}), prof['leaf'], LEAVES)
-        cfg_r['op_bias'] = _mix_weights(cfg.get('op_bias', {}), prof['op'],
-                                        list(UNARY.keys()) + list(BINARY.keys()),
-                                        family=True)
-        print(f"  [随机探索] 数据驱动特征分布: 叶子证据{len(prof['leaf'])}种 / "
-              f"算子族{len(prof['op'])}种 -> 随机位按证据加权探索")
-    else:
-        print("  [随机探索] 无历史证据(首代) -> 随机位退化均匀")
+    cfg_r = _rand_explore(bank, cfg, prev_l1)
 
     # ---- 生成候选(按B角给的五维配比) ----
     # ★gen13修复: cut为累积上界, 判重/分支原来写成 cut[i] 相加 -> 数值>1恒真,
     # 使 r<cut0+cut1+cut2 永远成立: guided(引导族)与rand(纯随机)从不会被执行,
     # 代代只在seeds内打转 -> 重复爆炸。 现改回 r<cut[2](seed三操作) / r<cut[3](引导) / 否则随机。
-    m = cfg['mix']
-    cut = [m[0], m[0] + m[1], m[0] + m[1] + m[2], m[0] + m[1] + m[2] + m[3]]
-    # ★ 亲本选择策略（2026-09-14, §1.3-C）—— `uniform` 是默认 = **现状行为不变**
-    _psel = getattr(args, 'parent_sel', None) or 'uniform'
-    if _psel not in PARENT_SEL_MODES:
-        print(f"  [亲本] [!] 未知 --parent_sel={_psel!r} -> 回退 uniform（可选: "
-              f"{'/'.join(PARENT_SEL_MODES)}）")
-        _psel = 'uniform'
-    _ptop = float(getattr(args, 'parent_top_pct', 0.30) or 0.30)
-    if _psel != 'uniform':
-        print(f"  [亲本] 策略={_psel}"
-              + (f"（top {_ptop:.0%} 保底 + 余量随机；种子池 {len(seeds)} 个"
-                 f" ⇒ top 段 {max(1, int(len(seeds) * _ptop))} 个）"
-                 if _psel == 'top_percent_plus_random' else "（纯取第 1 名）")
-              + " —— ⚠ 与 `uniform` 是**不同搜索行为**，跨代对比时勿混用")
+    _psel, _ptop, cut, m = _gen_candidates(args, cfg, seeds)
     # ---- 生成侧 LLM 引导(A角子代理, 中金"生成预算~20%语义引导"): ----
     # 引导位 r∈[cut2,cut3) 的候选来源 = LLM 解析池; 池空且调用未超限则按需补一次;
     # 无 key/超时/解析失败/超限 -> 回退本地 guided_expr。LLM 候选与规则候选走
@@ -1530,15 +1975,7 @@ def run(args):
         return
 
     # ---- L1 批量 IC(★分批处理 + 子面板 + 跨批LRU) ----
-    Bsub = base['B_sub']
-    Usub = U[np.ix_(L1_ROWS, L1_COLS)]
-    if L1_POOL_MASK is not None:
-        # ★池内挖掘(§8.19): L1 的 IC = **池内 IC**。这一步是"三池并行"起作用的核心 ——
-        #   目标函数里不再有全A 的小盘/低流动性溢价, 风格暴露因子在 L1 就挣不到分。
-        Usub = Usub & L1_POOL_MASK
-    Rsub = fwd_ret[np.ix_(L1_ROWS, L1_COLS)]
-    print(f"L1 子面板 {len(L1_ROWS)}日 x {len(L1_COLS)}股 "
-          f"(全量 {U.shape[0]}x{U.shape[1]}) -> 数据量约 1/{U.size/max(Usub.size,1):.0f}")
+    Bsub, Rsub, Usub = _run_l1(U, base, fwd_ret)
     # ---- 形状量(十档单调性)所需的调仓日抽样视图: 只算一次 ----
     # rank_rows 逐行独立 => rank_rows(F)[::FWD] ≡ rank_rows(F[::FWD])，抽样与不抽样等价(更快)
     Rsub_s, Usub_s = Rsub[::FWD], Usub[::FWD]
@@ -1923,87 +2360,20 @@ def run(args):
     # 每模板族最多放 fam_quota 条进 L2/种子池(保结构多样性), FSA/下代种子池因此天然跨族。
     # gen51: 族指纹增补"单叶变换"维度(floor_sole_leaf) -> max(<某叶单目变换>, <地板>) 的
     # "同叶不同壳"代理候选归为同族, 由配额拦重复(防 F23 型"leverage 套壳+地板"反复重发现)。
-    fam_blocked = 0
-    if args.fam_quota > 0 and len(l1):
-        n_pre = len(l1)
-        l1, nfam, n_blocked = fam_quota_rows(l1, quota=args.fam_quota,
-                                             use_sole=args.fam_sole)
-        fam_blocked = n_blocked
-        if n_blocked:
-            print(f"  [族配额] 模板族 {nfam} 个(含单叶变换维度={'开' if args.fam_sole else '关'})"
-                  f" -> 结构冗余拦 {n_blocked}/{n_pre} (剩 {len(l1)}, 每族<={args.fam_quota})")
+    fam_blocked, l1 = _apply_fam_quota(args, l1)
 
     # ---- FSA 骨架统计(对齐中金: 抽象因子结构/剥离窗口参数) ----
     # 观察样本 = 本代L1通过者 + 前50候选; 统计对象 = 非叶子结构骨架(剥掉窗口数字)
-    fsa['v2'] = True
-    for nd in list(l1['node']) + [c for c in cands[:50]]:
-        for s in subtree_skels(nd):
-            fsa[s] = fsa.get(s, 0) + 1
-    # 冻结判定(滚动口径, 对齐中金"定期扫描>15%即禁复用"):
-    #   ①本代L1候选中覆盖占比 >= fsa_th 的骨架 -> 新冻结
-    #   ②上代冻结骨架若本代已完全不再出现 -> 自动解冻(防冻结集永久膨胀、搜索空间缩死)
-    if args.fsa_th > 0 and len(l1):
-        thr = max(2, int(round(len(l1) * args.fsa_th)))
-        cov = {}
-        for _, r in l1.iterrows():
-            for s in subtree_skels(r['node']):
-                cov[s] = cov.get(s, 0) + 1
-        old = set(frozen)
-        new_frozen = sorted(s for s, c in cov.items() if c >= thr)
-        frozen = sorted((old & set(cov)) | set(new_frozen))
-        if new_frozen or len(old - set(frozen)):
-            print(f"  [FSA] 覆盖>={thr}/{len(l1)}候选({args.fsa_th:.0%}): "
-                  f"新冻结{len(new_frozen)} 解冻{len(old - set(frozen))} "
-                  f"冻结中{len(frozen)}")
-            for s in new_frozen[:6]:
-                print(f"     冻结骨架: {s}")
+    frozen, nd, r, s = _fsa_stats(args, cands, frozen, fsa, l1, nd, r, s)
 
     # ---- 中金【审查】环节: B角候选级 LLM 精判(硬滤后抽5深判, 与生成侧隔离防自证) ----
     # 硬规则已在上方先滤(IC/稳定/去相关/去重/跨量纲/FSA) -> 剩余候选随机抽 --jury_n 个,
     # 由审查侧 Sub-agent LLM(loop_llm.jury_verdict)判经济含义/过拟合边界/已知族嫌疑,
     # verdict=KILL 者剔除出 L2 费后回测; 无 key/调用失败一律放行不误杀(无人值守铁律)。
-    kills_j, n_jury_rev, n_jury_kill, jury_lines = set(), 0, 0, []
-    jury_on = getattr(args, 'ai_jury', 'auto')
-    if jury_on != 'off' and len(l1):
-        import loop_llm
-        if not loop_llm.api_key():
-            if jury_on == 'on':
-                print("  [LLM审查] --ai_jury=on 但未找到 key -> 跳过(纯硬规则审查)")
-        else:
-            jmodel = getattr(args, 'ai_jury_model', None) or loop_llm.DEFAULT_MODEL
-            kills_j, n_jury_rev, n_jury_kill, jury_lines = \
-                llm_jury(args, rng, l1, model=jmodel)
-            if kills_j:
-                l1 = l1[~l1['expr'].isin(kills_j)]
-                print(f"  [LLM审查] KILL {len(kills_j)} 个候选剔除出 L2, "
-                      f"剩余 {len(l1)} 个进入费后回测")
+    jury_lines, l1, n_jury_kill, n_jury_rev = _jury_deep_review(args, l1, loop_llm, rng)
 
     # ---- L2 费后精筛 ----
-    top = l1.head(args.l2)
-    _t_l2 = time.time()
-    print(f"\nL2 费后精筛 {len(top)} 个 ...")
-    # 池成员 PIT 掩码(2026-09-12, --pool_obs; 见 docs/factor_roadmap.md §8.9 B+B′)
-    #  ★ 建在**全量面板**上(池股天然都在, 面板覆盖率 99.3%/99.8%) ⇒ **不需要扩 L1 子面板列**。
-    #   (L1 层池感知才需要"随机2000 ∪ 池union2701 ≈ 3700 列 = +85% 成本", 那是后续的事。)
-    POOL_M = {}
-    import loop_pools as _lp          # ★ 池标签派生用(§8.42); 本地 import 避免与顶层名冲突
-    if _pool_obs:
-        try:
-            _t_pool = time.time()
-            for _tg in _pools:
-                POOL_M[_tg] = pool_mask(_tg, dates, cols)
-            _sz = ', '.join(f"{t}:{int(POOL_M[t].sum())}格" for t in _pools)
-            _gate_txt = ((f"**入库门槛: {'任一' if _pool_gate_mode == 'any' else '全部'}池 "
-                          f"Calmar > {_min_pool_calmar:g}"
-                          + ("　**或**　全A 口径(calmar>%.2f & sharpe>%.2f & 分段)**"
-                             % (args.min_calmar, _min_sharpe) if _pool_gate_or_all
-                             else "**（与全A 口径 AND）") )
-                         if _pool_gate_on else "仅记录不设门槛(默认)")
-            print(f"  [池指标] 已启用 池={_pools} (PIT掩码 {_sz}; "
-                  f"用时 {time.time() - _t_pool:.0f}s) -> {POOL_OBS}; {_gate_txt}")
-        except Exception as e:
-            print(f"  [池指标] [!] 掩码构建失败 -> 本代跳过池指标: {type(e).__name__}: {e}")
-            POOL_M = {}
+    POOL_M, _lp, _t_l2, _tg, e, top = _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool_gate_or_all, _pool_obs, _pools, args, cols, dates, e, l1)
     # ---- 市值面板(2026-09-13, roadmap §8.28): 供"**市值加权基准**"口径 ----
     #  为什么: 组合腿是 Top10% **等权**; 基准腿现状是"池内**等权**" ⇒ 两腿同为等权 ⇒ 规模中性
     #   ⇒ 差额 = 纯选股 alpha。而**真实指数**(沪深300)是**自由流通市值加权** ⇒ 若用它当基准,
@@ -2267,237 +2637,27 @@ def run(args):
         # 门槛静默失效是"无人值守"最危险的失败模式 -> 必须上报(拿不到池结果就放行)
         print(f"  [池门槛] [!] {n_pool_nogate} 个候选无池结果 -> 已放行(未参与门槛判定)")
     # ---- 剥风格明细落盘(2026-09-12, --strip_style; 独立文件, 不进 archive 表头) ----
-    if _strip_style and strip_rows:
-        try:
-            _sd = pd.DataFrame(strip_rows)
-            # ★ schema-aware 追加(2026-09-13, §8.30): 加列时会**重写并救回旧行**, 不再产生混合宽度
-            _st, _sn = append_csv_schema_safe(STRIP_OBS, _sd)
-            _n_pos = int((_sd['strip_ann_ex'] > 0).sum())
-            print(f"已存 {STRIP_OBS} ({_st}, 本代 {len(_sd)} 条 L2 候选; "
-                  f"剥风格后超额仍为正 {_n_pos}/{len(_sd)})")
-        except Exception as e:
-            print(f"  [剥风格] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
+    e = _dump_strip_detail(_strip_style, e, strip_rows)
     # ---- 池内指标落盘(2026-09-12, --pool_obs; **长表**, 独立文件) ----
     #  为什么长表: 池集合由 --pools 决定, 宽表(ic_300/ic_500...)一旦换池集合就会
     #  在追加时表头错位(与 loop_archive.csv 同一个坑)。长表 = (gen,expr,pool) 三键, schema 恒定。
     #  `pool_tag`(300好用/300+500好用/全都好用/只有全A好用) 由**离线**派生(阈值可改后重算)。
-    if POOL_M and pool_rows:
-        try:
-            _pdd = pd.DataFrame(pool_rows)
-            # ★ schema-aware 追加(2026-09-13, §8.30): 见 append_csv_schema_safe 的 docstring
-            _pst, _psn = append_csv_schema_safe(POOL_OBS, _pdd)
-            if 'rewritten' in _pst:
-                print(f"  [池指标] schema 变化 -> 已重写 {os.path.basename(POOL_OBS)}: {_pst}")
-            _n_cand = len(_pdd) // max(len(_pools), 1)
-            _msg = ', '.join(
-                f"{t}: 超额>0 {int((_pdd.loc[_pdd['pool'] == t, 'ann_ex'] > 0).sum())}"
-                f"/{int((_pdd['pool'] == t).sum())}" for t in _pools)
-            print(f"已存 {POOL_OBS} (追加, 本代 {len(_pdd)} 行 = {_n_cand} 候选 x "
-                  f"{len(_pools)} 池; 池内超额>0 -> {_msg})")
-        except Exception as e:
-            print(f"  [池指标] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
-    res = pd.DataFrame(rows)
-    # 失败模式库: L2 费后结果落地成败(中金: 失败表达式写入失败库, 生成阶段排除)
-    top_node = {str(r['node']): r['node'] for _, r in top.iterrows()}
-    for _, r_ in res.iterrows():
-        nd = top_node.get(r_['expr'])
-        if nd is not None:
-            flib_mark(fail_lib, nd, args.gen, bool(r_['passed']),
-                      '' if r_['passed'] else 'l2')
-    if len(res):
-        # 逐代累积流水(带 gen/cat/leaf 列): 文件缺失/为空时写表头, 其后追加
-        # —— 每代 L2 明细永久留档(gen16 前旧快照已归 docs/history/loop_archive.legacy_pre_gen16.csv)
-        res.insert(0, 'gen', args.gen)
-        # ★ schema-aware 追加(2026-09-13, §8.44): 原先是"只判文件有无/为空"决定写不写表头,
-        #   而 §8.34 给本表加了 `max_ex_corr`(第 17 列) ⇒ `loop_archive_300/500.csv` 变成
-        #   「16列旧行 + 17列新行」混合宽度 ⇒ `pd.read_csv` 报
-        #   `Expected 16 fields in line 165, saw 17`。**同一个坑的第三处**
-        #   (前两处: loop_pool_obs_* / loop_strip_style_*, 见 `tools/fix_csv_schema.py`)。
-        _ast, _asn = append_csv_schema_safe(ARCHIVE, res)
-        if 'rewritten' in _ast:
-            print(f"  [流水] schema 变化 -> 已重写 {os.path.basename(ARCHIVE)}: {_ast}")
-        print(f"\n已存 {ARCHIVE} ({_ast}, 本代 {len(res)} 条)")
-        p = res[res['passed']]
-        print(f"L2 通过 {len(p)}/{len(res)} 个")
-        if len(p):
-            print(p.round(4).to_string(index=False))
+    e, nd, res = _dump_pool_obs(POOL_M, _pools, args, e, fail_lib, nd, pool_rows, r_, rows, top)
 
     # ---- B角: 诊断本代 + 给出下一代策略 + 写日志 ----
-    import loop_critic as critic
-    # 给 critic 的副本附 seg_ok 列(不进 archive, 避免破坏累积流水表头)
-    res_c = res.copy() if len(res) else res
-    if len(seg_ok_list) == len(res_c):
-        res_c['seg_ok'] = seg_ok_list
-    # ★ 传 gate + pool_map（2026-09-14, §1.1 修法①②）：代末用**本代刚算出的**池结果，
-    #   这样 `fail_pool_calmar` 反映的是"刚才那批候选离池门槛差多远"（真实卡点）。
-    diag = critic.diagnose(l1, res_c if len(res_c) else None, args.gen,
-                           gate=_gate_of(args), pool_map=_pool_best(pool_rows))
-    diag['fam_blocked'] = fam_blocked
+    critic, diag, res_c = _critic_diagnose(args, fam_blocked, l1, pool_rows, res, seg_ok_list)
     # ---- 风格暴露诊断聚合(2026-09-11, --style_obs): 落盘已在 L1 求值后完成, 此处只做分组聚合 ----
     #  判读(见 docs/factor_roadmap.md §8.3/§8.4): new vs old 两组对比, 若 L2 候选/通过集的
     #  |lntr|、|lnamt| 中位显著上升 -> 确诊"新排序分在低换手/低成交额方向加倍下注"。
-    if obs_df is not None and len(obs_df):
-        try:
-            _grp = {'st_l1_': set(l1['expr']) if len(l1) else set()}
-            if 'expr' in getattr(res, 'columns', []):     # --l2=0 时 res 无列, 只报 L1 组
-                _grp['st_l2_'] = set(res['expr'])
-                if 'passed' in res.columns:
-                    _grp['st_ok_'] = set(res.loc[res['passed'], 'expr'])
-            for _tag, _es in _grp.items():
-                _df = obs_df[obs_df['expr'].isin(_es)]
-                if not len(_df):
-                    continue
-                for _k in STYLE_KEYS:
-                    diag[_tag + _k] = float(np.nanmedian(np.abs(_df['st_' + _k])))
-        except Exception as e:
-            print(f"  [风格观测] 聚合失败(不影响主流程): {type(e).__name__}: {e}")
-    next_cfg, reasons = critic.suggest(diag, cfg)
-    print("\n[B角建议] 下一代:")
-    for r in reasons:
-        print("  -", r)
-    critic.report(diag, next_cfg, reasons, JOURNAL)
-    print(f"诊断已写入 {JOURNAL}")
+    next_cfg, reasons = _agg_style_diag(_k, cfg, critic, diag, e, l1, obs_df, r, res)
     # ---- 生成侧 LLM 引导留痕(独立引用体小节, 与 ai_review 块同风格) ----
-    if llm_on and n_llm_call:
-        llm_journal_block(args.gen, n_llm_call, n_llm_parse, n_llm_hit,
-                          llm_hyp, JOURNAL)
-        print(f"LLM 引导小结已写入 {JOURNAL}")
-    if n_jury_rev:
-        llm_jury_block(args.gen, n_jury_rev, n_jury_kill, jury_lines, JOURNAL)
-        print(f"LLM 候选审查小结已写入 {JOURNAL}")
+    _log_llm_hint(args, jury_lines, llm_hyp, llm_on, n_jury_kill, n_jury_rev, n_llm_call, n_llm_hit, n_llm_parse)
 
     # ---- B角 LLM 审查(DeepSeek, --ai_critic auto/on/off, 默认auto=有key即启用) ----
-    ai = getattr(args, 'ai_critic', 'auto')
-    if ai != 'off':
-        _airv = critic.ai_review(diag, l1, res_c if len(res_c) else None, args.gen,
-                                 JOURNAL, reasons=reasons, sug=next_cfg, force=(ai == 'on'))
-        # ★★★ 把 LLM 的否决**真正交回决策链**（2026-09-14, §1.1 修法④）——
-        #   此前 `ai_review()` 的返回值**只用于打印、从不回写 `sug`**
-        #   ⇒ 实测 **85/98 次**独立、跨池一致的反驳（"深度加深会加剧过拟合"）**全部被浪费**。
-        #   现在写进 `next_cfg['_veto']`（键=**目标代**），下一代 `suggest()` 会**真的跳过**该动作；
-        #   连续否决达 `critic.LLM_MUTE_N` 次则升级为**永久哨兵**（用户原话:「让它永久闭嘴」）。
-        _vt = (_airv or {}).get('veto') or []
-        if _vt:
-            _tgt = args.gen + 1
-            _v = next_cfg.setdefault('_veto', {})
-            for _aid in _vt:
-                _g = _v.setdefault(_aid, [])
-                if not isinstance(_g, list):        # 防御: 旧 state 里的脏数据
-                    _g = _v[_aid] = []
-                if critic.MUTE not in _g and _tgt not in _g:
-                    _g.append(_tgt)
-            print("  [否决] 第 {} 代将跳过: {}".format(
-                _tgt, ', '.join('{}（{}）'.format(a, critic.RULE_NAMES.get(a, '?')) for a in _vt)))
+    _v = _critic_llm_review(_v, args, critic, diag, l1, next_cfg, reasons, res_c)
 
     # ---- 保存状态 ----
-    new_seeds = list(l1.head(30)['node'])
-    if len(res) and res['passed'].any():
-        new_seeds = list(l1.head(20)['node'])
-    # 入库因子库 bank: 本代通过者入列(node级去重), 供下代 decorr 对比
-    # 对齐中金: ①冻结骨架禁入 ②同结构参数变体上限有限(bank_skel_max) 防窗口变体堆叠
-    if len(res) and res['passed'].any():
-        by_expr = {str(r['node']): r['node'] for _, r in top.iterrows()}
-        skel_cnt = skeleton_freq(bank)
-        fset = set(frozen) if args.fsa_th > 0 else set()
-        n_bank_old = len(bank)
-        lib_added = []
-        for expr in res.loc[res['passed'], 'expr'].tolist():
-            nd = by_expr.get(expr)
-            if nd is None or any(str(x) == expr for x in bank):
-                continue
-            s = skeleton(nd)
-            if s in fset:
-                print(f"  [FSA] 通过但不入库: 骨架已冻结 -> {s}")
-                continue
-            if skel_cnt.get(s, 0) >= args.bank_skel_max:
-                print(f"  [FSA] 通过但不入库: 骨架 {s} 已有 {skel_cnt.get(s,0)} "
-                      f"个(上限{args.bank_skel_max})")
-                continue
-            # ★ 收益流去重(2026-09-13, roadmap §8.34, --dup_ex_corr): **止血**闸门。
-            #   bank_ex 会在本循环里随入库增长 ⇒ 同时防"与历史库重复"与"同代内近重复"。
-            #   ⚠ 拿不到收益流(旧 state / 回测失败)则**放行不误杀**(与本项目其它闸门同一铁律)。
-            _ex_i = _ex_by_expr.get(expr)
-            if _dup_ex_corr > 0 and _ex_i is not None:
-                _mc2, _mw2 = ex_max_corr(_ex_i, _cmp_lib(bank_ex, bank_ex_ext))   # ★ 含外部池库(§1.8)
-                if _mc2 is not None and _mc2 > _dup_ex_corr:
-                    _n_dup_ex += 1
-                    print(f"  [收益流去重] 不入库: 与库内收益流相关 {_mc2:.3f} > "
-                          f"{_dup_ex_corr:.2f}（对方 {str(_mw2)[:66]}）")
-                    continue
-            bank.append(nd)
-            skel_cnt[s] = skel_cnt.get(s, 0) + 1
-            lib_added.append(expr)
-            if _ex_i is not None:
-                bank_ex[expr] = _ex_i          # 入库 -> 其收益流进对照集
-        if _n_dup_ex:
-            print(f"  [收益流去重] 本代拦下 {_n_dup_ex} 个「与库内赚同一块钱」的因子"
-                  f"(阈值 |corr|>{_dup_ex_corr:.2f})")
-        if len(bank) > n_bank_old:
-            print(f"  入库 {len(bank)-n_bank_old} 个新因子, 累计 {len(bank)} 个")
-            # 入库文档自动同步(factor_library.md): 只增不改, 失败不影响入库
-            # ★ 带池标签(§8.42): 入库条目里写明"适用哪个池"
-            _lib_sync(args.gen, res, len(bank), lib_added, by_expr,
-                      pool_tags=_tag_by_expr, strip_grades=_strip_by_expr)
-            # ★ 剥风格档汇总（2026-09-14, §1.9）：**"纯风格"必须吼出来** —— 它是"全A 口径漂亮
-            #   但剥掉 lncap+lnamt 后转负"的因子，入库后**指数增强不可用**，不吼会被忽略。
-            if _strip_by_expr:
-                _sc_cnt = {}
-                for _e in lib_added:
-                    _v = _strip_by_expr.get(_e)
-                    if _v:
-                        _sc_cnt[_v[0]] = _sc_cnt.get(_v[0], 0) + 1
-                if _sc_cnt:
-                    print("  [剥风格档] 本代入库因子: " + ", ".join(
-                        "{}x{}".format(k, v) for k, v in sorted(_sc_cnt.items())))
-                _n_c = sum(v for k, v in _sc_cnt.items() if k == 'C')
-                if _n_c:
-                    print("  [!][剥风格档] **{} 个是「纯风格」**（剥掉 lncap+lnamt 后超额/Calmar 转负）"
-                          "⇒ 指数增强不可用 ⇒ 检查 `--min_strip_calmar` 是否已设".format(_n_c))
-            if _tag_by_expr:
-                _tg_cnt = {}
-                for _e in lib_added:
-                    _t = _tag_by_expr.get(_e)
-                    if _t:
-                        _tg_cnt[_t] = _tg_cnt.get(_t, 0) + 1
-                if _tg_cnt:
-                    print("  [池标签] 本代入库因子: " + ", ".join(
-                        "{}x{}".format(k, v) for k, v in sorted(_tg_cnt.items())))
-    for k, v in DEFAULT_CFG.items():
-        next_cfg.setdefault(k, v)      # critic.suggest 重建dict可能丢键 -> 兜底补齐
-    next_cfg.setdefault('bank_skel_max', args.bank_skel_max)
-    fail_lib = fail_lib_cleanup(fail_lib, args.gen)
-    # ★ 原子写(2026-09-12 加固): 先写 .tmp 再 os.replace 原子替换。
-    #   原因: 原 `open(STATE,'wb')` 会**立刻把旧 state 截断成 0 字节**, 一旦 dump 中途异常
-    #   (或进程被杀), 就得到一个 0 字节坏状态 —— 而 journal 已写了"第 N 代完成"
-    #   ⇒ 下次续跑会拿坏状态接代数, 静默错乱。实录见 roadmap §8.23。
-    _tmp = STATE + '.tmp'
-    with open(_tmp, 'wb') as f:
-        pickle.dump(dict(seeds=new_seeds[:60], fsa=fsa,
-                         # ★ 入库库**全量保存**(2026-09-12 去掉 `bank[-30:]` 上限, 用户选定):
-                         #  截断会丢掉最老的入库因子 -> ①--decorr 不再对照它们 ->
-                         #  引擎可能重新发现旧因子("打转"的隐藏成因); ②引擎 bank 与
-                         #  docs/factor_library.md(append-only) 数量不一致(实录 30 vs 32)。
-                         #  代价: --decorr 每候选要跟整库逐个比, 成本 O(len(bank)) ->
-                         #  若库显著增长, 见去相关段的计时输出(实测 30 库/432 候选 = 276s)。
-                         bank=bank,
-                         # ★ 收益流库(§8.34): {表达式: 每期费后超额 Series}。
-                         #   体积很小(每条 ~400 期 float64 ≈ 3KB; 100 个因子 ≈ 0.3MB)。
-                         bank_ex=bank_ex,
-                         frozen=frozen,
-                         fail_lib=fail_lib,
-                         n_tested=n_tested_prev + len(cands),
-                         last_l1=l1, last_l2=res if len(res) else None,
-                        # ★ 池口径传感器（2026-09-14, §1.1 修法②）: {expr: 最好的池 calmar}。
-                        #   代首"重审上一代"时必须用它才能算出**池口径**失败率 ——
-                        #   `last_l2` 只有全A 口径，回答不了"离池门槛差多远"。
-                        #   体积很小（每代候选数个小 float），可忽略。
-                        last_pool_map=_pool_best(pool_rows),
-                         cfg=next_cfg), f)
-    os.replace(_tmp, STATE)        # 原子替换: 要么全新状态, 要么保持旧状态, 不会出现半成品
-    # ⚠ 日志口径: 打印的必须是**实际持久化**的数量(此前截断时打内存值 -> 与落盘不一致)
-    print(f"\n保存状态: 种子 {len(new_seeds[:60])} 个, 入库因子 {len(bank)} 个(全量), "
-          f"收益流库 {len(bank_ex)} 条, 冻结骨架 {len(frozen)} 个, 失败库 {len(fail_lib)} 条, "
-          f"耗时 {time.time()-t0:.0f}s")
+    _save_state(_dup_ex_corr, _e, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, f, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v)
 
 
 def clone(n):
