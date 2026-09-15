@@ -15,6 +15,90 @@
 
 ---
 
+## [1.0.0] — 2026-09-15  ★★ 里程碑：前后端看板建成
+
+> 主题：**新增 `dashboard/` 挖掘看板（前端 + 后端）** —— 项目从"纯引擎 + 命令行"进入"**有可视化看板**"阶段
+> 用户指令：「加个前端文件夹 frontend 吧，搞个前端出来……我要能看到当前几个池子是不是在跑，跑多少轮了……
+> 还有几个池子的因子库信息，精选池因子库的信息（逐步往聚宽因子看板、PG 数据库上靠）……
+> **这个端口注意万一将来项目多了，要可以改哈，抽象出来，只改一个地方**，别多个文件都把端口号写死进去了」
+> 以及：「frontend 和 backend 文件夹是不是分开并列？」→ 拍板**改名 `dashboard/`**；「版本就定为 1.0.0 吧」
+
+### ★★★★ 端口抽象（用户硬要求"只改一处"）—— **已实证，非声称**
+```
+dashboard/config.json                ← ★★★ 唯一端口来源（backend.port / frontend.port / reservedPorts）
+  ├── api/app/settings.py            读它（后端）
+  ├── api/run.py                     读它（+ 启动自检是否撞 reservedPorts）
+  └── web/vite.config.ts             读它（设 /api 代理）
+      └── web/src/*.ts(x)            ★ 只请求相对路径 /api/* ⇒ **完全不知道端口**
+```
+**本看板**：后端 `8101` · 前端 `5273`
+**⚠ 需避让 `qlib_code`**：前端 `5173` · 后端 `8001` · MongoDB `27017`（已写入 `reservedPorts`）
+
+**实证**（`tools/_verify_port_change.py`）：改 `config.json` 一处 → 重启 →
+**后端 8102 / 前端 5274 全通**，且**前端 5274 的 `/api/status` 也通**（Vite proxy 自动跟到新后端）；
+旧端口 `8101/5273` 已停用 ⇒ **"只改一处"成立** ✓（验证完已改回）
+
+### ★★★★ 版本号"单一来源"（同一思路）
+**病灶**：版本号此前散落三处，实测**三处打架** ✗
+| 位置 | 原值 | 差距 |
+|---|---|---|
+| git tag 最新（真实） | `v0.21.1` | — |
+| `change_log.md` 最新条目 | `0.20.2` | ⚠ **落后 9 版** |
+| `README.md` 顶部声明 | `v0.20.0` | ⚠ **落后 11 版**（且与自身版本表格矛盾）|
+⇒ **修**：新增仓库根 **`VERSION`** 文件（**唯一来源**），看板 `/api/meta` 从它读；
+   并新增守门测试 **`tools/_test_version_sync.py`**（`VERSION` / `README` / `change_log` 不一致即报错）✓
+
+### 看板功能
+| 页签 | 内容 |
+|---|---|
+| **池运行状态** | 每池：在跑/空闲 · 当前库 · 已测候选 · **跑过代数** · 最新代 · L2 候选流水 · 冻结 · 失败库 |
+| **因子库** | 各池（全A/300/500/1000/50）总览表 + ★ **口径说明** |
+| **精选池** | L3 双闸门 7 个（剥风格档 / 剥 Calmar / 完整表达式 / 下游须知）|
+| **进程** | 调度 `run_tracks` · 引擎 `loop_engine` · 守望 `loop_watch` |
+| **配置/口径** | 端口来源 · 保留端口 · 路径 · API 清单 |
+
+**数据源（全部只读）**：进程查询 + `docs/loop_journal*` 代数 + `engine/loop_state*.pkl` +
+`docs/loop_archive*.csv` + `docs/factor_library*.md` + `docs/factor_pool_selected.md` + `docs/loop_strip_style_bank.csv`
+⇒ ★ **免 import 引擎**：用**宽容 Unpickler** 把 `loop_engine.Node` 换轻量替身 ⇒ **秒级**读 state ✓
+
+### ★★★ 期间发现并修的真缺陷
+| # | 缺陷 | 处置 |
+|---|---|---|
+| 1 | ★ **`factor_library_<池>.md` 的"因子数"有**三个不同数字** —— 表格行数（累计"只增不改"）/ md 声明（快照，落后）/ `state.bank`（权威）。实测 `300`→3/2/2 · `500`→5/3/3 · `1000`→**10/4/5** | 看板**一律以 `state.bank` 为准**并标注口径 ✓ |
+| 2 | `/api/library` 500：`header_hint` 是 list 却当 str 用 ⇒ `TypeError` | 修 ✓ |
+| 3 | `factor_library_1000.md` 取到 0 行：该文件**表头与数据间有空行**，解析器**遇空行就 break** | 改为空行跳过 ✓ |
+| 4 | `run.py` 启动即崩：Windows 控制台 **GBK** 打印 `⚠` ⇒ `UnicodeEncodeError` | 强制 stdout/stderr 为 utf-8 ✓ |
+| 5 | ★★ **`tools/combo_constrain.py` 的 `--buffer>0` 从未跑通**（归档时被误移入 `history/`，迁回后一跑就崩） | 修「索引空间混淆」（详见 `[0.20.8]` 补记）✓ |
+| 6 | 归档**误伤**：`combo_build/calib/check/constrain/score` + `build_industry`（**工具**）被一起移进 `history/` | **迁回 `tools/`**（用户点名「ai_test 里不能删的要放到 tools 里」）✓ |
+
+### 改名 `frontend/` → `dashboard/`（用户拍板）
+**原因**：原名 `frontend/` 却内含 `backend/` ⇒ **名不副实**易误解 ✗
+**新结构**：`dashboard/{config.json, api/(后端), web/(前端)}`
+★ **关键纪律**：只改【目录名】，**不改【前端服务】这个概念** ——
+`FRONTEND_DIR`(目录)→`DASHBOARD_DIR`；而 `config.json` 的 `"frontend"` 键 / `FRONTEND_PORT` /
+`qlib_code_frontend` **一律保留** ✓（⚠ 无脑全局替换会改坏端口配置 ✗）
+
+### ⚠ 补记：`v0.20.3` ~ `v0.21.1`（**这 9 版此前漏记本文件**）
+> 说明：这几版我只写了 commit/tag，**没同步 `change_log.md`** ⇒ 造成"版本对不上" ✗
+> ⇒ 此处补记，以后由 `tools/_test_version_sync.py` 守门 ✓
+
+| 版本 | 主题 |
+|---|---|
+| `0.20.3` | 复核会话结论（★ **抓到我自己写错的"最大函数"**）+ 回答「clone 多大 / 跑起来生成多少」|
+| `0.20.4` | **文档大复核**（用户：「`loop_todo.md` 是不是又要清理了？各个文档再查一轮」）|
+| `0.20.5` | 复核「剥风格」（用户问「叶子本身用 BARRA 11 个构造，剥离不是白剥了么」）⇒ 厘清 **4 个系统性暴露 vs 11 个构造原料** |
+| `0.20.6` | 核对 `loop_todo §1` 真实状态 —— ★★ **12 条里 8 条早已做完却没标** ✗ |
+| `0.20.7` | `loop_todo §1` 大整理 —— **11 条 → 3 条真待办**；★ 核实**推翻** `§1.5` 的"可离线 re-derive 全池标签"前提（实测三池都测过的候选仅 **2/1039 = 0%**）|
+| `0.20.8` | ★★ **`§1.3-E` 换手优化完成**：`--buffer=0.25` **双赢**（1000 池 S1 换手 **21.8%→16.0%** ↓27% · Calmar **1.064→1.413** ↑33% · 超额仅掉 0.10pp）；★ 修 `combo_constrain` 2 个真 BUG；工具迁回 `tools/` |
+| `0.21.0` | 新增 `frontend/` 看板（本条目主体）|
+| `0.21.1` | `frontend/` → `dashboard/` 改名 |
+
+### 验证
+Python 编译 **108** 全过 · 引号干净 · **12/12 测试全过** · `tsc --noEmit` **0 错** · 生产构建成功
+端到端：前端 `5273` HTTP 200 · 通过前端端口访问 `/api/{status,meta,library,selected}` **全 200**（proxy 正常）✓
+
+---
+
 ## [0.20.2] — 2026-09-15
 
 > 主题：**补上 `--style_obs`（长期遗漏）+ `research/` 归档**

@@ -57,6 +57,25 @@ PROJECT_ROOT = _locate_project_root()
 DOCS = os.path.join(PROJECT_ROOT, 'docs')
 ENGINE = os.path.join(PROJECT_ROOT, 'engine')
 
+
+def _read_version():
+    """★ 项目版本**单一来源** = 仓库根的 `VERSION` 文件（与端口同思路：只改一处）。
+
+    ⚠ 2026-09-15 加：此前版本号散落在 `README.md` / `change_log.md` / 看板代码里，
+      实测**三处打架**（tag=v0.21.1 · change_log=0.20.2 · README=v0.20.0）✗
+      ⇒ 改为 `VERSION` 一处，并由 `tools/_test_version_sync.py` 守门 ✓
+    """
+    p = os.path.join(PROJECT_ROOT, 'VERSION')
+    if os.path.exists(p):
+        # ⚠ 用 `utf-8-sig` 容忍 BOM（Windows 编辑器常加 BOM ⇒ 否则版本会变成 '\ufeff1.0.0' ✗）
+        v = io.open(p, encoding='utf-8-sig').read().strip().splitlines()
+        if v and v[0].strip():
+            return v[0].strip().lstrip('v').lstrip('\ufeff')
+    return '0.0.0'
+
+
+VERSION = _read_version()
+
 BACKEND_CFG = CFG.get('backend') or {}
 FRONTEND_CFG = CFG.get('frontend') or {}
 
@@ -82,6 +101,8 @@ API_PREFIX = '/api'
 def describe():
     """给 `/api/meta` 用：把"配置从哪来"透明化（便于排查端口冲突）。"""
     return {
+        'version': VERSION,
+        'versionSource': os.path.join(PROJECT_ROOT, 'VERSION'),
         'configPath': CONFIG_PATH,
         'projectRoot': PROJECT_ROOT,
         'docsDir': DOCS,

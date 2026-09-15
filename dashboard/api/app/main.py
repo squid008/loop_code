@@ -28,7 +28,7 @@ T0 = time.time()
 app = FastAPI(
     title='Loop 挖掘看板 API',
     description='引擎运行状态 + 各池因子库 + 精选池（逐步向聚宽因子看板 / PostgreSQL 靠）',
-    version='0.1.0',
+    version=settings.VERSION,          # ★ 来自仓库根 `VERSION`（项目版本单一来源）
 )
 
 app.add_middleware(
@@ -49,7 +49,7 @@ def health():
 def meta():
     return {
         'app': 'loop-code-dashboard',
-        'version': '0.1.0',
+        'version': settings.VERSION,       # ★ 项目版本（来自根 `VERSION` 文件）
         'settings': settings.describe(),
         'pools': core.POOLS,
         'factorFields': factors.FACTOR_FIELDS,

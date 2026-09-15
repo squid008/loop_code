@@ -162,9 +162,11 @@ export default function App() {
       {tab === 'meta' && meta && <MetaPanel m={meta} />}
 
       <footer className="foot">
-        <span>Loop 挖掘看板 v{meta?.version ?? '?'}</span>
+        <span>Loop 挖掘看板 · 项目版本 <b>v{meta?.version ?? '?'}</b></span>
         <span>·</span>
-        <span>端口来自 <code>dashboard/config.json</code>（改端口只改这一处）</span>
+        <span>版本来自 <code>VERSION</code></span>
+        <span>·</span>
+        <span>端口来自 <code>dashboard/config.json</code>（各改一处）</span>
       </footer>
     </div>
   )
