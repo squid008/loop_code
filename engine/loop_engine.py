@@ -3058,7 +3058,7 @@ if __name__ == '__main__':
                          '「全A 口径(calmar/sharpe/分段)达标」**或**「池内 Calmar 达 --min_pool_calmar」。'
                          '依据: 池内有效与全A 有效**基本不同源** —— 300 池"池内有效但全A 无效"有 31 个,'
                          '是"两者都有效"15 个的两倍 ⇒ AND 会把它们全砍掉(对"只在池内有效"的因子,'
-                         '同时要求全A 达标是自相矛盾)。组合标定(ai_test/combo_calib.py): '
+                         '同时要求全A 达标是自相矛盾)。组合标定(tools/combo_calib.py): '
                          'AND 最优只保留 5/167(召回 8%%), OR 可保留 41/167(精率 59%%、召回 49%%)'
                          '⇒ **保留量约 6 倍**。')
     ap.add_argument('--min_pool_calmar', type=float, default=-1.0,
