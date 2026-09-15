@@ -25,9 +25,13 @@ import sys
 import time
 from datetime import datetime
 
-ENGINE_DIR = r"D:\loop_code\engine"
-DOCS_DIR = r"D:\loop_code\docs"
-PY = r"D:\miniconda3\envs\rqdata\python.exe"
+# ★ 2026-09-15：原为硬编码仓库路径 + 写死的解释器路径 ⇒ 换机器即崩 ✗
+#   ① 本文件就在 `engine/` 里 ⇒ `HERE` 即 engine 目录 ✓
+#   ② `PY` 改用 `sys.executable` = **当前正在跑的解释器**（比写死路径更正确）✓
+HERE = os.path.dirname(os.path.abspath(__file__))
+ENGINE_DIR = HERE
+DOCS_DIR = os.path.join(os.path.dirname(HERE), "docs")
+PY = sys.executable
 WATCH_LOG = os.path.join(ENGINE_DIR, "loop_watcher.log")
 POLL_S = 300          # 主轮询间隔
 LIFTOFF_S = 20        # 启动后确认存活间隔

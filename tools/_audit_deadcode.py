@@ -31,6 +31,15 @@ def walk_py():
 print('=' * 100)
 print('【1】engine/*.py 顶层函数：谁在"本文件之外"被引用？')
 print('=' * 100)
+print('  ⚠⚠⚠ **重要局限（2026-09-15 实测踩到）**：本检查基于 AST/文本，')
+print('       **抓不到"字符串字面量 + 运行时按名查找"的引用** ✗')
+print('       实例：`engine/ops_registry.py` 写 `(\'cs_demean\', None, (\'le\', \'cs_demean_op\'), \'core\')`，')
+print('             由 `loop_engine.py` 的 `UNARY = _OPS.build_unary(_FO, vars())` **按名取出**')
+print('             ⇒ `cs_demean_op`/`cs_scale_op`/`cs_rank_op` 全是**活的**，')
+print('               但本工具会报"内外均无引用" ✗✗')
+print('       ⇒ **凡疑似死代码，必须再 grep 一遍"它的名字作为字符串"有没有被取用**，')
+print('         尤其查 `vars()` / `getattr` / `globals()` / 注册表 `build_*(..., vars())` 这类动态查找 ✓')
+print()
 
 # 收集每个文件里定义的顶层函数名
 defs = {}          # file -> {name: lineno}

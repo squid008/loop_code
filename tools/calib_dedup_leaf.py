@@ -5,8 +5,12 @@
 2) 算每个因子与 BARRA 风格叶的最大|corr|(主导叶) -> 定叶子代理阈值。
 注: step = max(1, 418 // dedup_days), dedup_days 默认 60 -> step=6。
 """
+import os
 import sys
-sys.path.insert(0, r'D:\loop_code\engine')
+
+# ★ 2026-09-15：原为硬编码 `D:\loop_code\engine` ⇒ 改为从 `__file__` 派生 ✓
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), 'engine'))
 import numpy as np
 import loop_engine as E
 

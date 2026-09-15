@@ -16,7 +16,9 @@ sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import factor_miner as fm
 
-OUT = r"D:\loop_code\strategies\all04\f11_daily.pkl"
+# ★ 2026-09-15：原为硬编码 ⇒ 改为从 `__file__` 派生（本文件在 engine/）✓
+HERE = os.path.dirname(os.path.abspath(__file__))
+OUT = os.path.join(os.path.dirname(HERE), "strategies", "all04", "f11_daily.pkl")
 t0 = time.time()
 
 P = fm.load_panel()

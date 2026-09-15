@@ -30,7 +30,8 @@ import shutil
 import sys
 import time
 
-sys.path.insert(0, r'D:\loop_code\engine')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(
+    os.path.abspath(__file__))), 'engine'))
 import numpy as np
 import pandas as pd
 from scipy.stats import spearmanr
@@ -39,10 +40,12 @@ import __main__ as _m
 
 _m.Node = E.Node
 
-ARCH = r'D:\loop_code\docs\loop_archive.csv'
-STATE = r'D:\loop_code\engine\loop_state.pkl'
-TMP = r'D:\loop_code\ai_test\_state_copy_calib.pkl'
-OUT = r'D:\loop_code\ai_test\l1_shape_calib.csv'
+# ★ 2026-09-15：原为硬编码 `D:\loop_code\...` ⇒ 改为从 `__file__` 派生 ✓
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ARCH = os.path.join(_ROOT, 'docs', 'loop_archive.csv')
+STATE = os.path.join(_ROOT, 'engine', 'loop_state.pkl')
+TMP = os.path.join(_ROOT, 'ai_test', '_state_copy_calib.pkl')
+OUT = os.path.join(_ROOT, 'ai_test', 'l1_shape_calib.csv')
 N_GRP = 10
 FWD = None
 # 完整面板(standard_test)实测单调性, 用于校验形状代理
@@ -220,7 +223,7 @@ def validate():
     for tag, full in FULL_MONO.items():
         f = tag[1:]
         try:
-            d = pd.read_pickle(os.path.join(r'D:\loop_code\ai_test', f'F{f}_fac.pkl'))
+            d = pd.read_pickle(os.path.join(_ROOT, 'ai_test', f'F{f}_fac.pkl'))
             v = d.values.astype(np.float32)[E.L1_ROWS][:, E.L1_COLS]
             Rs = E.rank_rows(v[::FWD])
             _, mono, best, n = decile_shape(Rs, fwd, U_s)

@@ -12,7 +12,9 @@ import sys
 
 import numpy as np
 
-ENG = r'D:\loop_code\engine'
+# ★ 2026-09-15：原为硬编码 `D:\loop_code\engine` ⇒ 改为从 `__file__` 派生 ✓
+HERE = os.path.dirname(os.path.abspath(__file__))
+ENG = os.path.join(os.path.dirname(HERE), 'engine')
 sys.path.insert(0, ENG)
 from loop_metrics import STYLE_KEYS, rank_rows, style_expo   # noqa: E402
 

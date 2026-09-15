@@ -1,0 +1,60 @@
+v0.20.1 — 清生产侧硬编码路径 14 处 + 审计工具升级 + 全项目通盘盘点
+
+用户：「从头到尾检查一轮，比如 research 里都是啥东西，看看还有啥有问题的地方吗」
+
+## 清硬编码：生产侧 14 处 `D:\loop_code` 全部改为从 `__file__` 派生
+
+| 文件 | 处数 | 严重度 |
+|---|---|---|
+| `standard/standard_test.py`（PANEL/UNIVERSE/BARRA）| 3 | ★★★ 用户点名要用的标准测试 |
+| `standard/qa_style_obs.py`（ENG）| 1 | ★★ 被 `loop_metrics.py` 引用 |
+| `engine/loop_watch.py`（ENGINE_DIR/DOCS_DIR/PY）| 3 | ★★ watcher；★ `PY` 改用 `sys.executable` |
+| `tools/calib_dedup_leaf.py` | 1 | ★ |
+| `tools/l1_shape_calib.py` | 6 | ★ |
+| `engine/gen_f11_daily.py` | 1 | ★ |
+
+★ 最讽刺的是 `standard_test.py`：它**上面几行就已有 `HERE`/`MYTEST`**
+  （`sys.path.insert(0, os.path.join(MYTEST, 'engine'))` 用了派生），却把 PANEL/UNIVERSE/BARRA 写死 ✗
+  ⇒ 纯粹是"没用上已有的正确变量" ✓
+★ **等价性已验证**（`tools/_verify_pathfix.py` 的 AST 求值 + 存在性检查）：
+  派生出的路径与原值指向**同一个文件**（在 `D:\loop_code` 下逐字等价）⇒ **零行为变更** ✓
+
+## 审计工具升级：`_audit_deadcode.py` 加显式警告
+
+⚠ **它抓不到"字符串字面量 + 运行时按名查找"的引用** —— 实测：
+```
+engine/ops_registry.py:86   ('cs_demean', None, ('le', 'cs_demean_op'), 'core')   ← 名字是【字符串】
+engine/loop_engine.py:450   UNARY = _OPS.build_unary(_FO, vars())                 ← vars() 注入命名空间
+```
+⇒ `cs_demean_op`/`cs_scale_op`/`cs_rank_op` **全是活的**，但工具报"本文件内外均无引用" ✗✗
+⇒ ❌ **我差点照着它删掉活代码** —— 靠"再 grep 一遍名字"才拦下 ✓
+⇒ **已加警告**：疑似死代码必须再查"名字作为字符串"有没有被 `vars()`/`getattr`/`globals()` 取用 ✓
+
+## 全项目盘点结论（`tools/_audit_full.py`，新增可复用审计器）
+
+| 目录 | 规模 | 停更 | 结论 |
+|---|---|---|---|
+| `research/` | 91 py / 0.4 MB | **09-08** | **0 生产引用** ⇒ 历史留档（可归档，待用户拍板）|
+| `strategies/` | 29 文件 / 685 MB | **09-09** | **0 生产引用** ⇒ 但属**定稿成果** ⇒ 保留 |
+| `facs/` | 114 h5 / **4.8 GB** | 09-15 在写 | 引擎产物（可重生成但代价高）|
+| `standard/` | **4 py** | — | ★ 归档后只剩**生产依赖 + 用户要用的标准测试** ✓ |
+| `engine/` | 51 文件 / 2.1 GB | 在写 | 含 panel.h5 / fa_pit.h5 / barra.h5 |
+
+- **重复代码 24 组**（`to_int_date ×9` / `market_temperature ×5` / …）★ **全在 `research/`+`strategies/`**
+  ⇒ 那两个目录 0 生产引用 ⇒ **不影响生产** ✓
+- **生产侧无重复代码** ✓ · 最大函数 **1291 行 → 223 行**（P0-1/P0-2 见效）✓
+- ⚠ 数据新鲜度观察（非 bug，供判断）：
+  · `docs/loop_archive.csv`（all 池）**停更 09-13** ⇒ 与"当前只跑 300/500/1000"一致 ✓
+  · `docs/loop_style_obs.csv` **停更 09-12** ⇒ `--style_obs` 近几日未启用（而 `--strip_style` 仍在）⚠
+
+## 新增/保留的可复用审计器（`tools/`）
+`_audit_full.py`（本轮新增）· `_audit_files.py` · `_audit_paths.py` · `_audit_imports.py` ·
+`_audit_codebase.py` · `_audit_coupling.py` · `_audit_deadcode.py` · `_test_ghost_args.py`
+
+## Notes
+- 回归：编译 **87** 全过 · 引号干净 · **12/12 测试全过** ✓
+- ⚠ 本轮我纠正了自己 **2 次**误判（记下避免重犯）：
+  · 「research 引用的数据源已消失」⇒ 实测 `rqalpha_demo`/`qlib_code` **都还在** ✗
+  · 「`cs_demean_op` 是 P0-1 残留死代码」⇒ 它是**注册表按名取用的活代码** ✗
+  · 「`bt_utils.py:14 import 自己`」⇒ 那是 **docstring 里的用法示例** ✗
+  ⇒ 三次都是**只看文本匹配**导致的 ⇒ ★ **文本匹配必须再人工/结构核实** ✓
