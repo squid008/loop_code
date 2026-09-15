@@ -113,7 +113,15 @@ engine/loop_engine.py:450   UNARY = _OPS.build_unary(_FO, vars())               
 
 - **重复代码 24 组**（`to_int_date ×9` · `market_temperature ×5` · `blocked_stock ×4` · `load_csi300_history ×4`）
   ★ **全在 `research/`+`strategies/`** ⇒ 那两个目录 0 生产引用 ⇒ **不影响生产** ✓
-- **生产侧无重复代码** ✓ · 最大函数 **1291 行 → 223 行**（`evaluate_real`/`run_tracks.main`）⇒ P0-1/P0-2 见效 ✓
+- **生产侧无重复代码** ✓
+- ★ **函数规模实测（2026-09-15 复核更正）**：最大仍是 **`loop_engine.run()` = 920 行**
+  （`v0.17.0` 的 P0-2 使它从 **1291 → 921**，净减 29%）·
+  其次 `loop_critic.suggest` **303 行** · `run_tracks.main` **240 行** ·
+  `factor_miner.evaluate_real` **222 行**（**第 4 大**）
+  > ⚠ **更正说明**：本条目**初版误写**为「最大函数 1291 行 → 223 行（`evaluate_real`/`run_tracks.main`）」
+  > —— 那是把「`run()` 1291→921」与「`evaluate_real` 222 行」**张冠李戴混成一句**，
+  > 读起来像「`run()` 已缩到 223 行」⇒ **严重误导** ✗（成因：**用记忆转述代替回原文**）。
+  > ⇒ ★ 结论**不变但程度不同**：`run()` **仍是 920 行的巨型函数** ⇒ `loop_todo` 的 **P0-2b（引入 `ctx` 继续拆）依然必要** ✓
 - ⚠ 数据新鲜度观察（**非 bug**，供判断）：
   · `docs/loop_archive.csv`（all 池）**停更 09-13** ⇒ 与"当前只跑 300/500/1000"一致 ✓
   · `docs/loop_style_obs.csv` **停更 09-12** ⇒ `--style_obs` 近几日未启用（而 `--strip_style` 仍在）⚠
