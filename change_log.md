@@ -15,6 +15,71 @@
 
 ---
 
+## [0.20.1] — 2026-09-15
+
+> 主题：**清生产侧硬编码路径 + 审计工具升级 + 全项目通盘盘点**
+> 用户指令：「从头到尾检查一轮，比如 research 里都是啥东西，看看还有啥有问题的地方吗」
+
+### 修复：生产侧 **14 处硬编码 `D:\loop_code`**（换目录/换机器即崩）✗
+
+由新增的 `tools/_audit_full.py`（全项目盘点）扫出。项目里**其它地方早已规范**地用
+`os.path.dirname(os.path.abspath(__file__))` 派生 ⇒ 这 14 处是**漏网**。
+
+| 文件 | 处数 | 严重度 |
+|---|---|---|
+| `standard/standard_test.py`（`PANEL`/`UNIVERSE`/`BARRA`）| 3 | ★★★ **用户点名要用的标准测试** |
+| `standard/qa_style_obs.py`（`ENG`）| 1 | ★★ 被 `loop_metrics.py` 引用 ⇒ 生产依赖 |
+| `engine/loop_watch.py`（`ENGINE_DIR`/`DOCS_DIR`/`PY`）| 3 | ★★ watcher；★ `PY` 改用 **`sys.executable`** |
+| `tools/calib_dedup_leaf.py` | 1 | ★ |
+| `tools/l1_shape_calib.py` | 6 | ★ |
+| `engine/gen_f11_daily.py` | 1 | ★ |
+
+★ **最讽刺的一处**：`standard_test.py` **上面几行就已经有 `HERE`/`MYTEST`**
+  （`sys.path.insert(0, os.path.join(MYTEST, 'engine'))` 用了派生），却把 `PANEL`/`UNIVERSE`/`BARRA` 写死 ✗
+  ⇒ 纯粹是"**没用上已有的正确变量**" ⇒ 改法零风险 ✓
+
+★ **等价性已验证**（AST 求值 + 存在性检查）：派生出的路径与原值**指向同一个文件**
+  （在 `D:\loop_code` 下逐字等价）⇒ **零行为变更** ✓
+  ⚠ 唯一例外：`loop_watch.PY` 由写死的解释器路径改为 `sys.executable`（更正确）✓
+
+### ★★★ 审计工具升级：`_audit_deadcode.py` 加"动态按名查找抓不到"警告
+
+实测（**差点照着它删掉活代码**）：
+```
+engine/ops_registry.py:86   ('cs_demean', None, ('le', 'cs_demean_op'), 'core')   ← 名字是【字符串】
+engine/loop_engine.py:450   UNARY = _OPS.build_unary(_FO, vars())                 ← vars() 注入命名空间
+```
+⇒ `cs_demean_op`/`cs_scale_op`/`cs_rank_op` **全是活的**，但工具报"本文件内外均无引用" ✗✗
+⇒ 根因：**这类引用是"字符串 + 运行时按名查找"，AST/文本静态检查本质上抓不到**
+⇒ **已加显式警告**：疑似死代码必须再查"名字作为字符串"有没有被 `vars()`/`getattr`/`globals()` 取用 ✓
+★ 教训：**开发"能指导删除的工具"时，必须显式声明它的盲区** —— 否则比没工具更危险 ✗
+
+### 全项目盘点结论（`tools/_audit_full.py` 新增）
+
+| 目录 | 规模 | 停更 | 结论 |
+|---|---|---|---|
+| `research/` | 91 py / 0.4 MB | **09-08** | **0 生产引用** ⇒ 历史留档（可归档，待用户拍板）|
+| `strategies/` | 29 文件 / 685 MB | **09-09** | **0 生产引用** ⇒ 但属**定稿成果** ⇒ 保留 |
+| `facs/` | 114 h5 / **4.8 GB** | 09-15 在写 | 引擎产物（可重生成，代价高）|
+| `standard/` | **4 py** | — | ★ 归档后只剩**生产依赖 + 用户要用的标准测试** ✓ |
+
+- **重复代码 24 组**（`to_int_date ×9` · `market_temperature ×5` · `blocked_stock ×4` · `load_csi300_history ×4`）
+  ★ **全在 `research/`+`strategies/`** ⇒ 那两个目录 0 生产引用 ⇒ **不影响生产** ✓
+- **生产侧无重复代码** ✓ · 最大函数 **1291 行 → 223 行**（`evaluate_real`/`run_tracks.main`）⇒ P0-1/P0-2 见效 ✓
+- ⚠ 数据新鲜度观察（**非 bug**，供判断）：
+  · `docs/loop_archive.csv`（all 池）**停更 09-13** ⇒ 与"当前只跑 300/500/1000"一致 ✓
+  · `docs/loop_style_obs.csv` **停更 09-12** ⇒ `--style_obs` 近几日未启用（而 `--strip_style` 仍在）⚠
+
+### Notes
+- 回归：编译 **87** 全过 · 引号干净 · **12/12 测试全过** ✓
+- ⚠ **本轮我纠正了自己 3 次误判**（全部源于"只看文本匹配"）：
+  · 「`research` 引用的数据源已消失」⇒ 实测 `rqalpha_demo`/`qlib_code` **都还在** ✗
+  · 「`cs_demean_op` 是 P0-1 残留死代码」⇒ 它是**注册表按名取用的活代码** ✗
+  · 「`bt_utils.py:14` import 自己」⇒ 那是 **docstring 里的用法示例** ✗
+  ⇒ ★ **文本匹配必须再做结构核实**（AST / 实际取值），这已是本日第 4 次同类教训 ✓
+
+---
+
 ## [0.20.0] — 2026-09-15
 
 > 主题：**修 P0-2 引入的「幽灵实参」崩溃（已实际崩 2 代）+ 文件精简归档**
