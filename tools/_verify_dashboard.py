@@ -13,7 +13,7 @@ import urllib.request
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 R = r'D:\loop_code'
-CFG = json.load(io.open(os.path.join(R, 'frontend', 'config.json'), encoding='utf-8'))
+CFG = json.load(io.open(os.path.join(R, 'dashboard', 'config.json'), encoding='utf-8'))
 BH, BP = CFG['backend']['host'], CFG['backend']['port']
 FH, FP = CFG['frontend']['host'], CFG['frontend']['port']
 
@@ -24,7 +24,7 @@ def http(url, timeout=30):
 
 
 print('=' * 98)
-print('【0】端口（全部来自 frontend/config.json）')
+print('【0】端口（全部来自 dashboard/config.json）')
 print('=' * 98)
 print('  后端 http://%s:%d   前端 http://%s:%d' % (BH, BP, FH, FP))
 print('  保留端口(需避让): %s' % CFG.get('reservedPorts'))
@@ -71,7 +71,7 @@ print('=' * 98)
 print('【3】★ 前端业务代码零硬编码端口（用户要求：只改一个地方）')
 print('=' * 98)
 bad = 0
-for d, ds, fs in os.walk(os.path.join(R, 'frontend', 'web', 'src')):
+for d, ds, fs in os.walk(os.path.join(R, 'dashboard', 'web', 'src')):
     ds[:] = [x for x in ds if x != 'node_modules']
     for f in fs:
         if not f.endswith(('.ts', '.tsx', '.css')):
@@ -87,8 +87,8 @@ print()
 print('=' * 98)
 print('【4】端口配置的"单一来源"检查')
 print('=' * 98)
-for f in ('frontend/config.json', 'frontend/backend/app/settings.py', 'frontend/backend/run.py',
-          'frontend/web/vite.config.ts'):
+for f in ('dashboard/config.json', 'dashboard/api/app/settings.py', 'dashboard/api/run.py',
+          'dashboard/web/vite.config.ts'):
     p = os.path.join(R, f)
     t = io.open(p, encoding='utf-8', errors='replace').read()
     literals = sorted(set(re.findall(r'\b(8101|5273)\b', t)))

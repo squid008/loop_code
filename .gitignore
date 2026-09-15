@@ -79,9 +79,9 @@ QuantaAlpha-main/
 .deepseek_key
 engine/.deepseek_key
 
-# ★ 前端看板（2026-09-15）：只跟踪源码/配置，**不跟踪依赖与构建产物**
-frontend/web/node_modules/
-frontend/web/dist/
-frontend/web/.vite/
-frontend/**/__pycache__/
-frontend/**/*.pyc
+# ★ 看板 dashboard（2026-09-15，原 frontend/）：只跟踪源码/配置，**不跟踪依赖与构建产物**
+dashboard/web/node_modules/
+dashboard/web/dist/
+dashboard/web/.vite/
+dashboard/**/__pycache__/
+dashboard/**/*.pyc

@@ -164,7 +164,7 @@ export default function App() {
       <footer className="foot">
         <span>Loop 挖掘看板 v{meta?.version ?? '?'}</span>
         <span>·</span>
-        <span>端口来自 <code>frontend/config.json</code>（改端口只改这一处）</span>
+        <span>端口来自 <code>dashboard/config.json</code>（改端口只改这一处）</span>
       </footer>
     </div>
   )

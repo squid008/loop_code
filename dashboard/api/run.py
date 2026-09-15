@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""后端启动器 —— **唯一入口**，自动从 `frontend/config.json` 读端口。
+"""后端启动器 —— **唯一入口**，自动从 `dashboard/config.json` 读端口。
 
 用法:
-    python frontend/backend/run.py
-    python frontend/backend/run.py --check      # 只做端口冲突自检，不启动
+    python dashboard/api/run.py
+    python dashboard/api/run.py --check      # 只做端口冲突自检，不启动
 
 ★ 为什么要有它：让"改端口"只发生在一个地方（`config.json`）——
   本文件**不写任何端口字面量**，全部从配置读 ✓
@@ -24,9 +24,9 @@ for _s in ('stdout', 'stderr'):
     except Exception:
         pass
 
-HERE = os.path.dirname(os.path.abspath(__file__))          # frontend/backend
-FRONTEND = os.path.dirname(HERE)                           # frontend
-CONFIG = os.path.join(FRONTEND, 'config.json')
+HERE = os.path.dirname(os.path.abspath(__file__))          # dashboard/api
+DASHBOARD = os.path.dirname(HERE)                          # dashboard
+CONFIG = os.path.join(DASHBOARD, 'config.json')
 
 
 def load_cfg():

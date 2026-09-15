@@ -4,14 +4,14 @@ import fs from 'node:fs'
 import path from 'node:path'
 
 /**
- * ★★★ 端口抽象的关键：本文件从 `frontend/config.json` **读**端口，不写死。
+ * ★★★ 端口抽象的关键：本文件从 `dashboard/config.json` **读**端口，不写死。
  *
  * 用户要求（2026-09-15）：「端口注意万一将来项目多了，要可以改哈，抽象出来，
  *   **只改一个地方**就好，别多个文件都把端口号写死进去了」
  *
  * 三层解耦：
- *   ① `frontend/config.json`  —— **唯一**端口来源
- *   ② 后端 `backend/app/settings.py` 读它；本文件也读它（设 proxy）
+ *   ① `dashboard/config.json`  —— **唯一**端口来源
+ *   ② 后端 `api/app/settings.py` 读它；本文件也读它（设 proxy）
  *   ③ 前端业务代码**只请求相对路径 `/api/*`** ⇒ 它甚至不知道端口 ✓
  *
  * ⇒ 要改端口，**只改 `config.json` 一处**，前后端一起变 ✓

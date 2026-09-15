@@ -3,7 +3,7 @@
  *
  * ★★★ 关键设计（用户 2026-09-15 要求"端口只改一处"）：
  *   本文件**只请求相对路径 `/api/*`** —— 由 Vite dev-server 的 proxy 转发到后端。
- *   ⇒ 前端代码里**没有任何端口号**；改端口只需改 `frontend/config.json` ✓
+ *   ⇒ 前端代码里**没有任何端口号**；改端口只需改 `dashboard/config.json` ✓
  */
 
 const BASE = '/api'

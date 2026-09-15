@@ -1,4 +1,4 @@
-# Loop 挖掘看板（frontend）
+# Loop 挖掘看板（dashboard）
 
 > **用途**：一眼看到「**几个池子在跑 / 跑多少轮 / 各池因子库 / 精选池**」——
 > 你说「开 preview」时，不用再问我后端有没有在挖掘 ✓
@@ -8,8 +8,8 @@
 ## 一、★★★ 端口只改一个地方（`config.json`）
 
 ```
-frontend/config.json          ← ★★★ 唯一端口来源，改这里一处即可
-   ├── backend/app/settings.py   读它（后端启动）
+dashboard/config.json        ← ★★★ 唯一端口来源，改这里一处即可
+   ├── api/app/settings.py       读它（后端启动）
    ├── backend/run.py            读它（还做端口冲突自检）
    └── web/vite.config.ts        读它（设 /api 代理）
        └── 前端业务代码 src/*.ts   ★ 只请求相对路径 /api/* ⇒ 完全不知道端口
@@ -25,7 +25,7 @@ frontend/config.json          ← ★★★ 唯一端口来源，改这里一处
 | ~~qlib_code 后端~~ | `8001` | ⚠ **需避让** |
 | ~~qlib_code MongoDB~~ | `27017` | ⚠ **需避让** |
 
-> 要改端口：编辑 `frontend/config.json` 的 `backend.port` / `frontend.port`，
+> 要改端口：编辑 `dashboard/config.json` 的 `backend.port` / `frontend.port`，
 > **前后端会一起跟着变**（前端代码零硬编码端口 —— 有自动检查工具验证）✓
 > `run.py` 启动时会**自检**是否与 `reservedPorts` 冲突 ✓
 
@@ -35,11 +35,11 @@ frontend/config.json          ← ★★★ 唯一端口来源，改这里一处
 
 ```powershell
 # ① 后端（自检 + 启动）
-D:\miniconda3\envs\rqdata\python.exe frontend\backend\run.py
+D:\miniconda3\envs\rqdata\python.exe dashboard\api\run.py
 #    只自检不启动：  ... run.py --check
 
 # ② 前端（另开一个终端）
-cd frontend\web
+cd dashboard\web
 npm install          # 首次
 npm run dev
 ```
@@ -47,7 +47,7 @@ npm run dev
 浏览器打开 **http://127.0.0.1:5273/**（端口见 `config.json`）
 后端 API 文档：**http://127.0.0.1:8101/docs**
 
-依赖（后端）：`pip install -r frontend/backend/requirements.txt`
+依赖（后端）：`pip install -r dashboard/api/requirements.txt`
 
 ---
 
@@ -125,10 +125,10 @@ GET /api/factors/flat    扁平化（面向 PG 导入）
 ## 七、文件结构
 
 ```
-frontend/
+dashboard/
 ├── config.json              ★★★ 端口唯一来源
 ├── README.md                本文件
-├── backend/
+├── api/
 │   ├── requirements.txt
 │   ├── run.py               启动器（读 config.json + 端口冲突自检）
 │   └── app/

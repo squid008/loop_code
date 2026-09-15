@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""★★★ 实证：**只改 `frontend/config.json` 一处**，前后端端口是否一起变？
+"""★★★ 实证：**只改 `dashboard/config.json` 一处**，前后端端口是否一起变？
 
 用户 2026-09-15：「端口注意万一将来项目多了，要可以改哈，抽象出来，
   **只改一个地方**就好，别多个文件都把端口号写死进去了」
@@ -17,7 +17,7 @@ import urllib.request
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 R = r'D:\loop_code'
-CFG = os.path.join(R, 'frontend', 'config.json')
+CFG = os.path.join(R, 'dashboard', 'config.json')
 PY = sys.executable
 TMP = os.environ.get('TEMP', r'C:\Windows\Temp')
 
@@ -44,7 +44,7 @@ def probe(url, timeout=6):
 def kill_backend():
     subprocess.run(['powershell', '-NoProfile', '-Command',
                     "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
-                    "Where-Object { $_.CommandLine -like '*frontend\\backend\\run.py*' } | "
+                    "Where-Object { $_.CommandLine -like '*dashboard\\api\\run.py*' } | "
                     "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
                    capture_output=True)
     time.sleep(2)
@@ -59,13 +59,13 @@ def kill_web():
 
 
 def start_backend():
-    subprocess.Popen([PY, os.path.join(R, 'frontend', 'backend', 'run.py')], cwd=R,
+    subprocess.Popen([PY, os.path.join(R, 'dashboard', 'api', 'run.py')], cwd=R,
                      stdout=io.open(os.path.join(TMP, 'fe_out.log'), 'w', encoding='utf-8'),
                      stderr=io.open(os.path.join(TMP, 'fe_err.log'), 'w', encoding='utf-8'))
 
 
 def start_web():
-    subprocess.Popen('npm run dev', cwd=os.path.join(R, 'frontend', 'web'), shell=True,
+    subprocess.Popen('npm run dev', cwd=os.path.join(R, 'dashboard', 'web'), shell=True,
                      stdout=io.open(os.path.join(TMP, 'web_out.log'), 'w', encoding='utf-8'),
                      stderr=subprocess.STDOUT)
 

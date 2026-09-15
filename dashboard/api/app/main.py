@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """Loop 挖掘看板 —— 后端 API（FastAPI）。
 
-★ 端口**不在此文件**（也不在任何路由里）—— 全部来自 `frontend/config.json`（见 `settings.py`）✓
+★ 端口**不在此文件**（也不在任何路由里）—— 全部来自 `dashboard/config.json`（见 `settings.py`）✓
 ★ 前端只请求**相对路径** `/api/*`（Vite proxy 转发）⇒ 前端代码完全不知道端口 ✓
 
-启动:  python frontend/backend/run.py        （推荐，自动读 config.json）
+启动:  python dashboard/api/run.py        （推荐，自动读 config.json）
        uvicorn app.main:app --port <n>       （手动，n 要与 config.json 一致）
 文档:  http://<host>:<port>/docs
 """

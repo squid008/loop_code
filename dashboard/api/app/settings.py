@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""配置加载 —— **端口/主机的唯一来源** `frontend/config.json`。
+"""配置加载 —— **端口/主机的唯一来源** `dashboard/config.json`。
 
 ★ 设计要点（用户 2026-09-15 明确要求）：
   「端口注意万一将来项目多了，要可以改哈，抽象出来，**只改一个地方**就好，
@@ -19,10 +19,10 @@ for _s in ('stdout', 'stderr'):
     except Exception:
         pass
 
-HERE = os.path.dirname(os.path.abspath(__file__))          # frontend/backend/app
-BACKEND_DIR = os.path.dirname(HERE)                        # frontend/backend
-FRONTEND_DIR = os.path.dirname(BACKEND_DIR)                # frontend
-CONFIG_PATH = os.path.join(FRONTEND_DIR, 'config.json')
+HERE = os.path.dirname(os.path.abspath(__file__))          # dashboard/api/app
+API_DIR = os.path.dirname(HERE)                            # dashboard/api
+DASHBOARD_DIR = os.path.dirname(API_DIR)                   # dashboard
+CONFIG_PATH = os.path.join(DASHBOARD_DIR, 'config.json')
 
 
 def _load_config():
@@ -39,10 +39,10 @@ def _locate_project_root():
     """定位仓库根：优先取 config 的 `project.root`，否则**自动向上找**含 engine/ 与 docs/ 的目录。"""
     raw = ((CFG.get('project') or {}).get('root') or '').strip()
     if raw:
-        p = os.path.abspath(os.path.join(FRONTEND_DIR, raw))
+        p = os.path.abspath(os.path.join(DASHBOARD_DIR, raw))
         if os.path.isdir(p):
             return p
-    cand = FRONTEND_DIR
+    cand = DASHBOARD_DIR
     for _ in range(6):
         if os.path.isdir(os.path.join(cand, 'engine')) and os.path.isdir(os.path.join(cand, 'docs')):
             return cand
@@ -50,7 +50,7 @@ def _locate_project_root():
         if parent == cand:
             break
         cand = parent
-    return os.path.dirname(FRONTEND_DIR)
+    return os.path.dirname(DASHBOARD_DIR)
 
 
 PROJECT_ROOT = _locate_project_root()
