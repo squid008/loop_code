@@ -32,11 +32,17 @@ from loop_fields import LEAVES
 KNOWN_HINT = ['ln_mktcap', 'ln_volume', 'turnover', 'mktcap', 'amt']
 
 # 长周期算子(稳定性友好) / 短周期算子(换手高)
-# 长周期算子(稳定性友好) —— ★ 2026-09-15 加 `ema60`：EMA 是**指数平滑**，
-#   对近期加权但尾部衰减 ⇒ 天然**低换手/高稳定**，正是这一档想要的 ✓
-#   ★ 同批加 `ts_slope60`/`ts_rsqr60`：60 日**趋势**量本身变化慢 ⇒ 低换手 ✓
-SLOW_OPS = ['ts_mean20', 'ts_mean10', 'ts_rank60', 'ts_std60', 'ts_max20', 'ts_min20',
-            'ema60', 'ts_slope60', 'ts_rsqr60']
+# ★★★ 2026-09-15（架构清扫 P0-1）：`SLOW_OPS` 改为从 **`ops_registry` 派生**。
+#   它原先在这里硬编码 —— 是"同一批算子名被抄 4 份"中的一份 ⇒ **加算子必漏** ✗
+#   现在算子只在 `engine/ops_registry.py` 声明一次，这里只引用 ✓
+#   为什么这份名单有**依据**（不是随手挑）：
+#     · `ema60`：EMA 是**指数平滑**，对近期加权但尾部衰减 ⇒ 天然**低换手/高稳定** ✓
+#     · `ts_slope60`/`ts_rsqr60`：60 日**趋势**量本身变化慢 ⇒ 低换手 ✓
+#     · `ts_mean10/20`·`ts_std60`·`ts_rank60`·`ts_max20`·`ts_min20`：中长窗平滑量 ✓
+#     ⚠ **不含** `ts_rank20`/`ts_delta*`/`ema5` —— 日频跳变大 ⇒ 换手高，与这一档目的**相反** ✗
+import ops_registry as _OPS
+
+SLOW_OPS = list(_OPS.SLOW_OPS)
 FAST_OPS = ['ts_mean5', 'ts_delay1', 'ts_delta5']
 
 # =====================================================================

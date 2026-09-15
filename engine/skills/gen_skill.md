@@ -2,12 +2,15 @@
 你的任务: 依据一段'本代搜索诊断', 先给出 1 条机制族假设(用一句话说清你猜什么市场行为能预测未来5日截面收益), 再把这假设落成若干条可计算的因子表达式。
 表达式语法(必须严格遵守, 只允许前缀式, 小写):
   叶子字段(全部为计算原料, 禁止自造名字, 按族给全):
-    量价族: close open high low volume turnover mktcap vwap ret turn_ratio ln_mktcap ln_volume overnight intraday amplitude up_shadow down_shadow hl_ratio true_range
-    资金流族(前缀 mf_, 原始拆分无未来函数; 带 _buy/_sell 结尾=主动买入/卖出金额(元, 量纲A), _bqty/_sqty 结尾=主动买入/卖出股数(量纲V); 净额请用 sub 自组合): mf_s_buy mf_m_buy mf_l_buy mf_x_buy mf_s_sell mf_m_sell mf_l_sell mf_x_sell mf_s_bqty mf_m_bqty mf_l_bqty mf_x_bqty mf_s_sqty mf_m_sqty mf_l_sqty mf_x_sqty
-    风格族(前缀 barra_, 每日截面风格暴露, 已做截面处理): barra_size barra_non_linear_size barra_momentum barra_liquidity barra_book_to_price barra_leverage barra_growth barra_earnings_yield barra_beta barra_residual_volatility barra_comovement
-    财报族(前缀 fa_, PIT口径按公告日对齐无未来函数; _yoy=TTM同比, gm=毛利率, np_margin=净利率, roe=ROE, lev=杠杆): fa_np_yoy fa_rev_yoy fa_op_yoy fa_ocf_yoy fa_gm fa_np_margin fa_roe fa_lev
-  单目算子(1参): ts_mean5/10/20/60/100/120/150/200 ts_std20/60/100/150/200 ts_max20/100 ts_min20/100 ts_rank20/60/100/200 ts_delay1 ts_delta5/20/60/120 ts_sum20/100 log abs neg sign cs_rank cs_demean cs_scale
-  双目算子(2参): add sub mul div corr20/60/100/200 min max
+    量价族: {{LEAF_PRICE}}
+    资金流族(前缀 mf_, 原始拆分无未来函数; 带 _buy/_sell 结尾=主动买入/卖出金额(元, 量纲A), _bqty/_sqty 结尾=主动买入/卖出股数(量纲V); 净额请用 sub 自组合): {{LEAF_MF}}
+    风格族(前缀 barra_, 每日截面风格暴露, 已做截面处理): {{LEAF_BARRA}}
+    财报族(前缀 fa_, PIT口径按公告日对齐无未来函数; _yoy=TTM同比, gm=毛利率, np_margin=净利率, roe=ROE, lev=杠杆, pb=市净率, accrual=应计, gw=商誉占比): {{LEAF_FA}}
+  单目算子(1参): {{OPS_CORE}}
+  ★指数均线(1参): {{OPS_EMA}} (指数加权, 衰减因子 2/(n+1)。与 ts_mean 的等权不同 ⇒ 提供另一条平滑通道; 注意 ema12/ema26 可组合出 MACD: sub(ema12(A), ema26(A)))
+  ★回归族(1参): {{OPS_REG}} (对时间做滚动线性回归: slope=趋势斜率(方向+强度); rsqr=拟合度R²(路径多接近直线, 但不含方向 ⇒ 建议与 slope 组合: mul(ts_rsqr20(close), ts_slope20(close))); resi=最后一点相对趋势线的偏离。注意: 它们描述趋势而非水平, 与 ts_mean 是不同通道)
+  ★分布形状(1参): {{OPS_MOMENT}} (滚动偏度/超额峰度。与波动率不等价 —— 同样 σ 时厚尾的尾部风险更大; 偏度看尾巴往哪边, 峰度看极端值密度。建议作用在 ret 或已中性化的量上, 直接对价格水平算意义有限)
+  双目算子(2参): {{OPS_BINARY}}
   例子: sub(ts_mean20(overnight), ts_mean60(overnight))  表示'短期隔夜跳空均值相对长期回落=跳空溢价衰减';
         neg(corr60(ts_delta5(close), volume)) 表示'价量背离';
   硬性要求: 1)每行恰好一条表达式, 禁止出现叶子字段以外的名字, 窗口必须是上述枚举值; 2)子表达式外层不要再包无意义函数; 3)优先 sub/div/背离/平滑结构, 少用纯单字段均值; 4)输出只给表达式, 不得解释(你的假设放在 JSON 的 hyp 字段)。

@@ -405,24 +405,11 @@ def ts_corr(x, y, w):
         pd.DataFrame(y)).values
 
 
-def ts_max_op(x):
-    import fastops
-    return fastops.ts_max(x, 20)
 
-
-def ts_min_op(x):
-    import fastops
-    return fastops.ts_min(x, 20)
-
-
-def ts_corr20_op(a, b):
-    import fastops
-    return fastops.ts_corr(a, b, 20)
-
-
-def ts_corr60_op(a, b):
-    import fastops
-    return fastops.ts_corr(a, b, 60)
+# ⚠ 2026-09-15（架构清扫 P0-1）删除 4 个**死代码**：`ts_max_op` / `ts_min_op` /
+#   `ts_corr20_op` / `ts_corr60_op` —— 早期实现残留（当时算子表还没统一用
+#   `_mx`/`_mn`/`_cr`），经 `tools/_audit_deadcode.py` 实测：**本文件内外均无引用** ✗
+#   且与 `UNARY` 里的 `ts_max20`/`ts_min20`/`corr20`/`corr60` 功能重复 ✓
 
 
 def cs_rank_op(x):
@@ -439,177 +426,29 @@ def cs_scale_op(x):
     return (r - 0.5) * 2
 
 
-def _m(x, w):
-    import fastops
-    return fastops.ts_mean(x, w)
+# ★★★ 2026-09-15（架构清扫 P0-1）：算子表改为从 `ops_registry` **派生**（单一事实源）。
+#
+#   【改造前】这里曾有 13 个 helper（`_m/_s/_r/_mx/_mn/_sm/_cr/_e/_sl/_rq/_rs/_sk/_ku`）
+#     + 约 90 行 `UNARY` 字面量 + `BINARY` 字面量 ⇒ **同一批算子名被抄在 4 处**
+#     （本文件 · `loop_critic.SLOW_OPS` · `loop_llm` 的 A角 prompt · `_test_ops_sync` 期望值）
+#     ⇒ 结果：**加 1 个算子要同步改 4 个代码文件，漏一处就漂移**
+#       （`loop_todo §1.25` 实名记录过：`loop_critic._ops_of` 硬编码 28 个 vs 引擎 45 个，
+#        **长窗口算子一直被 B角 忽视**）✗
+#   【改造后】算子只在 `engine/ops_registry.py` 声明一次，这里**只接线**
+#     ⇒ 结构上**无法漂移**（不是靠测试提醒，是根本没得抄）✓
+#
+#   ★ 为什么传 `fastops` + `vars()` 进去（依赖注入），而不是让 ops_registry 自己 import：
+#      `ops_registry` 若 `import loop_engine`，就与本文件 import 它构成**循环依赖** ✗
+#   ★ 为什么给 `vars()`：`cs_rank_op`/`cs_demean_op`/`cs_scale_op`/`ts_delay`/`ts_delta`
+#      是本文件的本地实现（pandas 口径），注册表按**名字**取用 ✓
+#   ⚠ `ts_mean`（本文件上方的 pandas 版）**必须保留** —— 它被下方去相关闸门的
+#      `amt_log` 基准使用（`KNOWN` 字典，L1900+），删掉会直接 `NameError` ✗
+#   ⚠ `ts_delay`/`ts_delta` 同理（`UNARY` 按名取用）✓
+import ops_registry as _OPS
+import fastops as _FO
 
-
-def _s(x, w):
-    import fastops
-    return fastops.ts_std(x, w)
-
-
-def _r(x, w):
-    import fastops
-    return fastops.ts_rank(x, w)
-
-
-def _mx(x, w):
-    import fastops
-    return fastops.ts_max(x, w)
-
-
-def _mn(x, w):
-    import fastops
-    return fastops.ts_min(x, w)
-
-
-def _sm(x, w):
-    import fastops
-    return fastops.ts_sum(x, w)
-
-
-def _cr(a, b, w):
-    import fastops
-    return fastops.ts_corr(a, b, w)
-
-
-def _e(x, w):
-    import fastops
-    return fastops.ts_ema(x, w)
-
-
-# ★ 回归/矩算子（2026-09-15, loop_todo §1.26 ②③）—— 5 个 helper 与 `_m`/`_s` 同风格
-def _sl(x, w):
-    import fastops
-    return fastops.ts_slope(x, w)
-
-
-def _rq(x, w):
-    import fastops
-    return fastops.ts_rsqr(x, w)
-
-
-def _rs(x, w):
-    import fastops
-    return fastops.ts_resi(x, w)
-
-
-def _sk(x, w):
-    import fastops
-    return fastops.ts_skew(x, w)
-
-
-def _ku(x, w):
-    import fastops
-    return fastops.ts_kurt(x, w)
-
-
-UNARY = {
-    # 短中窗口(原)
-    'ts_mean5': lambda x: _m(x, 5),
-    'ts_mean10': lambda x: _m(x, 10),
-    'ts_mean20': lambda x: _m(x, 20),
-    'ts_std20': lambda x: _s(x, 20),
-    'ts_std60': lambda x: _s(x, 60),
-    'ts_max20': lambda x: _mx(x, 20),
-    'ts_min20': lambda x: _mn(x, 20),
-    'ts_rank20': lambda x: _r(x, 20),
-    'ts_rank60': lambda x: _r(x, 60),
-    'ts_delay1': lambda x: ts_delay(x, 1),
-    'ts_delta5': lambda x: ts_delta(x, 5),
-    'ts_delta20': lambda x: ts_delta(x, 20),
-    'ts_sum20': lambda x: _sm(x, 20),
-    # ★长窗口(中金: 51-100天52次 / 151-200天23次, 明显中长窗口偏好)
-    'ts_mean60': lambda x: _m(x, 60),
-    'ts_mean100': lambda x: _m(x, 100),
-    'ts_mean120': lambda x: _m(x, 120),
-    'ts_mean150': lambda x: _m(x, 150),
-    'ts_mean200': lambda x: _m(x, 200),
-    'ts_std100': lambda x: _s(x, 100),
-    'ts_std150': lambda x: _s(x, 150),
-    'ts_std200': lambda x: _s(x, 200),
-    'ts_rank100': lambda x: _r(x, 100),
-    'ts_rank200': lambda x: _r(x, 200),
-    'ts_max100': lambda x: _mx(x, 100),
-    'ts_min100': lambda x: _mn(x, 100),
-    'ts_delta60': lambda x: ts_delta(x, 60),
-    'ts_delta120': lambda x: ts_delta(x, 120),
-    'ts_sum100': lambda x: _sm(x, 100),
-    # ★★ EMA 族（2026-09-15, loop_todo §1.25）—— 对齐 QuantaAlpha `EMA` / 通达信 `EMA`
-    #   为什么值得加：`ts_mean` 是**等权**、EMA 是**指数加权** ⇒ **不同算子、组合不出来**
-    #   ⇒ 这是盘点时发现的**唯一真缺**（`--style_obs` 4 项之外，算子族里唯一补不回来的）
-    #   ⇒ 它提供一条**新的平滑通道 = 新信号源**（正对 §1.20 铁律「瓶颈是信号源多样性」）✓
-    #   ★ 窗口为什么是这 5 个：**12/26 是 MACD 标准参数** ⇒ `sub(ema12(x), ema26(x))` 就是 MACD
-    #     （**不必再单独加 `MACD` 算子**）✓；5/20/60 与 `ts_mean` 的常用档对齐 ✓
-    #   ★ 性能：真面板实测 **`ema12(close)` 0.58s vs `ts_mean20(close)` 1.17s** ⇒
-    #     `ema` **反而更快**（`ts_mean` 要两次 cumsum + 计数）⇒ **无需特殊降权** ✓
-    'ema5': lambda x: _e(x, 5),
-    'ema12': lambda x: _e(x, 12),
-    'ema20': lambda x: _e(x, 20),
-    'ema26': lambda x: _e(x, 26),
-    'ema60': lambda x: _e(x, 60),
-    # ★★★ 回归类（2026-09-15, loop_todo §1.26 ③；用户点名 slope + R²）
-    #   为什么值得加：`ts_mean` 说"**水平**多少"，回归三件套说"**趋势**" —— 是**不同信息通道** ✓
-    #     `ts_slope` = 趋势方向+强度 · `ts_rsqr` = 趋势"干净度"（路径多接近直线）·
-    #     `ts_resi`  = 趋势之外的偏移（最后一点相对趋势线）
-    #   ★★ `ts_rsqr` 的用户理由：「R方高线性度好，说明**涨得稳**」—— 方向对 ✓
-    #      但要注意：**R² 不含方向**（涨得稳 / 跌得稳 都是高 R²）⇒ 必须配合 `ts_slope` 的符号
-    #      （如 `mul(ts_rsqr20(close), ts_slope20(close))` = 干净度 × 方向）✓
-    #   ★ 三者出自**同一次回归** ⇒ 几乎零额外成本（前缀和可解，实测 0.42s/3309×2000）✓
-    #   ⚠ **满窗**语义（回归要求同一批点）⇒ 前 w-1 期 NaN（同 `ts_ema`）
-    #   ★★ 窗口档位的选择原则（2026-09-15 用户问「为啥不做 10/15/30」后定下来的）：
-    #     ① **近似等比**（短端密、长端疏）—— 因为**短端的相对差异才是信息**
-    #        （5 vs 10 差 2 倍；60 vs 65 没意义）⇒ `5/10/20/60` 的间距是 `2×/2×/3×` ✓
-    #     ② **优先复用项目已有档位**，别引入新档
-    #        （实测：`w=20` 被 13 个算子用、`w=60` 被 10 个、`w=5` 被 6 个；
-    #         而 **`w=15`/`w=30` 全项目从未出现** ⇒ 加了就是引入新档位 ⇒ **不加** ✓）
-    #     ③ **别加冗余档**：`slope10` ≈ `slope5` 与 `slope20` 的混合（趋势类在**相邻窗口
-    #        高度相关**，不像 `ts_mean` 那样正交）⇒ 档位间距不能太密 ✓
-    #     ⚠ 总代价：每加一档 = **+3 个算子**（slope/rsqr/resi 各一）⇒ 搜索空间膨胀
-    #     ★ 快慢趋势差（类 MACD）用 `sub(ts_slope5(close), ts_slope60(close))` **已能组合** ✓
-    'ts_slope5': lambda x: _sl(x, 5),
-    'ts_slope10': lambda x: _sl(x, 10),
-    'ts_slope20': lambda x: _sl(x, 20),
-    'ts_slope60': lambda x: _sl(x, 60),
-    'ts_rsqr5': lambda x: _rq(x, 5),
-    'ts_rsqr10': lambda x: _rq(x, 10),
-    'ts_rsqr20': lambda x: _rq(x, 20),
-    'ts_rsqr60': lambda x: _rq(x, 60),
-    'ts_resi5': lambda x: _rs(x, 5),
-    'ts_resi10': lambda x: _rs(x, 10),
-    'ts_resi20': lambda x: _rs(x, 20),
-    'ts_resi60': lambda x: _rs(x, 60),
-    # ★★ 高阶矩（§1.26 ②）—— 分布**形状**通道：偏度=尾巴往哪边 · 峰度=极端值密度
-    #   ★ 与波动率**不等价**：同样 σ，厚尾的尾部风险更大 ⇒ 是独立信息 ✓
-    #   ★ 也走前缀和（3~4 个 cumsum）⇒ 便宜 ✓
-    #   ⚠ **窗口只给 20/60，不给 5**（与回归族不同）：偏度/峰度是**高阶矩**，
-    #     需要**足够样本**才稳 —— 5 个点的偏度估计方差极大（基本是噪声）⇒ 短窗无意义 ✗
-    'ts_skew20': lambda x: _sk(x, 20),
-    'ts_skew60': lambda x: _sk(x, 60),
-    'ts_kurt20': lambda x: _ku(x, 20),
-    'ts_kurt60': lambda x: _ku(x, 60),
-    'log': lambda x: np.log(np.maximum(x, 1e-9)),
-    'abs': np.abs,
-    'neg': lambda x: -x,
-    'sign': np.sign,
-    'cs_rank': cs_rank_op,
-    'cs_demean': cs_demean_op,
-    'cs_scale': cs_scale_op,
-}
-
-BINARY = {
-    'add': lambda a, b: a + b,
-    'sub': lambda a, b: a - b,            # 中金: sub 出现率 94%(差值/背离结构为主)
-    'mul': lambda a, b: a * b,
-    'div': lambda a, b: a / np.where(np.abs(b) > 1e-9, b, np.nan),
-    'corr20': lambda a, b: _cr(a, b, 20),
-    'corr60': lambda a, b: _cr(a, b, 60),
-    'corr100': lambda a, b: _cr(a, b, 100),
-    'corr200': lambda a, b: _cr(a, b, 200),
-    'min': lambda a, b: np.minimum(a, b),
-    'max': lambda a, b: np.maximum(a, b),
-}
+UNARY = _OPS.build_unary(_FO, vars())
+BINARY = _OPS.build_binary(_FO, vars())
 
 # ★LEAVES 完整叶子池已由顶部 `from loop_fields import LEAVES` 提供
 #   (基础7 + 派生12 + MF16资金流 + BARRA11风格 + FA8财报 = 54), 勿在此重复硬编码(防漂移)

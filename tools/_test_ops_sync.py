@@ -3,23 +3,49 @@
 
 ## 为什么有这个测试（2026-09-15，加 `ema` 时发现的**漂移**）
 
-引擎的算子白名单在 `loop_engine.UNARY/BINARY`（**定义**），但**下游有 3 处副本**：
+引擎的算子白名单原在 `loop_engine.UNARY/BINARY`，但**下游有 3 处副本**：
   · `loop_critic.SLOW_OPS`（B角"偏好长周期算子"）
   · `loop_critic._ops_of()` ← ★★ **硬编码 28 个**，而引擎有 **45 个** ⇒ **缺 15 个**
     （`ts_mean60/100/120/150/200` · `ts_std100/150/200` · `ts_rank100/200` ·
       `ts_max100` · `ts_min100` · `ts_delta60/120` · `ts_sum100` · `corr100/200`）
     ⇒ **长窗口算子一直被 B角 的结构诊断忽视** ✗
   · `loop_llm` 的 A角 prompt（**声明式**清单，必须人工同步）
-
 ★ 这与项目史上「`loop_critic` 硬编码旧 12 字段」（见 `loop_fields.py` 头注）是**同一类漂移**。
 
-## 本测试的四层断言
+## ★★★ 2026-09-15 晚（架构清扫 P0-1）：**根因已消除，本测试的角色随之升级**
 
-1. **`_ops_of` 必须与引擎同步**（已改成派生 ⇒ 结构性保证；再断言一次防回退）
-2. **穷尽搜**：全仓 `.py` 里出现具体算子名的位置**只允许**在
-   `loop_engine.py`（定义）/ `loop_llm.py`（prompt）/ 测试自身 —— 别处出现就报警
-3. **LLM prompt 必须列出所有算子**（否则 A角 不知道有它；且"窗口必须是枚举值"会拒掉）
+上述副本**全部改成从单一事实源派生**：
+```
+engine/ops_registry.py   ← ★ 算子**唯一声明处**（+ `SLOW_OPS` + prompt 名单生成）
+engine/loop_fields.py    ← ★ 叶子**唯一声明处**（更早已经存在）
+        ↓ 派生
+loop_engine.UNARY/BINARY · loop_critic.SLOW_OPS · loop_llm 的 prompt（**占位符注入**）
+```
+⇒ 从此**结构上不可能漂移**（不是靠本测试提醒，是**根本没得抄**）✓
+
+★★★ **但 P0-1 过程中，本测试抓到一个"正在漏水"的真 bug**（价值极高，记在这）：
+  `engine/skills/gen_skill.md` 是**运行时真正生效**的 A角 prompt，却**落后 21 个算子**
+  （`ema*` 5 个 · `ts_slope/rsqr/resi*` 12 个 · `ts_skew/kurt*` 4 个）
+  与 **7 个财报叶子**（`fa_pb/fa_accrual/fa_asset_turn/fa_gw/fa_inv_turn/fa_recv_turn/fa_sell_exp`）；
+  而 prompt 又硬性要求「**窗口必须是上述枚举值**」「禁止出现叶子字段以外的名字」
+  ⇒ **A角 LLM 即使想用也会被自己的规则拒掉** ⇒ v0.13.0/v0.13.1 新加的算子
+     **对 A角 语义引导实际从未生效** ✗✗
+  ★ **教训**：**「文件存在就用它」的外置副本 = 最容易过期的副本** ——
+    因为改 prompt 时通常只改源码里那份（`_GEN_SYSTEM_FALLBACK`），忘了 .md。
+    ⇒ 而这正是本测试**旧版查不出来**的：它 grep 的是 `loop_llm.py` 源码
+      （= **回退份**），恰好**不是生效的那份** ✗
+
+## 本测试的断言（升级后）
+
+1. **`_ops_of` 必须与引擎同步**（已派生 ⇒ 结构性保证；再断言一次防回退）
+2. **穷尽搜**：全仓 `.py` 里出现"算子名清单"的位置**只允许**在
+   `ops_registry.py`（**声明处**）与经人工确认的少数文件 —— 别处出现就报警
+3. **A角 prompt（★ 渲染后）必须列出全部算子** —— 同时覆盖 `GEN_SYSTEM`
+   （= `skills/gen_skill.md`，**生效版**）与 `_GEN_SYSTEM_FALLBACK`（回退版），
+   并断言**没有未渲染的占位符** ✓
 4. **`ts_ema` 数值正确性**：手算递归 / 衰减因子 / 满窗 / **无未来信息** / 能组合出 MACD
+5. **能组合出 MACD**（`sub(ema12(x), ema26(x))` ⇒ 无需单独加 `MACD` 算子）
+6. **叶子字段（★ 渲染后）必须列全** —— 治上面那个 bug 的**第二半**（缺 7 个财报叶子）✓
 """
 import io
 import os
@@ -40,10 +66,11 @@ sys.path.insert(0, os.path.join(ROOT, 'engine'))
 OK = [0, 0]
 # 允许出现"算子名清单"的文件（**均已人工确认**，见各条理由）
 ALLOW = {
-    'loop_engine.py',        # ★ 定义处（UNARY/BINARY 单一事实源本身）
-    'loop_llm.py',           # ★ A角 prompt（**声明式**，由 [3] 专门锁同步）
-    'loop_critic.py',        # ★ `SLOW_OPS`/`FAST_OPS` = **子集偏好**（不是全量副本）；
-                             #   而真正要同步的 `_ops_of` 已改成**派生** ⇒ 由 [1] 结构性保证
+    'ops_registry.py',       # ★★★ **算子唯一声明处**（P0-1 之后单一事实源的本体）
+    'loop_engine.py',        # ★ 现在只是**接线**（UNARY/BINARY 均派生）；留白以备注释举例
+    'loop_llm.py',           # ★ **占位符版** prompt（名单已不手写）；由 [3] 锁**渲染后**覆盖
+    'loop_critic.py',        # ★ `FAST_OPS` = **子集偏好**（`SLOW_OPS` 已改派生）；
+                             #   真正要同步的 `_ops_of` 已**派生** ⇒ 由 [1] 结构性保证
     'loop_fix_bank_gen8.py',  # 一次性修复脚本里的具体因子表达式（不是清单）
     # 以下为各测试/诊断脚本里引用的具体表达式示例（非清单）
     '_test_ops_sync.py', '_test_critic_sensor.py', 'calib_gates.py', '_test_daily_dd.py',
@@ -133,17 +160,56 @@ def _expand_abbrev(src):
     return out
 
 
+def _prompt_variants():
+    """两份 A角 prompt 的**渲染后文本**（生效版 + 回退版）。
+
+    ★ 为什么必须**两份都测**：`GEN_SYSTEM` 才是**运行时生效**的那份
+      （`_load_skill` 优先读 `skills/gen_skill.md`），`_GEN_SYSTEM_FALLBACK` 仅在
+      .md 缺失/为空时回退 ⇒ **旧版测试 grep 的是源码（= 回退份）**，
+      恰好**看不见生效的那份** ⇒ 漏掉了"生效版缺 21 个算子"这个真 bug ✗
+    """
+    import loop_llm as LL
+    return (('GEN_SYSTEM（skills/gen_skill.md · **生效版**）', LL.GEN_SYSTEM),
+            ('_GEN_SYSTEM_FALLBACK（回退版）', LL.render_prompt(LL._GEN_SYSTEM_FALLBACK)))
+
+
 def t_llm_prompt():
-    print('\n[3] A角 LLM prompt 必须列出**全部**算子（否则它不知道有 ema）')
+    print('\n[3] A角 LLM prompt（★**渲染后**）必须列出**全部**算子')
     import loop_engine as LE
-    src = io.open(os.path.join(ROOT, 'engine', 'loop_llm.py'), encoding='utf-8').read()
-    listed = _expand_abbrev(src)
+    import loop_llm as LL
     need = set(LE.UNARY) | set(LE.BINARY)
-    # ⚠ 无窗口算子（`abs`/`log`/`add`/`sub`…）在 prompt 里是**空格分隔的字面名**，
-    #   展开器抓不到 ⇒ 用 `k in src` 兜底（但要**先**做展开，否则有窗口的漏项会被掩盖）
-    miss = sorted(k for k in need - listed if k not in src)
-    chk(not miss, 'prompt 覆盖全部 {} 个算子（缺 {}）'.format(len(need), miss or '无'))
-    chk('ema12' in listed and 'ema26' in listed, 'prompt 含 `ema12`/`ema26`（MACD 可组合）')
+    for label, txt in _prompt_variants():
+        left = LL.unresolved_placeholders(txt)
+        chk(not left, '{}：无未渲染的占位符（残留 {}）'.format(label, left or '无'))
+        listed = _expand_abbrev(txt)
+        # ⚠ 无窗口算子（`abs`/`log`/`add`/`sub`…）在 prompt 里是**空格分隔的字面名**，
+        #   展开器抓不到 ⇒ 用 `k in txt` 兜底（但**先**展开，否则有窗口的漏项会被掩盖）
+        miss = sorted(k for k in need - listed if k not in txt)
+        chk(not miss, '{}：覆盖全部 {} 个算子（缺 {}）'.format(label, len(need), miss or '无'))
+    chk('ema12' in _expand_abbrev(LL.GEN_SYSTEM)
+        and 'ema26' in _expand_abbrev(LL.GEN_SYSTEM),
+        '★ **生效版** prompt 含 `ema12`/`ema26`（MACD 可组合）')
+
+
+def t_leaves():
+    """★ 叶子字段也要"渲染后完整" —— 治 P0-1 抓到的 bug **第二半**。
+
+    2026-09-15 实录：`skills/gen_skill.md` 的财报族只列 **8 个**，而
+    `loop_fields.FA_LEAVES` 当天已扩到 **15 个**（+`fa_pb`/`fa_accrual`/`fa_asset_turn`/
+    `fa_gw`/`fa_inv_turn`/`fa_recv_turn`/`fa_sell_exp`）⇒ **A角 看不到新增的 7 个** ✗
+    而 prompt 又写着「禁止出现叶子字段以外的名字」⇒ 想用也用不了 ✗
+    ⇒ 现在名单由 `{{LEAF_*}}` 从 `loop_fields` 注入 ⇒ 断言"渲染后包含全部叶子" ✓
+    """
+    print('\n[6] 叶子字段（★**渲染后**）必须列全（治 gen_skill.md 缺 7 个财报叶子）')
+    import loop_engine as LE
+    from loop_fields import LEAVES
+    need = set(LEAVES)
+    chk(set(LE.LEAVES) == need,
+        '`loop_engine.LEAVES` == `loop_fields.LEAVES`（{} 个，单一事实源）'.format(len(need)))
+    for label, txt in _prompt_variants():
+        toks = set(re.findall(r'[A-Za-z_][A-Za-z_0-9]*', txt))
+        miss = sorted(k for k in need - toks)
+        chk(not miss, '{}：覆盖全部 {} 个叶子（缺 {}）'.format(label, len(need), miss or '无'))
 
 
 def t_ema():
@@ -233,6 +299,7 @@ def main():
     t_llm_prompt()
     t_ema()
     t_macd()
+    t_leaves()
     print('\n' + '=' * 96)
     print('通过 {}/{}'.format(OK[0] - OK[1], OK[0]) + ('' if OK[1] else '  ✓ 全部通过'))
     return 1 if OK[1] else 0

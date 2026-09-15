@@ -35,6 +35,110 @@
 
 ---
 
+## [0.16.0] — 2026-09-15
+
+> 主题：**架构清扫 P0-1 —— 算子「单一事实源」**（并顺手修掉**两个正在漏水**的真 bug）
+> 起因：用户问「**你经常出错又自己修正，在别的项目不这样 —— 是不是项目架构太乱/太零碎？
+> 从软件工程角度打分，是不是该先清扫？**」
+
+### ① 先量化（新增只读体检：`tools/_audit_codebase.py` / `_audit_coupling.py` / `_audit_deadcode.py`）
+
+| 维度 | 实测 | 判定 |
+|---|---|---|
+| 规模 | **184 个 .py / 32,042 行** | 尚小 |
+| ★ 单点巨人 | `engine/loop_engine.py` **3,134 行 / 177 KB**，其中 **`run()` 一个函数 1,291 行** | **P0** |
+| ★ 副本 | **加 1 个算子要同步改 10 处**（4 个代码文件 + 6 个文档）；同一名单被抄 **4 份** | **P0** |
+| 重复函数体 | **24 组**（`to_int_date` ×9、`market_temperature` ×5…） | P2（历史研究代码）|
+| 同名常量各自定义 | `ENG` ×9 · `BARRA` ×8 · `SRC` ×7 · `OUT_CSV` ×7… | P2 |
+| 文档体积 | `factor_roadmap.md` **4,510 行 / 312 KB**（~69% 是开发日志） | P1 |
+
+**八维评分** ⇒ 结论：**不是"混乱"，是"高质量但未拆分的单体"**：
+
+| 功能性 | 可测试性 | 工程纪律 | 性能 | 可读性 | 可移植性 | 文档 | **可维护性** |
+|---|---|---|---|---|---|---|---|
+| **8** | **8** | **9** | 6 | 6 | 5 | 5 | **4** ← 最低 |
+
+**综合 ≈ 6.4 / 10** —— **纪律/测试是 A 级，结构是 C 级**。
+> ★★★ 所以"出错多"**约 6 成归架构、4 成是我自己的操作失误** —— **不能全甩锅给项目** ✓
+
+### ② 做了什么（只做**最高杠杆、最低风险**的 P0-1）
+
+**新增 `engine/ops_registry.py` = 算子**唯一声明处**（含 `SLOW_OPS` 与 prompt 名单生成）**
+
+```
+engine/ops_registry.py    ← ★ 声明一次：56 单目 + 10 双目 + SLOW_OPS + prompt 名单
+        ↓ 派生（**结构上不可能漂移**）
+loop_engine.UNARY/BINARY  ·  loop_critic.SLOW_OPS  ·  loop_llm 的 prompt（**占位符注入**）
+```
+
+| 项 | 改造前 | 改造后 |
+|---|---|---|
+| 加 1 个算子要改**代码**文件 | **4 个** | **1 个**（`ops_registry.py`）|
+| `loop_engine.py` 的算子表 | 13 个 helper + ~90 行 `UNARY` + `BINARY` 字面量 | **4 行接线**（`build_unary/build_binary`）|
+| prompt 的算子/叶子名单 | **手写 ×2 份副本** | **占位符 `{{OPS_*}}`/`{{LEAF_*}}` 运行时注入** |
+
+`loop_engine.py` **净减约 150 行**（206 行区域 → 55 行接线）✓
+
+### ★★★ Fixed（**本次最有价值的产出**）：两个**正在损害效果**的老 bug
+
+做第 3 步（把 prompt 也改成注入）时，升级后的 `_test_ops_sync [3]` 立刻报出：
+
+```
+engine/skills/gen_skill.md  ← _load_skill() 优先读它 ⇒ 【运行时真正生效】的那份
+   缺 21 个算子：ema*(5) + ts_slope/ts_rsqr/ts_resi*(12) + ts_skew/kurt*(4)
+   缺  7 个叶子：fa_pb/fa_accrual/fa_asset_turn/fa_gw/fa_inv_turn/fa_recv_turn/fa_sell_exp
+                             ↑ 正是 v0.15.0「财报叶子 8→15」新增的那 7 个
+_GEN_SYSTEM_FALLBACK        ← 只在 .md 缺失时才用（**没生效**），反而是全的
+```
+
+⇒ 而 prompt 又**硬性要求**「窗口必须是上述枚举值」「禁止出现叶子字段以外的名字」
+⇒ ★★★★ **A角 LLM 即使想用，也会被自己的规则拒掉** ⇒
+ **v0.13.0/v0.13.1 的 16 个算子 + v0.15.0 的 7 个财报叶子，对 A角 语义引导实际从未生效** ✗✗
+
+> ★★★ **教训①**：**「文件存在就用它」的外置副本 = 最容易过期的副本** ——
+> 改 prompt 时通常只改源码里那份，忘了 `.md`（v0.15.0 的 Notes 只改了
+> `build_fa_pit.py`/`loop_fields.py`/`fa_pit.h5`，**完全没碰 `gen_skill.md`**）。
+> ★★★ **教训②**：**旧测试查不出来** —— 它 grep 的是 `loop_llm.py` 的**源码**（= **回退份**），
+> 恰好**不是生效的那份** ✗ ⇒ 已改为测 **渲染后的真实产物**，且**两份都测** ✓
+
+### Changed
+
+- `engine/ops_registry.py`（**新增**）· `engine/loop_engine.py`（表改派生 + 清死代码）·
+  `engine/loop_critic.py`（`SLOW_OPS` 改派生）· `engine/loop_llm.py`（占位符渲染机制）·
+  `engine/skills/gen_skill.md`（名单改占位符 + **补回缺失的 ema/回归/高阶矩说明行**）
+- `tools/_test_ops_sync.py`：**[3] 改为测渲染后产物（两份都测）** · 新增 **[6] 叶子覆盖** ·
+  `ALLOW` 更新为「`ops_registry.py` = 唯一声明处」（22 → **28** 项）
+- `tools/_test_ops_registry.py`（**新增 16 项**）：★ 含 **"只改一处就够"的行为证明** ——
+  临时插一条算子（`ts_mean137`）⇒ **引擎表 + A角 prompt 双双自动生效**，并在 `finally` 清理还原 ✓
+
+### Removed
+
+- `loop_engine.py` 里 **4 个死函数**（`ts_max_op`/`ts_min_op`/`ts_corr20_op`/`ts_corr60_op`）
+  —— `_audit_deadcode.py` 实测**本文件内外均无引用**，且与 `UNARY` 里的同名算子重复
+- `loop_engine.py` 里 **13 个 helper**（`_m/_s/_r/_mx/_mn/_sm/_cr/_e/_sl/_rq/_rs/_sk/_ku`）
+  —— 注册表**直接绑定 `fastops`**，不再需要中间层
+- `ai_test/_verify_ops_registry_equiv.py` · `ai_test/_apply_ops_registry_wiring.py`（一次性脚本，使命已完）
+
+### 验证
+
+- ★★ **先抓"金标准快照"再动刀**（`ai_test/_ops_oracle_before.json`）：`UNARY=56 / BINARY=10 / SLOW_OPS=9`
+- ★★ **逐位等价**：注册表构建的算子 vs 改造前引擎算子 ⇒ **56+10 个全部 `allclose(atol=0, rtol=0)`**
+  （**不是"看起来一样"**，是逐位相同，含 NaN 位置）✓
+- **真机冒烟 4/4** · 全部 `loop_state*.pkl` **SHA256 未变** ✓
+- 全量：编译 **83** 个文件全过 · 引号全绿 · **11 个回归测试全绿**（含新 16/16、升级后 28/28）
+
+### ⚠ 诚实遗留（不粉饰）
+
+- ⚠ **一处有意的顺序变更**：旧 `UNARY` dict 的**插入顺序**是历史产物（短窗先行、长窗后补），
+  注册表改用**自然的族顺序** ⇒ 而 `list(UNARY.keys())` 被 `rand_expr`/`mutate`/`_mix_weights`
+  当**随机选择池** ⇒ **同一 RNG 种子会选到不同算子** ⇒ **候选流与旧版不同**
+  （**算子集合逐字相同**）⇒ 这**可接受**（版本升级本就变了算子集），但**不能声称"零行为变化"** ✗
+- ⚠ **P0-2（拆 `run()` 1,291 行）尚未做** —— 它是"改主循环时上下文不足"的**直接根因**，
+  收益比 P0-1 更大，但需"纯提取 + 回归兜底"，**单独一轮做更稳** ✓
+- ⚠ P1（文档分家：`factor_roadmap.md` 4,510 行）与 P2（`research/`+`strategies/` 去重）未做
+
+---
+
 ## [0.15.0] — 2026-09-15
 
 > 主题：**财报叶子扩展：8 → 15 个**（用户问「财报数据不是有一堆吗？什么 ROE、PB、归母净利润同比」）

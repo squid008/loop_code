@@ -18,6 +18,7 @@ LLM 子代理(中金 Loop Engineering 对齐) —— 共享基础设施 + 双角
 无人值守铁律: key 缺失/调用失败/超时一律回退规则引擎, 绝不阻塞迭代(所有异常由调用方兜底)。
 """
 import os
+import re
 import json
 import time
 
@@ -198,35 +199,29 @@ _GEN_SYSTEM_FALLBACK = (
     "行为能预测未来5日截面收益), 再把这假设落成若干条可计算的因子表达式。\n"
     "表达式语法(必须严格遵守, 只允许前缀式, 小写):\n"
     "  叶子字段(全部为计算原料, 禁止自造名字, 按族给全):\n"
-    "    量价族: close open high low volume turnover mktcap vwap ret turn_ratio "
-    "ln_mktcap ln_volume overnight intraday amplitude up_shadow down_shadow "
-    "hl_ratio true_range\n"
+    # ★ 名单**不手写** —— `{{...}}` 由 `render_prompt()` 从 `loop_fields` 实时注入（P0-1）
+    "    量价族: {{LEAF_PRICE}}\n"
     "    资金流族(前缀 mf_, 原始拆分无未来函数; 带 _buy/_sell 结尾=主动买入/卖出金额"
     "(元,量纲A), _bqty/_sqty 结尾=主动买入/卖出股数(量纲V); 净额请用 sub 自组合): "
-    "mf_s_buy mf_m_buy mf_l_buy mf_x_buy mf_s_sell mf_m_sell mf_l_sell mf_x_sell "
-    "mf_s_bqty mf_m_bqty mf_l_bqty mf_x_bqty mf_s_sqty mf_m_sqty mf_l_sqty mf_x_sqty\n"
-    "    风格族(前缀 barra_, 每日截面风格暴露, 已做截面处理): barra_size "
-    "barra_non_linear_size barra_momentum barra_liquidity barra_book_to_price "
-    "barra_leverage barra_growth barra_earnings_yield barra_beta "
-    "barra_residual_volatility barra_comovement\n"
+    "{{LEAF_MF}}\n"
+    "    风格族(前缀 barra_, 每日截面风格暴露, 已做截面处理): {{LEAF_BARRA}}\n"
     "    财报族(前缀 fa_, PIT口径按公告日对齐无未来函数; _yoy=TTM同比, gm=毛利率, "
-    "np_margin=净利率, roe=ROE, lev=杠杆): fa_np_yoy fa_rev_yoy fa_op_yoy fa_ocf_yoy "
-    "fa_gm fa_np_margin fa_roe fa_lev\n"
-    "  单目算子(1参): ts_mean5/10/20/60/100/120/150/200 ts_std20/60/100/150/200 "
-    "ts_max20/100 ts_min20/100 ts_rank20/60/100/200 ts_delay1 ts_delta5/20/60/120 "
-    "ts_sum20/100 log abs neg sign cs_rank cs_demean cs_scale\n"
-    "  ★指数均线(1参, 2026-09-15 新增): ema5 ema12 ema20 ema26 ema60 "
+    "np_margin=净利率, roe=ROE, lev=杠杆, pb=市净率, accrual=应计, gw=商誉占比): "
+    "{{LEAF_FA}}\n"
+    # ★ 算子名单同样**不手写** —— 由 `render_prompt()` 从 `ops_registry` 实时注入（P0-1）
+    "  单目算子(1参): {{OPS_CORE}}\n"
+    "  ★指数均线(1参): {{OPS_EMA}} "
     "(指数加权, 衰减因子 2/(n+1)。与 ts_mean 的**等权**不同 ⇒ 提供另一条平滑通道; "
     "注意 ema12/ema26 可组合出 MACD: sub(ema12(A), ema26(A)))\n"
-    "  ★回归族(1参, 2026-09-15 新增): ts_slope5/10/20/60  ts_rsqr5/10/20/60  ts_resi5/10/20/60 "
+    "  ★回归族(1参): {{OPS_REG}} "
     "(对时间做滚动线性回归: slope=趋势斜率(方向+强度); rsqr=拟合度R²(路径多接近直线, "
     "**但不含方向** ⇒ 建议与 slope 组合: mul(ts_rsqr20(close), ts_slope20(close))); "
     "resi=最后一点相对趋势线的偏离。注意: 它们描述**趋势**而非**水平**, 与 ts_mean 是不同通道)\n"
-    "  ★分布形状(1参, 2026-09-15 新增): ts_skew20/60  ts_kurt20/60 "
+    "  ★分布形状(1参): {{OPS_MOMENT}} "
     "(滚动偏度/超额峰度。与波动率**不等价** —— 同样 σ 时厚尾的尾部风险更大; "
     "偏度看尾巴往哪边, 峰度看极端值密度。建议作用在 ret 或已中性化的量上, "
     "直接对价格水平算意义有限)\n"
-    "  双目算子(2参): add sub mul div corr20/60/100/200 min max\n"
+    "  双目算子(2参): {{OPS_BINARY}}\n"
     "  例子: sub(ts_mean20(overnight), ts_mean60(overnight))  表示'短期隔夜跳空均值相对"
     "长期回落=跳空溢价衰减';\n"
     "        sub(ema12(close), ema26(close)) 表示'MACD 式快慢均线背离';\n"
@@ -281,8 +276,63 @@ def _load_skill(name, fallback):
         return fallback
 
 
-GEN_SYSTEM = _load_skill('gen_skill', _GEN_SYSTEM_FALLBACK)     # A角(生成侧) Skill
-JURY_SYSTEM = _load_skill('jury_skill', _JURY_SYSTEM_FALLBACK)  # B角(审查侧) Skill
+# ============================================================ ★★★ 占位符渲染（P0-1）
+# 【为什么需要 —— 2026-09-15 实录：这是**正在漏水的 bug**，不是"洁癖"】
+#
+# A角 prompt 有**两份副本**：`engine/skills/gen_skill.md`（文件存在就用它）
+# 与上一行的 `_GEN_SYSTEM_FALLBACK`（文件缺失才回退）。
+# ★ 而**运行时生效的是 .md 那份**，它却**已经落后**：
+#   · 算子：缺 `ema5/12/20/26/60`(5) + `ts_slope/ts_rsqr/ts_resi{5,10,20,60}`(12)
+#           + `ts_skew/ts_kurt{20,60}`(4)  ⇒ **共 21 个**
+#   · 叶子：缺 `fa_pb/fa_accrual/fa_asset_turn/fa_gw/fa_inv_turn/fa_recv_turn/fa_sell_exp`(7)
+# ⇒ 而 prompt 同时硬性要求「**窗口必须是上述枚举值**」「禁止出现叶子字段以外的名字」
+#   ⇒ **A角 LLM 即使想用这些算子/字段，也会被自己的规则拒掉** ✗✗
+#   ⇒ 即 v0.13.0/v0.13.1 加的那批算子，**对 A角 语义引导实际从未生效**（真损失）✗
+#
+# ★ 正解：**机械清单不再手写**，改为占位符，运行时从**单一事实源**注入 ——
+#     算子 ← `ops_registry`（算子声明处）· 叶子 ← `loop_fields`（LEAVES 声明处）
+#   ⇒ 两份副本都会自动同步 ⇒ **结构上不可能再漂移** ✓
+#   ⚠ 语义说明（如"R² 不含方向 ⇒ 建议与 slope 组合"）**仍手写** ——
+#     那是**知识**，不是机械清单，不该自动化 ✓
+#
+# ★ 导入必须放在**本 dict 之前**（2026-09-15 实录）：初版把 import 写在 dict 后面，
+#   而 `'{{OPS_BINARY}}': _OPS.prompt_binary` 是**构造 dict 时立刻求值**的 ⇒
+#   `NameError: name '_OPS' is not defined` ✗
+#   ★ 教训：**dict 字面量里的裸引用是即时求值** —— 只有 `lambda` 体内才是延迟求值 ✓
+import ops_registry as _OPS      # ★ 算子单一事实源（声明处）
+import loop_fields as _LF        # ★ 叶子单一事实源（`LEAVES` 声明处）
+
+_PLACEHOLDERS = {
+    '{{OPS_CORE}}':   lambda: _OPS.prompt_unary('core'),
+    '{{OPS_EMA}}':    lambda: _OPS.prompt_unary('ema'),
+    '{{OPS_REG}}':    lambda: _OPS.prompt_unary('reg'),
+    '{{OPS_MOMENT}}': lambda: _OPS.prompt_unary('moment'),
+    '{{OPS_BINARY}}': lambda: _OPS.prompt_binary(),
+    '{{LEAF_PRICE}}': lambda: ' '.join(_LF.FIELDS_BASE + _LF.LEAVES_DERIVED),
+    '{{LEAF_MF}}':    lambda: ' '.join(_LF.MF16),
+    '{{LEAF_BARRA}}': lambda: ' '.join(_LF.BARRA_LEAVES),
+    '{{LEAF_FA}}':    lambda: ' '.join(_LF.FA_LEAVES),
+}
+
+
+def render_prompt(txt):
+    """把 prompt 里的 `{{...}}` 占位符替换为**实时生成**的清单。
+
+    ★ 未识别的占位符**保持原样**（不抛错）—— 无人值守铁律：宁可少注入，不可跑挂。
+    """
+    for k, fn in _PLACEHOLDERS.items():
+        if k in txt:
+            txt = txt.replace(k, fn())
+    return txt
+
+
+def unresolved_placeholders(txt):
+    """渲染后仍残留的 `{{...}}`（供测试断言"没有漏配的占位符"）。"""
+    return sorted(set(re.findall(r'\{\{[A-Z_]+\}\}', txt)))
+
+
+GEN_SYSTEM = render_prompt(_load_skill('gen_skill', _GEN_SYSTEM_FALLBACK))     # A角(生成侧)
+JURY_SYSTEM = render_prompt(_load_skill('jury_skill', _JURY_SYSTEM_FALLBACK))  # B角(审查侧)
 
 # ============================================================ META(代末复盘)
 # 原有代末 AI 审查(--ai_critic) 保留为"代级复盘", 非中金候选级, 见 loop_critic.py。
