@@ -85,3 +85,6 @@ dashboard/web/dist/
 dashboard/web/.vite/
 dashboard/**/__pycache__/
 dashboard/**/*.pyc
+
+# ★ 临时提交信息文件（2026-09-15：曾因 git add -A 误提交一次，加入忽略）
+_commit_msg.txt
