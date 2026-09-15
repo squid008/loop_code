@@ -1,0 +1,30 @@
+{
+  "_comment": "★★★ 端口/主机的【唯一配置源】—— 改端口只改这里一处，后端与前端都会跟着变。",
+  "_why": "后端 run.py 读它启动；前端 vite.config.ts 读它设 proxy（前端代码只请求相对路径 /api/*，完全不知道端口）。",
+  "_conflict": "★ 必须与 qlib_code 避开 —— 它占用：前端 5173 / 后端 8001 / MongoDB 27017。",
+  "backend": {
+    "host": "127.0.0.1",
+    "port": 8101,
+    "reload": false
+  },
+  "frontend": {
+    "host": "127.0.0.1",
+    "port": 5273,
+    "open": false
+  },
+  "reservedPorts": {
+    "qlib_code_frontend": 5173,
+    "qlib_code_backend": 8001,
+    "qlib_code_mongo": 27017
+  },
+  "project": {
+    "root": "..",
+    "_comment": "仓库根（相对本文件）。留空 = 自动向上找含 engine/ 与 docs/ 的目录。"
+  },
+  "database": {
+    "enabled": false,
+    "_comment": "★ 预留：逐步往 PostgreSQL 靠（聚宽因子看板风格）。现在数据直接读 docs/*.csv/*.md + engine/loop_state*.pkl。",
+    "url": "",
+    "schema": "loop"
+  }
+}

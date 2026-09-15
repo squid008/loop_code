@@ -78,3 +78,10 @@ QuantaAlpha-main/
 # 本地密钥文件（不上传；DeepSeek API key，桌面 1.txt 删除后由此兜底）
 .deepseek_key
 engine/.deepseek_key
+
+# ★ 前端看板（2026-09-15）：只跟踪源码/配置，**不跟踪依赖与构建产物**
+frontend/web/node_modules/
+frontend/web/dist/
+frontend/web/.vite/
+frontend/**/__pycache__/
+frontend/**/*.pyc
