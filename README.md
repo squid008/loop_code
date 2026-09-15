@@ -1,6 +1,7 @@
 # loop_code — Loop 式因子自动挖掘引擎
 
-> **当前版本 `v1.0.1`**（2026-09-15）— **恢复上证50（`pool=50`）数据文件 + 预建其库骨架**（看板已展示 5 个池；
+> **当前版本 `v1.0.2`**（2026-09-15）— ★ **修看板「在跑」判定失效的真 BUG**（进程过滤用了"工作目录"`loop_code`，而命令行里没有它 ⇒ 引擎在跑却报 `anyRunning=False` ✗）+ **启动「5 池 × 50 轮」挖掘**；
+> 上一版 `v1.0.1` — **恢复上证50（`pool=50`）数据文件 + 预建其库骨架**（看板已展示 5 个池；
 > ★ 骨架模板**从引擎 `_mk_library_skeleton` 用 `ast` 提取** ⇒ 格式与引擎 100% 一致）；
 > 上一版 `v1.0.0` — ★★ **里程碑：前后端看板建成**（`dashboard/`；★ **端口与版本各自"只改一处"**：
 > 端口见 `dashboard/config.json`，版本见根 `VERSION`）；**修 P0-2 引入的「幽灵实参」崩溃（已实际崩 2 代）** + 文件精简归档；
@@ -135,6 +136,7 @@ git tag -a v0.2 -F <说明文件>               # 建新版（说明按上表四
 
 | tag | 日期 | 提交 | 一句话内容 |
 |---|---|---|---|
+| **v1.0.2** | 2026-09-15 | `tag 自身` | ★ **修看板「在跑」判定失效真 BUG**（我引入）：`dashboard/api/app/sources/pools.py` 的进程过滤写 `CommandLine -match 'loop_code'`，而实际命令行是 `python.exe tools\run_tracks.py …` / `… --mine_pool=300` —— **都不含 `loop_code`**（那只是**工作目录**，不在命令行里）✗ ⇒ 引擎正跑却报 `anyRunning=False`/`在跑池=0`；改为按**脚本名**匹配 `loop_engine|run_tracks|loop_watch` ⇒ 实测 `anyRunning=True`、在跑池 5/5 ✓。★ 同时**启动「5 池 × 50 轮」挖掘**（`--pools=300,500,1000,50,all`；起点续代数 28/15/13/**4**/76；含 `--style_obs` ⇒ 新增池级 `docs/loop_style_obs_*.csv` = `§1.24-①c` 的输入）；⚠ 成本：单池单轮 60~80min ⇒ 5 池/轮 ≈ 5.8h、50 轮 ≈ 12 天，但**可断点续跑**。（教训：判"进程属不属于本项目"**不能靠工作目录**，要按脚本名/参数匹配；修完必须真跑验证）| 无引擎行为变更（看板进程匹配修复）|
 | **v1.0.1** | 2026-09-15 | `tag 自身` | **恢复上证50（`pool=50`）数据文件 + 预建库骨架**（用户：「我看你都把前端加上上证50池子了……那就别归档了，重新拖出来」）—— 4 个文件 `Move-Item` 回 `docs/`（`loop_journal_50.md` / `loop_archive_50.csv` / `loop_pool_obs_50.csv` / `loop_strip_style_50.csv`）；★ 预建 `docs/factor_library_50.md` —— **不手写模板**（会与引擎打架 ✗），而是用 `ast` **从引擎 `_mk_library_skeleton` 提取模板** ⇒ 逐字一致 · 3 个锚点 3/3 ✓；⚠ 为何不直接调那个函数：它写到模块级 `LIBRARY`（默认=全A 库文件）⇒ 会**覆盖 `factor_library.md`** ✗；⚠ 提取时踩坑：初版要求 `.format` 有**位置参数**，而引擎是 `(...).format(t=, s=)` **只有关键字** ⇒ **总是提取失败**（静默回退）✗ 已修（改取 `sub.func.value`）。★ `engine/loop_state_50.pkl` 一直未动（bank=0 / n_tested=300）· 看板实测 50 池 代数 0→3 / 流水 0→30 | 无代码行为变更（恢复数据 + 新建库骨架 + 文档）|
 | **v1.0.0** | 2026-09-15 | `tag 自身` | ★★ **里程碑：前后端看板建成** —— 新增 `dashboard/`（FastAPI 后端 + React/Vite 前端）：**池运行状态**（在跑/空闲 · 当前库 · 已测 · **跑过代数** · L2 流水 · 冻结）· **各池因子库** · **精选池**（L3 双闸门）· **进程** · **配置/口径**。★★ **端口"只改一处"已实证**（`dashboard/config.json` → 改后重启，前后端含 Vite proxy 全部跟着变；前端业务代码**零硬编码端口**）★ **版本也"只改一处"**：新增根 `VERSION`（此前 tag/`change_log`/README **三处打架** ✗）· 避开 `qlib_code` 端口 `5173/8001/27017` ⇒ 用 `8101/5273`。★ 期间抓到并修 6 个真缺陷（含 **`factor_library_<池>.md` 的"因子数"有**三个不同数字**：表格行数 10 / 声明 4 / **`state.bank` 5** ⇒ 看板以 `state.bank` 为准）| 引擎行为**不变**（纯新增看板 + 文档）|
 | **v0.21.1** | 2026-09-15 | `tag 自身` | **`frontend/` → `dashboard/` 改名**（用户拍板，「frontend 和 backend 是不是并列？」⇒ 原名 `frontend` 却内含 `backend` **名不副实**）—— 新结构 `dashboard/{config.json, api/(后端), web/(前端)}`；★ **只改【目录名】不改【前端服务】概念**（`FRONTEND_DIR`→`DASHBOARD_DIR`，而 `config.json` 的 `"frontend"` 键 / `FRONTEND_PORT` / `qlib_code_frontend` **一律保留**）· 11 文件 48 处 · ★ 抓到一处**功能性漏网**（`_verify_port_change.py` 的进程匹配路径，不改会**杀不掉后端**）· 端口抽象与 `config.json` 位置**均不变** | 无代码行为变更（纯改名）|

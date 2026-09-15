@@ -19,7 +19,12 @@ from .. import settings
 
 PS_PROCS = (
     "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
-    "Where-Object { $_.CommandLine -match 'loop_code' } | "
+    # ★★★ 2026-09-15 修【真 BUG】：原过滤是 `CommandLine -match 'loop_code'`
+    #   ⇒ 而实际命令行是 `python.exe tools\run_tracks.py ...` / `... --mine_pool=300`
+    #     —— **都不含 `loop_code`**（那只是工作目录，不在命令行里）✗
+    #   ⇒ 结果：引擎明明在跑，看板却报 `anyRunning=False`（实测 21:52 复现）✗✗
+    #   ⇒ 改为按**脚本名**匹配（这是命令行里真实存在的东西）✓
+    "Where-Object { $_.CommandLine -match 'loop_engine|run_tracks|loop_watch' } | "
     "ForEach-Object { [PSCustomObject]@{ pid=$_.ProcessId; "
     "cmd=$_.CommandLine; start=$_.CreationDate.ToString('yyyy-MM-dd HH:mm:ss'); "
     "mem=[math]::Round($_.WorkingSetSize/1MB,0) } } | ConvertTo-Json -Compress -Depth 3"
