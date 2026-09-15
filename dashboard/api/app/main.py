@@ -14,13 +14,16 @@ import time
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 if __package__ in (None, ''):                      # 允许 `python app/main.py` 直接跑
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from app import settings
+    from app import mine
     from app.sources import core, factors, pools
 else:
     from . import settings
+    from . import mine
     from .sources import core, factors, pools
 
 T0 = time.time()
@@ -57,6 +60,7 @@ def meta():
             '/api/health', '/api/meta', '/api/status', '/api/pools',
             '/api/library', '/api/library/{pool}', '/api/selected',
             '/api/strip-bank', '/api/pool-obs/{pool}', '/api/factors/flat',
+            '/api/mine/state', '/api/mine/start', '/api/mine/stop',
         ],
     }
 
@@ -108,6 +112,38 @@ def pool_obs(pool: str, limit: int = Query(300, ge=1, le=5000)):
 def flat():
     recs = factors.flatten_for_db()
     return {'count': len(recs), 'fields': factors.FACTOR_FIELDS, 'rows': recs}
+
+
+# ================================================================ 挖掘控制
+class StartBody(BaseModel):
+    pools: list[str] = []
+    rounds: int = 50
+
+
+class StopBody(BaseModel):
+    scope: str = 'all'          # all | pool
+    pool: str | None = None
+
+
+@app.get('/api/mine/state', summary='★ 挖掘控制状态（能否启动 / 谁在跑）')
+def mine_state():
+    return mine.state()
+
+
+@app.post('/api/mine/start', summary='★ 启动挖掘（一键 = 全部池；单池 = 只跑该池）')
+def mine_start(body: StartBody):
+    try:
+        return mine.start(body.pools, body.rounds)
+    except mine.MineError as e:
+        raise HTTPException(e.code, e.msg)
+
+
+@app.post('/api/mine/stop', summary='★ 停止挖掘（树杀驱动 + 兜底杀残留引擎）')
+def mine_stop(body: StopBody):
+    try:
+        return mine.stop(all_pools=(body.scope != 'pool'), pool=body.pool)
+    except mine.MineError as e:
+        raise HTTPException(e.code, e.msg)
 
 
 if __name__ == '__main__':

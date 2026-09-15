@@ -1,5 +1,9 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { api, type LibraryDto, type MetaDto, type PoolStatus, type SelectedDto, type StatusDto } from './api'
+import {
+  api,
+  type LibraryDto, type MetaDto, type MineStateDto, type PoolStatus,
+  type SelectedDto, type StatusDto,
+} from './api'
 
 type TabKey = 'pools' | 'library' | 'selected' | 'process' | 'meta'
 
@@ -31,16 +35,22 @@ export default function App() {
   const [nowMs, setNowMs] = useState(Date.now())
   const [lastAt, setLastAt] = useState<string | null>(null)
   const busyRef = useRef(false)
+  // ★ 挖掘控制
+  const [mine, setMine] = useState<MineStateDto | null>(null)
+  const [rounds, setRounds] = useState(50)
+  const [mineBusy, setMineBusy] = useState(false)
+  const [toast, setToast] = useState<{ kind: 'ok' | 'err' | 'info'; msg: string } | null>(null)
 
   const loadAll = useCallback(async (fresh = false) => {
     if (busyRef.current) return
     busyRef.current = true
     setBusy(true)
     try {
-      const [st, mt, lb, se] = await Promise.all([
-        api.status(fresh), api.meta(), api.libraries(), api.selected(),
+      const [st, mt, lb, se, ms] = await Promise.all([
+        api.status(fresh), api.meta(), api.libraries(), api.selected(), api.mineState(),
       ])
-      setStatus(st); setMeta(mt); setLibs(lb.libraries); setSelected(se)
+      setStatus(st); setMeta(mt); setLibs(lb.libraries); setSelected(se); setMine(ms)
+      setRounds(r => (r === 50 ? ms.defaultRounds : r))
       setLastAt(new Date().toLocaleTimeString('zh-CN'))
       setErr(null)
     } catch (e) {
@@ -50,6 +60,50 @@ export default function App() {
       setBusy(false)
     }
   }, [])
+
+  // ---- ★ 挖掘控制 ----
+  const say = (kind: 'ok' | 'err' | 'info', msg: string) => {
+    setToast({ kind, msg })
+    window.setTimeout(() => setToast(t => (t && t.msg === msg ? null : t)), kind === 'err' ? 12000 : 6000)
+  }
+
+  const doStart = useCallback(async (pools: string[]) => {
+    const label = pools.length ? pools.join(' + ') : '全部池'
+    if (!window.confirm(
+      `确定启动挖掘？\n\n池：${label}\n每池轮数：${rounds}\n\n` +
+      `⚠ 一轮 ≈ 每个池各跑 1 代（单池单代约 25 分钟）。\n` +
+      `⚠ 启动后用「全部停止」才能停；正在跑的那一代会作废、下次重跑。`
+    )) return
+    setMineBusy(true)
+    try {
+      const r = await api.mineStart(pools, rounds)
+      say('ok', `已启动 · PID ${r.pid} · 池 ${r.pools.join(',')} · ${r.rounds} 轮 ⇒ 看到「代数/已测」开始涨即正常`)
+      await loadAll(true)
+    } catch (e) {
+      say('err', `启动失败：${e instanceof Error ? e.message : String(e)}`)
+      await loadAll(true)
+    } finally { setMineBusy(false) }
+  }, [rounds, loadAll])
+
+  const doStop = useCallback(async (pool?: string) => {
+    const label = pool ? `池 ${pool}` : '全部'
+    if (!window.confirm(
+      `确定停止 ${label} 的挖掘？\n\n` +
+      `⚠ \`run_tracks.py\` 是**串行驱动**（一个进程依次跑多个池）⇒ 停掉会**停掉整个驱动**。\n` +
+      `⚠ 正在跑的那一代**会作废**（state 不写入），下次从该代重跑。`
+    )) return
+    setMineBusy(true)
+    try {
+      const r = await api.mineStop(pool ? 'pool' : 'all', pool)
+      say(r.ok ? 'ok' : 'err',
+        r.ok ? `已停止（杀 ${r.killed.map(k => `${k.kind}#${k.pid}`).join(', ') || '无进程'}）`
+             : `部分未停：${r.stillRunning.map(s => `${s.kind}#${s.pid}`).join(', ')}`)
+      await loadAll(true)
+    } catch (e) {
+      say('err', `停止失败：${e instanceof Error ? e.message : String(e)}`)
+      await loadAll(true)
+    } finally { setMineBusy(false) }
+  }, [loadAll])
 
   useEffect(() => { loadAll() }, [loadAll])
   useEffect(() => {
@@ -81,6 +135,25 @@ export default function App() {
           </div>
         </div>
         <div className="ctrls">
+          <span className="rounds" title={`每池轮数（1~${mine?.roundsRange?.[1] ?? 200}）；一轮 ≈ 每池跑 1 代（单代约 25 分钟）`}>
+            轮数
+            <input type="number" min={mine?.roundsRange?.[0] ?? 1} max={mine?.roundsRange?.[1] ?? 200}
+                   value={rounds} disabled={mineBusy}
+                   onChange={e => setRounds(Math.max(1, Math.min(200, Number(e.target.value) || 1)))} />
+          </span>
+          <button className="btn start" disabled={!mine?.canStart || mineBusy || busy}
+                  onClick={() => doStart([])}
+                  title={mine?.canStart
+                    ? '启动全部池的挖掘（= run_tracks.py --pools=全部）'
+                    : '当前已有挖掘在跑 ⇒ 已禁用（防止两份驱动抢同一份 state 损坏因子库）；先点「全部停止」'}>
+            {mineBusy ? '处理中…' : '一键启动'}
+          </button>
+          <button className="btn stop"
+                  disabled={!mine || (mine.drivers.length === 0 && mine.engines.length === 0) || mineBusy}
+                  onClick={() => doStop()}
+                  title="停止挖掘（树杀驱动 + 兜底杀残留引擎）">
+            全部停止
+          </button>
           <button onClick={() => loadAll(true)} disabled={busy} className="btn">
             {busy ? '刷新中…' : '立即刷新'}
           </button>
@@ -94,6 +167,12 @@ export default function App() {
         </div>
       </header>
 
+      {toast && (
+        <div className={toast.kind === 'err' ? 'err' : toast.kind === 'ok' ? 'ok' : 'info'}>
+          {toast.kind === 'err' ? '⚠ ' : toast.kind === 'ok' ? '✓ ' : 'ℹ '}{toast.msg}
+          <button className="x" onClick={() => setToast(null)}>×</button>
+        </div>
+      )}
       {err && <div className="err">⚠ {err}</div>}
 
       {status && (
@@ -116,7 +195,10 @@ export default function App() {
 
       {tab === 'pools' && status && (
         <section className="cards">
-          {status.pools.map(p => <PoolCard key={p.key} p={p} nowMs={nowMs} />)}
+          {status.pools.map(p => (
+            <PoolCard key={p.key} p={p} nowMs={nowMs} mine={mine} busy={mineBusy}
+                      onStart={() => doStart([p.key])} onStop={() => doStop(p.key)} />
+          ))}
         </section>
       )}
 
@@ -192,8 +274,12 @@ function Tag({ kind }: { kind: string }) {
   return <span className="tag" style={{ background: c + '22', color: c, borderColor: c + '55' }}>{t}</span>
 }
 
-function PoolCard({ p, nowMs }: { p: PoolStatus; nowMs: number }) {
+function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
+  { p: PoolStatus; nowMs: number; mine: MineStateDto | null; busy: boolean;
+    onStart: () => void; onStop: () => void }) {
   const st = p.state
+  const anyRunning = !!mine && (mine.drivers.length > 0 || mine.engines.length > 0)
+  const canStartThis = !!mine?.canStart && !busy
   return (
     <div className={p.running ? 'card run' : 'card'}>
       <div className="card-h">
@@ -211,6 +297,20 @@ function PoolCard({ p, nowMs }: { p: PoolStatus; nowMs: number }) {
         <Field k="其中通过" v={fmt(p.archive.passed)} />
         <Field k="冻结" v={fmt(st?.frozen_n)} />
         <Field k="失败库" v={fmt(st?.fail_lib_n)} />
+      </div>
+      <div className="card-a">
+        <button className="btn start sm" disabled={!canStartThis} onClick={onStart}
+                title={canStartThis
+                  ? `只启动「${p.label}」的挖掘（${p.key === 'all' ? '全A' : p.key} 池）`
+                  : (anyRunning ? '已有挖掘在跑 ⇒ 先「全部停止」（两份驱动会抢同一份 state ✗）' : '处理中…')}>
+          启动本池
+        </button>
+        <button className="btn stop sm" disabled={!p.running || busy} onClick={onStop}
+                title={p.running
+                  ? '停止挖掘 —— ⚠ run_tracks.py 是串行驱动，会停掉【整个驱动】（不只是本池）'
+                  : '本池当前未在跑'}>
+          停止
+        </button>
       </div>
       <div className="card-f">
         <span>journal {ago(p.journal.mtime, nowMs)}</span>

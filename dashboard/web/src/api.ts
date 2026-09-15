@@ -20,6 +20,26 @@ async function get<T>(path: string, timeoutMs = 30000): Promise<T> {
   }
 }
 
+/** ★ POST：后端把业务错误放在 `detail` 里（HTTP 400/409），这里把它抬成异常消息 ⇒ UI 直接可展示 */
+async function post<T>(path: string, body: unknown, timeoutMs = 60000): Promise<T> {
+  const ctl = new AbortController()
+  const t = setTimeout(() => ctl.abort(), timeoutMs)
+  try {
+    const r = await fetch(BASE + path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+      signal: ctl.signal,
+    })
+    const txt = await r.text()
+    const j = txt ? JSON.parse(txt) : {}
+    if (!r.ok) throw new Error(j?.detail || `${r.status} ${r.statusText}`)
+    return j as T
+  } finally {
+    clearTimeout(t)
+  }
+}
+
 // ---------------------------------------------------------------- 类型
 export interface PoolDef { key: string; label: string; index: string; color: string }
 
@@ -98,6 +118,33 @@ export interface MetaDto {
   endpoints: string[]
 }
 
+// ---------------------------------------------------------------- 挖掘控制
+export interface MineStateDto {
+  canStart: boolean
+  drivers: ProcessInfo[]
+  engines: ProcessInfo[]
+  runningPools: string[]
+  driverPools: string[]
+  defaultRounds: number
+  roundsRange: [number, number]
+  knownPools: string[]
+  script: string
+  note: string
+}
+
+export interface MineStartResp {
+  ok: boolean; pid: number; alive: boolean
+  pools: string[]; rounds: number; cmd: string; log: string; note: string
+}
+
+export interface MineStopResp {
+  ok: boolean
+  killed: { pid: number; kind: string; rc: number; out: string }[]
+  stillRunning: { pid: number; kind: string }[]
+  scope: string
+  note: string
+}
+
 // ---------------------------------------------------------------- 接口
 export const api = {
   meta: () => get<MetaDto>('/meta'),
@@ -108,4 +155,10 @@ export const api = {
   stripBank: () => get<{ found: boolean; count: number; rows: Record<string, string>[] }>('/strip-bank'),
   poolObs: (pool: string, limit = 200) =>
     get<{ found: boolean; columns: string[]; rows: Record<string, string>[] }>(`/pool-obs/${pool}?limit=${limit}`),
+  // ★ 挖掘控制
+  mineState: () => get<MineStateDto>('/mine/state', 40000),
+  mineStart: (pools: string[], rounds: number) =>
+    post<MineStartResp>('/mine/start', { pools, rounds }),
+  mineStop: (scope: 'all' | 'pool' = 'all', pool?: string) =>
+    post<MineStopResp>('/mine/stop', { scope, pool }),
 }
