@@ -96,7 +96,7 @@ D:\miniconda3\envs\rqdata\python.exe all04.py
 ## 说明
 - 引擎所有文件读写都相对 `engine/` 定位，`loop_code` 可整体搬移；唯一外部依赖是 `E:\rq` 数据盘。
 - `loop_state.pkl` 为滚动态：**gen23 起 watcher 无人值守接力，已跑至 gen70 达标收官（2026-09-11）**，入库因子 **30**（F01~F30）。整体复盘见 `docs/factor_roadmap.md` 附录 A/B + Round27；入库因子明细见 `docs/factor_library.md`；逐代诊断见 `docs/loop_journal.md`。跨系统（存储/数据库/对齐）决策见 `docs/software_framework.md`。
-- **gen51 起新增两道抗冗余闸门**（治 gen50 同代近重复 F20~F23）：`--dedup_corr`（默认 0.85，同代 L1 TopN 两两 |rank corr| 超阈即丢弃后者）+ `--fam_sole`（默认开，族指纹并入"单叶变换"维度把"同叶不同壳"的叶子代理候选归同族）。标定/验证见 `tools/calib_gates.py` / `verify_gates.py`，冒烟 `ai_test/qa_fam_smoke.py`。
+- **gen51 起新增两道抗冗余闸门**（治 gen50 同代近重复 F20~F23）：`--dedup_corr`（默认 0.85，同代 L1 TopN 两两 |rank corr| 超阈即丢弃后者）+ `--fam_sole`（默认开，族指纹并入"单叶变换"维度把"同叶不同壳"的叶子代理候选归同族）。标定/验证见 `tools/calib_dedup_leaf.py`（★ 2026-09-15 由 `calib_gates.py` **改名**，与 `calib_gate.py` 只差一个 `s`、用途不同）；冒烟脚本 `qa_fam_smoke.py` 已随 `ai_test/` 归档到 `history/ai_test_20260915/`。
 - 数据文件（*.h5/*.pkl）体积大且可由 `build_*.py` 重建，git 入库时按 `.gitignore` 排除。
 
 ## 版本与回退（2026-09-11 起）
@@ -130,6 +130,7 @@ git tag -a v0.2 -F <说明文件>               # 建新版（说明按上表四
 
 | tag | 日期 | 提交 | 一句话内容 |
 |---|---|---|---|
+| **v0.20.4** | 2026-09-15 | `tag 自身` | **文档大复核**（用户：「`loop_todo.md` 是不是又要清理了？看看里面有没有错的？有没有要归档的？把各个文档再查一轮」）—— ★★ 抓到 **5 处**：① **`§0`「一屏速览」停在 09-13**（写着"正在跑 ×3 轮 / 当前代 gen=3"，而**轨道早已结束、引擎停止**）⇒ 按**实测**重写（各池 75/27/14/12 代；入库 41/2/3/5）② **`§4.2`「现役门槛参数」缺 4 个生产在用的**（`--strip_style`/`--style_obs`/`--dup_ex_corr`/`--min_strip_calmar`）③ **`§4.6`「关键工具清单」列了 ~18 个已归档的 `ai_test/*` 工具**（自称"新会话最需要的一页"，照着跑会**全部失败**）⇒ 改为只列常驻工具 + 加 `ai_test/` 归档说明 ④ **`§1.3-A`（"首版已完成"却留在**待办**里 + 87 行详节）** ⇒ 归档到 `docs/log/todo_done.md`（`loop_todo` 1034→1012 行）⑤ README 里旧名 `tools/calib_gates.py` · 新增 `tools/_audit_doc_refs.py`（**扫文档里的路径引用是否存在**；★ 只判带目录前缀的 —— 初版把 `values_q.h5` 这类**泛指名字**误报为"路径不存在" ✗）| 无代码行为变更（**纯文档**）|
 | **v0.20.3** | 2026-09-15 | `tag 自身` | **复核会话结论（用户："你几乎每轮都会出错，要不要再查一轮"）+ 回答「clone 多大 / 跑起来生成多少」** —— ★ **抓到并更正我自己写错的**：`change_log` 的 v0.20.1 条目曾写「最大函数 1291 行 → 223 行」（**张冠李戴**：把 `run()` 1291→921 与 `evaluate_real` 222 行混成一句）⇒ **真值：`run()` 仍是 920 行的全项目最大函数** ⇒ **`P0-2b`（引入 `ctx` 继续拆）依然必要** ✓ · 澄清 P0-1 的"10 处 → 1 处"口径（**4 代码 + 6 文档 → 机械清单 1 处**；实现/数值测试是**职责不是副本**）· 新增 `tools/_audit_clone_size.py`（**clone=3.66 MB / 生成≈8 GB**）与 `tools/_audit_rebuild.py`（重建链条：`E:\rq` **188 GB** 是唯一外部依赖）| 无代码行为变更（**纯文档更正 + 审计脚本**）|
 | **v0.20.2** | 2026-09-15 | `tag 自身` | **补上 `--style_obs`（长期遗漏）+ `research/` 归档** —— ★★ `run_tracks.py` 一直**没透传** `--style_obs`，而它**成本≈0**（与已开的 `--strip_style` **共用** `style_features`，一代一次；**无额外回测**）却能补一个**已知盲区**：我们"剥风格"**只剥 2 个**（`lncap`/`lnamt`），`--style_obs` 记录 **4 个** ⇒ `lntr`/`lnpx` 一直看不见（实证：`F07` 号称"最独立"，`lntr` 暴露 **−0.51**）· `research/`（91 py，**0 生产引用**，停更 09-08）→ **`history/research/`** | 引擎行为**不变**（`--style_obs` 只落观测、不进选择）；**数据侧**：`docs/loop_style_obs.csv` 将从下轮起恢复累积 |
 | **v0.20.1** | 2026-09-15 | `tag 自身` | **清生产侧硬编码路径 14 处** —— `standard_test.py`(PANEL/UNIVERSE/BARRA) · `qa_style_obs.py` · `loop_watch.py` · `calib_dedup_leaf.py` · `l1_shape_calib.py` · `gen_f11_daily.py` 全改 **`__file__` 派生**（**等价性已验证**）⇒ **换目录/换机器不再崩** · `_audit_deadcode.py` 加"**动态按名查找抓不到**"警告（实测差点误删活代码 `cs_demean_op`）· 全项目盘点（`research/`+`strategies/` = **0 生产引用**属历史；重复代码 24 组**全在历史目录**；最大函数 1291→223 行）| 引擎行为**不变**（纯路径派生，逐字等价） |
