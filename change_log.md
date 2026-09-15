@@ -15,6 +15,54 @@
 
 ---
 
+## [0.20.2] — 2026-09-15
+
+> 主题：**补上 `--style_obs`（长期遗漏）+ `research/` 归档**
+> 用户指令：「`research/` 归档到 `history/`，`--style_obs` 是不是该重新启用？再检查一轮看看」
+
+### ★★★★ 启用 `--style_obs`（`tools/run_tracks.py` 的 `extra` 里补上）
+
+**这不是"重新启用"，而是"从来没有过"** —— `run_tracks.py` 的 `extra` 里**从未透传** `--style_obs`，
+所以三池轨道一次都没采过风格观测 ⇒ `docs/loop_style_obs.csv` 停更在 **09-12**（那次是我**手动**跑单代做测量）。
+
+**判断依据（三条都指向"该开"）**：
+
+| 维度 | 证据 | 结论 |
+|---|---|---|
+| **成本 ≈ 0** ★ | `loop_engine.py:2051-2063` 注释与代码：`style_features(B)` 是**一代只算一次**的贵函数，而 `if _style_obs or _shape_neutral or _strip_style: _sf = style_features(B)` ⇒ **`--strip_style` 早已在生产开** ⇒ 增量只是「一代一次的 4 个 `rank_rows` + 一次 `neutralize_rows` + 每候选几个廉价相关」⇒ **无任何额外回测** ✓ | ★ **该开** |
+| **用途仍必需** | 生产参数含 **`--score_mode=new`**（`run_tracks.py:198`）⇒ `--style_obs` 是**唯一**能验证"new 排序分是否让因子更往低换手/低成交额挤"的手段 | ★ **该开** |
+| **补已知盲区** ★★ | `loop_todo §1.24-①`：我们"剥风格"**只剥 2 个**（`lncap`+`lnamt`），而 `--style_obs` 记录 **4 个**（+`lntr` 换手率 / `lnpx` 价格）⇒ **`lntr`/`lnpx` 一直看不见** ✗<br>实证代价：`F07` 号称"最独立"（剥两风格后 Cal 1.209 > 原 0.812），但它 **`lntr` 暴露 −0.51（很强）** ⇒ "独立有效"的准确含义只是"剥掉市值+成交额后仍有效" | ★ **该开** |
+| 状态污染 | `2026-09.md:360` 说它跑真实一代、会改 `loop_state.pkl` ⇒ 但**生产轨道本来就在真跑**，`--strip_style` 同样改，且各池已各自有独立 state ✓ | ✓ 不成问题 |
+
+**⚠ 我在本轮纠正了自己一次错误引用**：上一轮我说 `--style_obs` 的成本是"每候选 +1 次回测" ——
+  查证后那是 **`--strip_style`** 的开销（`2026-09.md:1246` 是 §8.14「剥风格」那张表），
+  同一行只说 `style_features` 与 `--style_obs` **共用（一代一次）** ✗
+  ⇒ ★ 教训：**引用"开销/成本"数值前必须回到原文确认它说的是哪个开关** ✓
+
+### `research/` 归档 → `history/research/`（`git mv`，91 个文件保留历史）
+
+判据（三重确认）：
+1. **0 生产引用** —— `engine/`+`tools/`+`standard/` 里**没有任何**地方引用 `research/` 的文件 ✓
+2. **停更 09-08**（8 天前），而引擎当日仍在写 ✓
+3. 内容是 `factor_miner` 时代的 `round1~10` / 归因拆解（`decompose`/`attribute_all`/`diagnose_gap`）/
+   与 `qlib_code` 对拍 / `research/dev/*` 数据源探查 —— **方法留档**，非生产 ✓
+
+★ 保留 `strategies/`（虽同样 0 生产引用，但它是**定稿成果**，不是历史草稿）✓
+★ `history/` 现有内容与 `research/` 一样**继续入 git**（保持"归档留痕"语义，与 `history/factor_archive.*` 一致）✓
+
+### 顺带修正的文档不一致
+- `README.md`：`docs/history/` → **根 `history/`**；`research/` 描述改为"已归档"；
+  `standard/` 列表里**已归档的** `style_paired_analysis.py`/`prof_evalreal.py` 明确标注（原描述已失效 ✗）
+- 新增 `ai_test/` 条目说明（草稿区，可整删，脚本会自动重建子目录）
+
+### Notes
+- **引擎行为不变**（`--style_obs` 默认就存在，只是此前没被透传；它**只落观测、不进任何选择逻辑**）✓
+- 数据侧变化：`docs/loop_style_obs.csv` 从下一轮起**恢复逐代累积** ⇒ 可再跑 `style_paired_analysis`
+  那一类离线配对分析（脚本在 `history/20260915_cleanup/standard/`，需要时取回）✓
+- 回归：编译 **88** 全过 · 引号干净 · **12/12 测试全过** ✓
+
+---
+
 ## [0.20.1] — 2026-09-15
 
 > 主题：**清生产侧硬编码路径 + 审计工具升级 + 全项目通盘盘点**

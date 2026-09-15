@@ -194,7 +194,26 @@ def main():
     #   ⇒ 关掉后接下来的 47 轮 = **A/B 的后半段**（有 mono 9 代 vs 无 mono 47 代），趋势可比 ✓
     #   ⇒ 若将来要重开，**必须先修标定口径**（在"L1 全量"上算，而不是"top-N 30 个"上）⚠
     # ══════════════════════════════════════════════════════════════════════════════════
-    extra = ['--pool_obs', '--pools=300,500,1000', '--strip_style', '--dup_ex_corr=0.90',
+    # ★★★ 2026-09-15（v0.20.2）补上 `--style_obs` —— 这是**长期遗漏，不是有意权衡** ✓
+    #   ① **成本≈0（代码级证据）**：`loop_engine.py:2051-2063`
+    #        `style_features(B)` 是**一代只算一次**的贵函数，而 `--strip_style`（**早已在生产开**）
+    #        已经触发了它 ⇒ `if _style_obs or _shape_neutral or _strip_style: _sf = style_features(B)`
+    #        ⇒ 加 `--style_obs` 的**增量**只是：一代一次的 4 个 `rank_rows` + 一次 `neutralize_rows`
+    #          + 每候选几个廉价相关 —— **无任何额外回测** ✓
+    #      ⚠ 别被 `docs/log/2026-09.md:1246` 的"每候选 +1 次回测"误导 —— 那是 **`--strip_style`** 的
+    #        开销（§8.14 那张表），同一行只说 `style_features` 与 `--style_obs` **共用（一代一次）** ✗
+    #   ② **用途仍必需**：生产参数含 `--score_mode=new`（下一行）⇒ 而 `--style_obs` 是**唯一**
+    #        能验证"new 排序分是否让因子更往低换手/低成交额挤"的观测手段 ✓
+    #   ③ ★★ **它补的是一个已知盲区**（`loop_todo` §1.24-①）：
+    #        我们"剥风格"**只剥 2 个**（`lncap`+`lnamt`），而 `--style_obs` 记录 **4 个**
+    #        （+`lntr` 换手率 / `lnpx` 价格）⇒ **`lntr`/`lnpx` 一直看不见** ✗
+    #        实证代价：`F07` 号称"最独立"（剥两风格后 Cal 1.209 > 原 0.812），
+    #        但它 **`lntr` 暴露 −0.51（很强）** ⇒ "独立有效"的准确含义只是"剥掉市值+成交额后仍有效"️
+    #   ④ 状态污染**不构成问题**：它跑的是真实一代、会改 `loop_state.pkl`，但生产轨道本来就在真跑
+    #        （`--strip_style` 同样改），且多池已各自有独立 state 文件 ✓
+    #   ⇒ 结论：**开着它 = 几乎零成本地补上一个已知盲区** ✓
+    extra = ['--pool_obs', '--pools=300,500,1000', '--strip_style', '--style_obs',
+             '--dup_ex_corr=0.90',
              '--min_calmar=0.0', '--min_ic=-1', '--score_mode=new',
              '--min_pool_calmar=0.15', '--pool_gate_or_all',
              '--min_strip_calmar=0.15']

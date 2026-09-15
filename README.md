@@ -50,12 +50,17 @@
     为「迁移时正在跑的轨道」保留；**轨道结束后可 `git rm`**。
 - `standard/` — **统一检验 / 分析工具**（均为独立可跑的绝对路径脚本）
   - `standard_test.py` 因子检验模板：一次跑齐「引擎指标复现校验 + 全A宽池频率扫描 + 沪深300/中证500 成分内 + 风格归因 + 分段独立验证」，含 `--pool_mode=A|B|S`、`--cost-name`；成本口径取自 `engine/cost_presets.py`
-  - `style_paired_analysis.py` 排序分**配对**风格暴露比较（old / new / new+mono / new_n）→ 写 `docs/loop_style_paired.md`
   - `qa_style_obs.py` 风格观测链路自检（18 项：向量化 vs 朴素对拍、退化安全、20 日滚动轴、`--help` 冒烟）
-  - `prof_evalreal.py` 单点耗时剖析（cProfile + 合成因子跑真实 panel）→ 定位相位瓶颈，不用"总时长减法"猜
-- `docs/` — 结论文档/档案：`factor_roadmap.md`（**研发档案主入口**：Round 叙事 + 附录A Loop gen1~22 整体复盘 + 附录B 扩叶落地）/ `factor_library.md`（**Loop 入库因子**，引擎代末自动同步新增）/ `loop_journal.md`（B角代际诊断）/ `loop_archive.csv`（Loop 每代 L2 明细流水，逐代累积）/ `history/`（**归档区**：factor_miner Round1~7 旧档案 factor_archive.md/.csv，已停更）
+  - `pool_tags.py`（★ **被 `engine/` 引用** ⇒ 生产依赖）· `obs_analysis.py`（观测跑后的联合分析）
+  - ⚠ `style_paired_analysis.py` / `prof_evalreal.py` 已于 2026-09-15 **归档**到 `history/20260915_cleanup/standard/`（一次性验证件）✓
+- `docs/` — **只放活跃文档/档案**：`factor_roadmap.md`（**研发档案主入口**：Round 叙事 + 附录A Loop gen1~22 整体复盘 + 附录B 扩叶落地）/ `factor_library.md`（**Loop 入库因子**，引擎代末自动同步新增）/ `loop_journal.md`（B角代际诊断）/ `loop_todo.md`（**唯一权威待办**，已完成项归 `docs/log/todo_done.md`）/ `loop_archive.csv` 与各池 `.csv`（引擎逐代累积的 L2 明细与观测）
+- `history/` — **归档区（仓库根）**：★ 2026-09-15 由 `docs/history/` 移来 ✓
+  · `history/factor_archive.md|.csv`（factor_miner Round1~7 旧档案，停更）
+  · `history/loop_archive.legacy_pre_gen16.csv`（gen16 前 L2 旧快照，**`build_facs.py` 仍需读它**）
+  · `history/research/`（**早期研究脚本留档**，91 个 `round*.py`/`probe_*`/归因拆解；**0 生产引用**，停更 09-08）
+  · `history/ai_test_20260915/`（旧草稿区整体归档）· `history/20260915_cleanup/`（含 `manifest.txt` 记录来源与理由）
 - `strategies/` — 定稿 rqalpha 回测策略：`all01/`（all00/01/03 + factor_snapshot 数据）、`all04/`（barra 落地 + g6 数据）、`vol/`、`big_small/`，共享 `bt_utils.py`
-- `research/` — 早期挖掘轮次 `round*.py` 与专题研究脚本（方法留档；运行需与 `engine` 同目录或放回原 `ai_test` 全套依赖）
+- `ai_test/` — **草稿区**（临时脚本/产物，可整删；`run_tracks.py` 等会自动重建所需子目录）
 
 ## 运行
 ```powershell
@@ -125,6 +130,7 @@ git tag -a v0.2 -F <说明文件>               # 建新版（说明按上表四
 
 | tag | 日期 | 提交 | 一句话内容 |
 |---|---|---|---|
+| **v0.20.2** | 2026-09-15 | `tag 自身` | **补上 `--style_obs`（长期遗漏）+ `research/` 归档** —— ★★ `run_tracks.py` 一直**没透传** `--style_obs`，而它**成本≈0**（与已开的 `--strip_style` **共用** `style_features`，一代一次；**无额外回测**）却能补一个**已知盲区**：我们"剥风格"**只剥 2 个**（`lncap`/`lnamt`），`--style_obs` 记录 **4 个** ⇒ `lntr`/`lnpx` 一直看不见（实证：`F07` 号称"最独立"，`lntr` 暴露 **−0.51**）· `research/`（91 py，**0 生产引用**，停更 09-08）→ **`history/research/`** | 引擎行为**不变**（`--style_obs` 只落观测、不进选择）；**数据侧**：`docs/loop_style_obs.csv` 将从下轮起恢复累积 |
 | **v0.20.1** | 2026-09-15 | `tag 自身` | **清生产侧硬编码路径 14 处** —— `standard_test.py`(PANEL/UNIVERSE/BARRA) · `qa_style_obs.py` · `loop_watch.py` · `calib_dedup_leaf.py` · `l1_shape_calib.py` · `gen_f11_daily.py` 全改 **`__file__` 派生**（**等价性已验证**）⇒ **换目录/换机器不再崩** · `_audit_deadcode.py` 加"**动态按名查找抓不到**"警告（实测差点误删活代码 `cs_demean_op`）· 全项目盘点（`research/`+`strategies/` = **0 生产引用**属历史；重复代码 24 组**全在历史目录**；最大函数 1291→223 行）| 引擎行为**不变**（纯路径派生，逐字等价） |
 | **v0.20.0** | 2026-09-15 | `tag 自身` | **★★★ 修 P0-2 引入的「幽灵实参」崩溃**（`UnboundLocalError: e`，**已实际崩掉 `pool=300 gen28` 与 `pool=500 gen15` 两代**）+ **文件精简归档**（`docs/history/`→根 `history/`；`ai_test/` 整体归档；`standard/` 可归档件归档；50 池=上证50 产物归档）| 引擎行为**不变**（纯删多余形参，不改任何计算）；★ 但**修复了必崩** ⇒ 受影响代可正常跑完 |
 | **v0.19.0** | 2026-09-15 | `tag 自身` | **架构清扫 P1b —— 拆 `loop_todo.md`** —— ★★ 病灶：`## 1. 待办（**唯一权威列表**）` 里**混着 18 条 `### 1.x 【已完成】`** ⇒ 列表从"该做什么"变成"做过什么"，**读待办要先过滤** ✗（与 roadmap 同源，换了个形态）· ★★★ 而外部有 **139 处** `loop_todo §x.y` 引用（`engine/loop_engine.py` 12 · `run_tracks.py` 7 · `change_log` 29 · 多个 `_test_*.py`）⇒ **编号一个都不能变** ⚠ · **做法**：**逐条分流 + 逐字搬运** ⇒ `loop_todo.md` **1,986 → 920 行（-54%）** + 归档 `docs/log/todo_done.md` **1,099 行**（18 条已完成 + `## 6. 进度日志` + `## 7. 归档 R1~R8`）· **保留 11 条**（`1.3/1.3-A/1.4/1.5/1.6/1.9/1.18/1.19/1.20/1.21/1.24`）· ★★ **一个"规则自己就对了"的验证**：判据「`✅` 或 `【已…】`」**恰好自动**把 `1.3-A「首版已完成」`（是"路线下一批"的一部分、结论影响 `1.4`）与 `1.20「铁律」`（是**原则**不是待办）分到**保留** ⇒ **无需白名单**（白名单会忘记维护）✓ · 编号不变 ⇒ `## 1.` **跳号是有意的**（文件里已写明）· 验证：**覆盖 29 条无遗漏无重复** + **逐字节在位** · 全量：编译 **83** · **11 个测试全绿** · 冒烟 **4/4** |
