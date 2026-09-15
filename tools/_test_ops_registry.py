@@ -51,7 +51,10 @@ def chk(c, m):
 def t_oracle():
     print('\n[1] 算子集合 == 重构前金标准快照（独立 oracle）')
     import ops_registry as OPS
-    p = os.path.join(ROOT, 'ai_test', '_ops_oracle_before.json')
+    # ★ 2026-09-15：该快照原在 `ai_test/`，随 `ai_test/` 整体归档而"消失"⇒
+    #   **已移回 `tools/`**（它是**长期 oracle 测试资产**，不是一次性产物）✓
+    #   ⚠ 教训：`ai_test/` 整体归档时，要先把**被 `tools/` 依赖的资产**挑出来 ✗
+    p = os.path.join(HERE, '_ops_oracle_before.json')
     if not os.path.exists(p):
         chk(False, '缺少金标准快照 {}（P0-1 当时抓取；丢了就少一层独立校验）'.format(
             os.path.relpath(p, ROOT)))

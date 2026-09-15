@@ -16,7 +16,7 @@
 
 > 📌 **2026-09-14 00:0x 全文重写**（用户要求「从头到尾整理」）。
 > 已完成 / 已被推翻的内容**只搬不删** —— 2026-09-15 起统一在 `docs/log/todo_done.md` ✓
-> 上一版备份：`docs/history/loop_todo.md.bak_20260914_000509`。
+> 上一版备份：`history/loop_todo.md.bak_20260914_000509`。
 
 ---
 
@@ -645,12 +645,12 @@ python ai_test/cleanup_repo.py --verify #    关键文件是否幸存
 python ai_test/cleanup_repo.py --apply # ③ 执行（先写清单；归档可恢复）
 ```
 
-**★ 2026-09-14 首次执行的成果**（`docs/history/cleanup_20260914_001311|001515_manifest.txt`）：
+**★ 2026-09-14 首次执行的成果**（`history/cleanup_20260914_001311|001515_manifest.txt`）：
 
 | 项 | 前 | 后 |
 |---|---|---|
 | 删除 | — | **252 个文件 + 3 个目录 / 4.7 GB** |
-| 归档 | — | **115 个文件 / 12.8 MB** → `docs/history/` |
+| 归档 | — | **115 个文件 / 12.8 MB** → `history/` |
 | **`ai_test/`** | 532 文件 / **5.1 GB** | 338 文件 / **425 MB** |
 | **`standard/`** | 150 文件 / 18.6 MB | **8 文件 / 81 KB**（71 png + 71 txt 已按用户要求删） |
 | `.pkl` 总数 | 60 个 / **5.7 GB** | **19 个 / 1.1 GB** |
@@ -686,6 +686,73 @@ python tools/_audit_deadcode.py    # ★ 死代码（ast 精确判定，避免 f
 | **P2** | `research/` + `strategies/` 去重（`to_int_date` ×9 · `market_temperature` ×5…）| 🟢 建议**不做** | ★ | 中 | 历史研究代码，价值低 |
 | **P2** | 同名常量收敛（`ENG` ×9 · `BARRA` ×8 · `SRC` ×7…）| 🟢 受 P2 制约 | ★ | 中 | 同上 |
 | ⛔ | **不建议**：大爆炸式重构 / 全量类型标注 / 动 `strategies/` 历史归档 | — | — | **高** | — |
+
+#### ★★★ 2026-09-15 第二轮审计（用户点名的"文件精简 + 两处打架"）—— **证据级结论**
+
+**审计工具（只读，可重复跑）**：`tools/_audit_files.py`（全项目 988 个文件 → LIVE/DOC/ORPHAN）
+· `ai_test/_audit_scope.py`（用户点名的目录逐个定性）· `ai_test/_audit_imports.py`（**精确**判依赖）·
+`ai_test/_audit_paths.py`（**源码里写的路径是否真的存在**）
+
+**⚠⚠ 我犯过一次误报，已纠正（记下避免重犯）**：
+- 初版判据「文件名出现在生产 `.py` **文本**里」⇒ 说"`ai_test` 有 **12 个**生产依赖" ✗ **误报**
+- **精确判据**（只认 `import` / `subprocess` 执行 / `runpy`）⇒ 真依赖 **1 个** ✓
+- ★ **教训**：**判"依赖"必须只认可执行形式** —— 注释/文档串里提到文件名**不算** ✗
+
+| # | 项 | **证据** | 处置 | 需用户拍板 |
+|---|---|---|---|---|
+| **C1** | ★★ **`tools/backfill_bank_ex.py:L140` 路径写错** | 它调 `os.path.join(HERE,'library_kpi.py')` ⇒ 找 `tools/library_kpi.py`；而该文件**实际在 `ai_test/`**（全仓唯一一份）| **修**：`library_kpi.py` 迁 `tools/` + 改路径（它被两边用）| 否（修 bug）|
+| **C2** | ★★ **命名碰撞 `calib_gate.py` vs `calib_gates.py`** | 差一个字母、**用途不同**（315 行通用门标定 / 81 行定 `--dedup_corr`+`--leaf_proxy_thr`）；★ 我**差点误删**，读 `change_log.md:559` 才确认被删的是 `_calib_quality_gate.py`/`_calib_novelty.py` | **改名**（如 `calib_dedup_leaf.py`），**不是删** | ✅ 是 |
+| **C3** | `docs/loop_journal.md`/`loop_todo.md` 仍写**旧路径** `ai_test/calib_gates.py` | 文件已迁 `tools/` | 改文档 | 否 |
+| **C4** | `tools/_test_ops_sync.py` 的 `ALLOW` 白名单里有**失效条目** `calib_gates.py` | 白名单本意是"允许出现算子清单的文件" | 清理 | 否 |
+| **C5** | `docs/log/2026-09.md` + `docs/loop_todo.md` 的**历史快照**已由 P1/P1b 处理 ✓ | — | 已完成 | — |
+| **C6** | ★ **`ai_test/` 150 个一次性脚本** | 精确判依赖后**只剩 1 个**（`library_kpi.py`，见 C1）| **可清**（建议先归档 `history/`）| ✅ 是 |
+| **C7** | `standard/style_paired_analysis.py` + `docs/loop_style_paired.md` | 2026-09-11 **批1 一次性配对验证**（结论已落 §8.5）| **可归档** | ✅ 是 |
+| **C8** | `standard/prof_evalreal.py`（性能剖析，一次性）| — | **可归档** | ✅ 是 |
+| **C9** | ⚠ **`docs/*.csv` 全部是"引擎输出"**（`loop_archive*`/`loop_pool_obs*`/`loop_strip_style*`/`loop_style_obs`/`pool_tags*`，共 **19 个**）| `tools/_audit_files.py` 判为 **★引擎写**；且**被 `.gitignore` 排除**（= 运行产物）| ★ **不是垃圾**：`loop_archive*.csv` = **入库清单（权威）**；是回测/组合输入 ⇒ **保留** | ⚠ 若嫌乱可按池归档 |
+| **C10** | ⚠ **`loop_journal_50.md`(9.7KB) / `loop_archive_50.csv` / `loop_pool_obs_50.csv` / `loop_strip_style_50.csv`** | 是 **`pool=50` 轨道**的产物 ⇒ **引擎写**，不是历史 | ⚠ **50 池还跑吗？**（当前跑 300/500/1000）⇒ 还跑则保留 | ✅ **是**（要问）|
+| **C11** | ⚠ **`standard/pool_tags.py`(9.3KB) 与 `qa_style_obs.py`(4.5KB) 被 `engine/` 引用** | `loop_engine.py`/`loop_pools.py`/`loop_metrics.py` | ★ **是生产依赖**，**不是**"标准测试的附属" ⇒ **不能动** | 否 |
+| **C12** | `standard/*_report.md`（`pool_tags_report.md` 21KB / `obs_analysis_report.md`）| `.gitignore` 已排除 ⇒ **脚本产物** | **可归档**（会被重生成）| ✅ 是 |
+
+---
+
+#### ★★★★★ 已修：P0-2 引入的「幽灵实参」回归（**正在导致生产运行失败**）
+
+**症状（运行时铁证）**：`ai_test/_tracks/pool_500_gen15_err.log`
+```
+File "engine/loop_engine.py", line 2376, in run
+  POOL_M, _lp, _t_l2, _tg, e, top = _run_l2(..., cols, dates, e, l1)
+UnboundLocalError: cannot access local variable 'e' where it is not associated with a value
+```
+
+**时序坐实（与日志完全吻合）**：P0-2 提交于 **15:43**
+| 代 | 启动 | 结果 | 原因 |
+|---|---|---|---|
+| `pool=300 gen25` | 14:30 | ✓ | P0-2 之前 |
+| `pool=300 gen26` | 15:19 | ✓ | P0-2 之前 |
+| `pool=300 gen27` | 15:19 | ✓ | 进程 15:19 已加载**旧代码** |
+| `pool=300 gen28` | 15:48 | ✗ 崩 | **新代码** |
+| `pool=500 gen15` | 16:04 | ✗ 崩 | **新代码** |
+
+**根因**：P0-2 把 `run()` 段落提取成函数时，我**给函数补了形参 `e`/`r_`/`_e`**，
+但函数体**从不读它们**（只在 `except ... as e:` 里当局部异常变量 —— 而 Python 3 会在
+handler 结束时**隐式 `del e`** ⇒ 那样"绑过"的名字到调用行**必然未绑定**）⇒ `UnboundLocalError` ✗
+
+**已修（13 处，全部经逐项核实）**：`_run_l2` / `_dump_strip_detail` / `_dump_pool_obs` /
+`_agg_style_diag` / `_save_state` 的形参 + 4 个调用点。
+★ 顺带消除潜伏风险：`_run_l2` 的 `_tg` 只在 `if _pool_obs:` 内绑定 ⇒ 关掉 `--pool_obs`
+  时会 UnboundLocal ⇒ 已从签名/返回值移除（`run()` 里它本就是 `for _tg, _M in POOL_M.items()` 重新绑定）。
+★ **`_e`（L2660 `_save_state`）是"下一个必崩点"** —— 引擎当时还没走到它 ⇒ **一次修全**，而非崩一个修一个 ✓
+
+**⚠ 更深的缺口（这才是重点）**：`e` 崩了 **2 代**，而 **11 个回归测试当时全绿** ✗
+· 它们**都不覆盖 `run()` 主循环**；
+· `tools/smoke_gen_only.py` 是 `--gen_only` ⇒ **跳过 L2** ⇒ 测不到；
+· 真机跑一代要 20+ 分钟且**会写 state** ⇒ 不能做日常质检。
+
+**⇒ 已补永久防线**：`tools/_test_ghost_args.py`（毫秒级、纯静态、不写盘）
+· 判据：`run()` 内每个 `Call` 的简单名实参，在「模块级 / 形参 / **调用行之前**的非 `except-as` 绑定」里都没有 ⇒ 报警
+· ★ **负向验证通过**（把 `e` 注入实参 ⇒ 报 FAIL 且 exit 1；撤销 ⇒ 全绿）⇒ **证明它真能抓到** ✓
+· ⚠ 写它时我**漏了"排除 `except-as` 绑定"那条** ⇒ 负向验证**立刻暴露**（报 0 幽灵）⇒ 补上 ✓
+  ⇒ **教训：新写的"防线"必须做负向验证，否则可能是假防线** ✗
 
 > ★★★ **为什么值得做**：**不是因为"项目烂"**（纪律是 A 级），而是——
 > 现在**规模还只有 32K 行 ⇒ 改造成本最低**；越往后加功能，**越慢、越容易出错**。
@@ -780,12 +847,12 @@ python tools/_audit_deadcode.py    # ★ 死代码（ast 精确判定，避免 f
 7. **`Start-Process -ArgumentList` 不自动加引号** ⇒ 参数被按空格拆开、**静默丢失**（`night_pipeline.py` 手动解析 argv、未知参数直接忽略，**不报错**）。修：写**纯 ASCII 的 .ps1**，里面用 `& $py @argl`，再 `Start-Process` 启动它。
 8. **中文里写 ASCII 双引号 = `SyntaxError`**（一天犯 4 次）⇒ 改用 **「」/（）**。**权威判据永远是 `py_compile`**；`tools/_check_quotes.py` 只是早期预警，**启发式必然有假阳性**。
 9. **用「恒等不变量测试」抓计算错误**：市值加权基准的「mcap=常数 ⇒ 必须逐位等于等权」抓出 **5.1e-06** 偏差（市值 28.6% 为 NaN，分子分母口径不一致）⇒ `5e-06` 量级**肉眼看数值"很合理"绝对发现不了**。**凡新增计算路径，先找一个"退化时必须逐位相等"的测试。**
-10. **★★ `fnmatch` 的 `*` 会跨越 `/`**（2026-09-14 实录）：`fnmatch('docs/history/cleanup_X/docs/a.bak', 'docs/*.bak_*')` ⇒ **True**
+10. **★★ `fnmatch` 的 `*` 会跨越 `/`**（2026-09-14 实录）：`fnmatch('history/cleanup_X/docs/a.bak', 'docs/*.bak_*')` ⇒ **True**
     ⇒ 我写的清理脚本用 `docs/*.bak_*` 匹配"docs 下一层"，实际匹配了**任意深度**
     ⇒ **已归档的文件下一轮又被归档**，每跑一次嵌套一层：
-    `docs/history/cleanup_B/docs/history/cleanup_A/docs/history/<file>`
+    `history/cleanup_B/history/cleanup_A/history/<file>`
     ⇒ ⇒ **我在 docstring 里声明的"幂等"是假的**——它不是幂等，而是**渐进式破坏**。
-    **修法**：① 遍历时**跳过归档区**（`docs/history/`）；② `PROTECT` 也加 `docs/history/**`（双保险）；
+    **修法**：① 遍历时**跳过归档区**（`history/`）；② `PROTECT` 也加 `history/**`（双保险）；
     ③ **清掉已产生的嵌套**（`ai_test/_fix_history_nesting.py`）。
     > **★ 通用教训**：**"可重复执行"（幂等）必须真的连跑两遍去验证**，不能只写在注释里。
     > 任何"清理/批处理/归档"脚本，**第一次跑完之后要再跑一次，确认第二次是"零动作"**。
@@ -858,12 +925,12 @@ python tools/_audit_deadcode.py    # ★ 死代码（ast 精确判定，避免 f
 | | `ai_test/interpret_valid.py` | ★ 决策树 → **结论 + 下一步确切命令**（写死，不依赖会话） |
 | | `tools/critic_sensor_report.py` | ★ B角建议 vs LLM建议 vs 实际产出（§1.1 用） |
 | | `ai_test/run_reports.py` · `night_report.py` | 重出报告（含 `tilt`） |
-| **库/因子** | `ai_test/library_kpi.py` | ★ 库独立性 KPI（**秒级、不需面板**） |
+| **库/因子** | `tools/library_kpi.py` | ★ 库独立性 KPI（**秒级、不需面板**）· ★ 2026-09-15 从 `ai_test/` 迁入 |
 | | `ai_test/inspect_bank.py` · `export_bank.py` | 看库 / 导出 pkl 给 `standard_test` |
 | | `tools/backfill_library_pool.py` | ★ 补录池 `factor_library_*.md`（§8.44） |
 | | `ai_test/backfill_pool_tags.py` | 补池标签 |
 | **分析** | `ai_test/diag_gate_chain.py` | ★ 逐门诊断（门槛到底砍在哪一道） |
-| | `ai_test/calib_pool_gate.py` · `calib_gates.py` | 门槛标定 |
+| | `ai_test/calib_pool_gate.py` · **`tools/calib_dedup_leaf.py`** | 门槛标定（★ 后者 2026-09-15 由 `tools/calib_gates.py` **改名**：与 `calib_gate.py` 只差一个 `s`、用途不同，极易混淆）|
 | | `tools/analyze_diversity.py` · `analyze_turnover.py` | 结构多样性 / 换手分析 |
 | | `ai_test/test_combine.py` | 合成 vs 个体（**必须用 `ex` 口径**） |
 | | `ai_test/combo_build.py` · `combo_score.py` · `combo_calib.py` | 合成因子构建 / 选股 / 标定 |

@@ -37,7 +37,7 @@ docs/loop_strip_style*.csv
 docs/loop_pool_obs*.csv
 # 池标签导出（pool_tags.py 从上面两个文件派生, 可随时重算 -> 喂 PG 用）
 docs/pool_tags*.csv
-# gen16 前旧快照已归 docs/history/（停更，已 git 跟踪为归档，此处不再 ignore）
+# gen16 前旧快照已归 history/（停更，已 git 跟踪为归档，此处不再 ignore）
 
 # IDE / 系统
 .idea/
@@ -57,15 +57,19 @@ Thumbs.db
 # ⚠ 必须写 `ai_test/*`（带斜杠 = **锚定仓库根**）而**不是** `ai_test/`：
 #   git 规则「父目录被排除时无法再包含其中的文件」⇒ 写 `ai_test/` 会让下面的 `!` 例外**全部失效**。
 ai_test/*
-# ⚠ 例外：3 个兼容垫片（仅为「迁移时正在跑的轨道」保留；**轨道结束后可 git rm**）
-!ai_test/run_tracks.py
-!ai_test/build_facs.py
-!ai_test/cross_pool_review.py
-# ⚠ 但**同名目录出现在别处**（docs/history 下的归档快照）要继续整体忽略 —— 与迁移前行为一致。
+# ★ 2026-09-15：原先这里还有 3 条 `!ai_test/{run_tracks,build_facs,cross_pool_review}.py`
+#   **兼容垫片例外** —— 已验证那 3 个文件**根本不存在**（真实版本在 `tools/`）⇒
+#   例外是**失效残留**，已删除 ✓（不删会让读者误以为 ai_test 里还有生产脚本）
+# ⚠ 但**同名目录出现在别处**（history 下的归档快照）要继续整体忽略 —— 与迁移前行为一致。
 #   原规则是 `ai_test/`（无斜杠 ⇒ 匹配**任意层级**的同名目录），换成锚定的 `ai_test/*` 后
-#   会**误放开** docs/history/**/ai_test/ 里的 101 个归档文件（实测：001311 下 88 个、001515 下 13 个）
+#   会**误放开** history/**/ai_test/ 里的 101 个归档文件（实测：001311 下 88 个、001515 下 13 个）
 #   ⇒ 显式补回这条。
-docs/history/**/ai_test/
+history/**/ai_test/
+# ★ 2026-09-15：`ai_test/` 整体归档 → `history/ai_test_20260915/`（591 个一次性脚本/产物）
+#   ⚠ 上面那条 `history/**/ai_test/` **匹配不到** `ai_test_20260915`（名字不同）⇒ 必须显式补 ✓
+history/ai_test_20260915/
+# ★ 2026-09-15 归档的一次性件（上证50 池产物 / standard 已归档件）—— 同样不进版本
+history/20260915_cleanup/
 
 # 外部参考项目（只读参考，非本项目代码；28MB/237 文件，勿混入版本）
 # 来源：D:\工作\QuantaAlpha-main.zip → 解压于此供查阅（roadmap §8.8）

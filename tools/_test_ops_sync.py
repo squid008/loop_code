@@ -73,7 +73,10 @@ ALLOW = {
                              #   真正要同步的 `_ops_of` 已**派生** ⇒ 由 [1] 结构性保证
     'loop_fix_bank_gen8.py',  # 一次性修复脚本里的具体因子表达式（不是清单）
     # 以下为各测试/诊断脚本里引用的具体表达式示例（非清单）
-    '_test_ops_sync.py', '_test_critic_sensor.py', 'calib_gates.py', '_test_daily_dd.py',
+    #   ⚠ 2026-09-15：`calib_gates.py` 已**改名**为 `calib_dedup_leaf.py`
+    #     （与 `calib_gate.py` 只差一个 `s` 却用途不同 ⇒ 极易混淆；
+    #      被删的是 `_calib_quality_gate.py`/`_calib_novelty.py`，见 `change_log.md:559`）
+    '_test_ops_sync.py', '_test_critic_sensor.py', 'calib_dedup_leaf.py', '_test_daily_dd.py',
     '_check_faildim.py', '_test_ok_gate.py', '_test_action_efficacy.py',
     '_test_parent_sel.py', '_test_inject_pools.py', '_test_reports_expr.py',
     '_test_build_facs_merge.py',

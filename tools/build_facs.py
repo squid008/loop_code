@@ -121,7 +121,7 @@ def load_bank_nodes(pool):
 def load_archive_ic(pool):
     """`docs/loop_archive{_pool}.csv`（**+ gen16 前的历史快照**）→ {expr: ic}（**带符号的** IC）。
 
-    ⚠ 必须连 **`docs/history/loop_archive.legacy_pre_gen16.csv`** 一起读（2026-09-14 实测）：
+    ⚠ 必须连 **`history/loop_archive.legacy_pre_gen16.csv`** 一起读（2026-09-14 实测）：
       全A 库的 F01~F04 来自 **gen8~11**，而 `loop_archive.csv` 是 gen16 起的新表
       ⇒ 只读新表会找不到它们、误报"库无记录"。
       实测覆盖：新表命中 **32/41** + 历史表命中 **1/41** ⇒ **8 个仍无记录**
@@ -130,7 +130,9 @@ def load_archive_ic(pool):
     sfx = '' if pool == 'all' else '_' + pool
     cands = [os.path.join(DOCS, 'loop_archive{}.csv'.format(sfx))]
     if pool == 'all':
-        cands.append(os.path.join(DOCS, 'history', 'loop_archive.legacy_pre_gen16.csv'))
+        # ★ 2026-09-15：归档区 `docs/history/` 已整体移到**仓库根 `history/`**
+        #   ⚠ 注意这里**不能**用 `DOCS` —— 它拼出来是 `docs/history/...`（已不存在）✗
+        cands.append(os.path.join(ROOT, 'history', 'loop_archive.legacy_pre_gen16.csv'))
     out = {}
     for p in cands:
         if not os.path.exists(p):

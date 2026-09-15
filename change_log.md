@@ -9,6 +9,102 @@
 
 ---
 
+> ★ **旁注（2026-09-15）**：本文件历史条目里出现的 `docs/history/` 归档区，
+> 已于 2026-09-15 整体移到**仓库根 `history/`**（`docs/` 只放活跃文档）。
+> 历史条目**有意保留原文**（不改写记录）✓
+
+---
+
+## [0.20.0] — 2026-09-15
+
+> 主题：**修 P0-2 引入的「幽灵实参」崩溃（已实际崩 2 代）+ 文件精简归档**
+> 用户指令：「项目精简，不要东一榔头西一棒子，更不要两个地方前后矛盾互相打架」
+> +「`ai_test` 按理说可以全删」「`docs/history` 提出来放根目录」「打个 tag」
+
+### ⚠⚠⚠ 修复：P0-2 拆 `run()` 时引入的「幽灵实参」（**这是一次我自己的回归**）
+
+**症状（运行时铁证）**——`ai_test/_tracks/pool_500_gen15_err.log`：
+```
+File "engine/loop_engine.py", line 2376, in run
+  POOL_M, _lp, _t_l2, _tg, e, top = _run_l2(..., cols, dates, e, l1)
+UnboundLocalError: cannot access local variable 'e' where it is not associated with a value
+```
+
+**★★★ 时序排除法坐实（P0-2 提交于 15:43）**：
+
+| 代 | 启动 | 结果 | 为什么 |
+|---|---|---|---|
+| `pool=300 gen25` | 14:30 | ✓ | P0-2 之前 |
+| `pool=300 gen26` | 15:19 | ✓ | P0-2 之前 |
+| `pool=300 gen27` | 15:19 → 15:48 | ✓ | ★ **进程 15:19 已加载旧代码**（改磁盘不影响已运行进程）|
+| `pool=300 gen28` | 15:48 | ✗ **崩** | 新代码 |
+| `pool=500 gen15` | 16:04 | ✗ **崩** | 新代码 |
+| `pool=1000 gen13` | 16:27 | ✗ **崩**（已预报并复现）| 新代码 |
+
+**根因**：P0-2 提取函数时我给 `_run_l2`/`_dump_strip_detail`/`_dump_pool_obs`/`_agg_style_diag`
+/`_save_state` **补了形参 `e`/`r_`/`_e`**，而函数体**从不读它们**
+（只在 `except ... as e:` 里当局部异常变量）；而 **Python 3 在 handler 结束时隐式 `del e`**
+⇒ 那样"绑过"的名字到调用行**必然未绑定** ⇒ `UnboundLocalError` ✗
+
+**已修 13 处**（逐项读函数体核实"形参确实没被用"）：
+`_run_l2`（删 `e`；★ `_tg` 只在 `if _pool_obs:` 内绑定 ⇒ 关掉该开关会 UnboundLocal ⇒ 一并从签名/返回值移除）
+· `_dump_strip_detail`（删 `e` + 删 `return e`）· `_dump_pool_obs`（删 `e`/`r_`，return 改 `(nd, res)`）
+· `_agg_style_diag`（删 `e`）· `_save_state`（删 `_e`）+ 对应 4 个调用点。
+★ **`_e`（L2660）是"下一个必崩点"**（引擎当时崩在 L2376，还没走到它）⇒ **一次修全**，而非崩一个修一个 ✓
+
+**⚠ 更深的缺口（重点）**：崩了 2 代，而 **11 个回归测试当时全绿** ✗
+· 它们**都不覆盖 `run()` 主循环**；`smoke_gen_only.py` 是 `--gen_only` **跳过 L2**；
+  真机跑一代 20+ 分钟且**写 state** ⇒ 不能做日常质检。
+⇒ **补永久防线**：**`tools/_test_ghost_args.py`**（毫秒级 / 纯静态 / 不写盘）
+  · 判据 = `run()` 内每个 `Call` 的简单名实参，在「模块级 / 形参 / **调用行之前的非 `except-as` 绑定**」都没有 ⇒ 报警
+  · ★ **负向验证通过**（把 `e` 注入实参 ⇒ FAIL + exit 1；撤销 ⇒ 全绿）⇒ 证明它**真能抓到** ✓
+  · ⚠ 写它时我**漏了"排除 `except-as` 绑定"**那条 ⇒ 负向验证**立刻暴露**（报 0 幽灵）⇒ 补上 ✓
+    ⇒ **教训：新写的"防线"必须做负向验证，否则可能是假防线** ✗
+
+### 文件精简归档（用户：「项目精简，不要两处打架」）
+
+**先做全项目审计**（新增只读工具，可重复跑）：
+`tools/_audit_files.py`（988 个文件 → LIVE/DOC/ORPHAN）·`tools/_audit_paths.py`（源码里写的路径是否真存在）·
+`tools/_audit_imports.py`（**精确**判依赖，只认 `import`/`subprocess`/`runpy`）
+
+**审计结论（证据级）**：
+| 项 | 结论 |
+|---|---|
+| `docs/*.csv`（19 个）| ★ **全部是"引擎输出"**，`loop_archive*.csv` = **入库清单（权威）**⇒ **不是垃圾**，保留 |
+| `loop_journal_50.md` | ★ `POOLS` 里 **`50` = `000016.XSHG` = 上证50** ⇒ 用户确认归档（同批 4 个文件）|
+| `ai_test/` | ★ "可以全删"**不成立**：精确判依赖后仍有 **1 个真依赖**（`library_kpi.py`）|
+| `standard/` | ★ **`pool_tags.py` 与 `qa_style_obs.py` 被 `engine/` 引用** ⇒ **是生产依赖**，不能当"标准测试的附属" |
+| `calib_gate.py` vs `calib_gates.py` | ★ 差一个字母、**用途不同**（315 行通用门标定 / 81 行定 `--dedup_corr`+`--leaf_proxy_thr`）；★ 我**差点误删** —— 读 `change_log.md:559` 原文才确认当初被删的是 `_calib_quality_gate.py`/`_calib_novelty.py` |
+
+**已做的动作**：
+1. ★ **修真缺陷**：`tools/backfill_bank_ex.py:L140` 找 `tools/library_kpi.py`，而该文件**实际在 `ai_test/`**
+   ⇒ 把 `library_kpi.py` **迁入 `tools/`** ⇒ 那行**自动就对上了**（无需改代码）；改了它的用法注释与 2 处文档引用 ✓
+2. ★ **消除命名碰撞**：`tools/calib_gates.py` → **`tools/calib_dedup_leaf.py`**（`git mv` 保历史）+ 改 4 处引用
+3. **归档区搬到根**：`docs/history/` → **`history/`**（被 git 跟踪的 16 个用 `git mv` 保历史）
+4. **归档**（→ `history/20260915_cleanup/` 与 `history/ai_test_20260915/`）：
+   上证50 池 4 个 · `ai_test/` 整体（591 个文件）· `standard/` 4 个一次性件 · `docs/loop_style_paired.md`
+   ★ **保留**：`engine/loop_state_50.pkl`（该池因子库，**未动**）· 300/500/1000 全部活动数据
+5. **`.gitignore`**：清掉 3 条**失效**的 `!ai_test/*.py` 例外（那 3 个"垫片"根本不存在）
+6. **重建空草稿区** `ai_test/`（约定：临时脚本/产物放这里，可整删；`run_tracks.py` 本身自带 `makedirs`）
+
+### ⚠ 归档踩到的两个"盲区"（都靠工具/验证抓出，记下避免重犯）
+1. **批量文本替换改不了"拼出来的路径"**：`build_facs.py:133` 写的是
+   `os.path.join(DOCS, 'history', ...)` ⇒ 文本里没有 `docs/history` 连续串 ⇒ **逃过替换** ✗
+   ⇒ 已改 `DOCS`→`ROOT`；`fix_csv_schema.py:86` 同病同修 ✓
+   ⇒ ★ 教训：**归档/改名后必须用"路径一致性检查"扫一遍**（`tools/_audit_paths.py`）
+2. **归档 `ai_test/` 会把"被 `tools/` 依赖的测试资产"一起搬走**：
+   `_test_ops_registry.py` 的**金标准快照** `ai_test/_ops_oracle_before.json` 随之"消失"⇒ 测试 FAIL ✗
+   ⇒ 已移回 `tools/` ✓ ⇒ ★ 教训：**整体归档前先挑出"被生产/测试依赖的资产"** ✓
+
+### Notes
+- **引擎行为不变**（纯删多余形参，不改任何计算逻辑）；★ 但**修复了必崩** ⇒ 受影响的池从下一轮起可正常跑完 ✓
+- 回归：编译 **87** 个全过 · 引号干净 · **12 个测试全过**（33/11/✓/15/**2**/17/22/51/16/28/20/32）
+- ⚠ **我犯过并已纠正的误报**（记下避免重犯）：
+  · 「`ai_test` 有 12 个生产依赖」⇒ 判据把**注释里提到的文件名**也算依赖 ✗ ⇒ 精确判据下**只有 1 个**
+  · 「`calib_gates.py` 是该删的重复实现」⇒ 只凭"名字像" ✗ ⇒ 读 `change_log` 原文才知是**命名碰撞**
+  · 「路径检查报了 16 处错」⇒ 把**脚本的输出文件**当成"路径错" ✗ ⇒ 读/写要分开判（9 处是假阳性）
+
+
 ## 本文件与 `docs/factor_roadmap.md` 的分工
 
 两份文档**相似但职责不同**，不要互相替代：

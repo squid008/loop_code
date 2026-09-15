@@ -1,0 +1,37 @@
+v0.20.0 — 修 P0-2「幽灵实参」崩溃 + 文件精简归档
+
+【引擎行为】**挖掘结果不变** —— 纯删多余形参（不读、不参与任何计算），未改任何阈值/公式/流程。
+              ★ 但**修复了必崩**：`UnboundLocalError: e` 此前让
+                `pool=300 gen28` / `pool=500 gen15` / `pool=1000 gen13` **三代实际失败** ✗
+              ⇒ 从本 tag 起，受影响池的下一代可正常跑完 ✓（等价于"从失败恢复到可用"）
+
+【已完成代】无新增完成代（本次是修复 + 清理，不推进挖掘）。
+            · 崩掉的三代（300/gen28、500/gen15、1000/gen13）**未入库**，
+              `engine/loop_state_*.pkl` 与 `docs/loop_archive*.csv` **保持崩溃前状态**（未污染）✓
+            · `pool=300` 既有 27 代、`pool=500` 既有 14 代、`pool=1000` 既有 12 代（`run_tracks` PLAN 实测）
+
+【关键变更】
+ 1. ★★★ 修 `P0-2` 引入的「幽灵实参」（这是**我自己的回归**，v0.17.0 引入）：
+    `_run_l2`/`_dump_strip_detail`/`_dump_pool_obs`/`_agg_style_diag`/`_save_state`
+    的形参 `e`/`r_`/`_e` 被删；调用点同步（共 13 处）。
+    ★ 根因：**Python 3 在 `except X as e:` handler 结束时隐式 `del e`**
+      ⇒ "只被 except-as 绑过"的名字到调用行**必然未绑定** ✗
+    ★ 定位法：**时序排除法**（改磁盘 .py 不影响已运行进程，但影响下一轮子进程）
+      ⇒ 对比"提交时间 15:43"与"各代启动时间"即锁定 ✓
+ 2. ★ 新增永久防线 `tools/_test_ghost_args.py`（毫秒级/静态/不写盘，**已做负向验证**）
+    —— 因为崩了 2 代而 **11 个回归测试全绿**：它们都不覆盖 `run()` 主循环 ✗
+ 3. 文件精简归档：`docs/history/` → 根 **`history/`**（16 个 `git mv` 保历史）；
+    `ai_test/` 整体 → `history/ai_test_20260915/`（591 文件）；
+    `standard/` 4 个一次性件 + 上证50 池 4 个产物 → `history/20260915_cleanup/`
+ 4. 修两个真缺陷：`tools/backfill_bank_ex.py` 的错路径（`library_kpi.py` 迁入 `tools/` 后自然修复）·
+    `tools/calib_gates.py` → **`tools/calib_dedup_leaf.py`**（与 `calib_gate.py` 只差一个字母、用途不同）
+ 5. `.gitignore`：清 3 条失效 `!ai_test/*.py` 例外；新增 2 条忽略归档区（否则 591 文件会进 git）
+
+【回退方式】
+  · 代码回退：`git checkout v0.19.0 -- engine/loop_engine.py`（单文件即可；
+    但**不建议** —— 那等于退回"必崩"状态 ✗）
+  · 本次**未动任何状态文件** ⇒ **无需回退 `loop_state*.pkl` / `loop_archive*.csv`** ✓
+  · 归档可逆：`history/` 下的内容都可 `Move-Item` 回原位；
+    `history/20260915_cleanup/manifest.txt` 记录了每一项的来源与理由
+  · ⚠ 若回退到 v0.19.0，注意 `docs/history/` 与 `history/` 的目录差异（`build_facs.py`
+    / `fix_csv_schema.py` 的路径常量不同）

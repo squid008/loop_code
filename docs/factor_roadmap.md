@@ -141,7 +141,7 @@ IC 仅 0.010~0.016, 但 IC_IR 0.20~0.32、Calmar 0.25~0.46 —— 已属可用�
 ## 8. 遗留资产与续跑指南
 
 **资产清单**
-- 因子：`docs/factor_library.md`（9 个入库因子 + 指标）；L2 流水 `docs/loop_archive.csv`（240 行明细，本地逐代累积）；gen16 前旧快照已归 `docs/history/loop_archive.legacy_pre_gen16.csv`
+- 因子：`docs/factor_library.md`（9 个入库因子 + 指标）；L2 流水 `docs/loop_archive.csv`（240 行明细，本地逐代累积）；gen16 前旧快照已归 `history/loop_archive.legacy_pre_gen16.csv`
 - 逐代诊断：`docs/loop_journal.md`（gen4~22）；全叙事 `docs/factor_roadmap.md`（Round12~26）
 - 状态快照：`engine/loop_state.pkl`（收官态：bank 9 / seeds 30 / 失败库 1738 / L1 已测 12133）
 - 代码：`engine/loop_engine.py` / `loop_critic.py` / `loop_llm.py` / `loop_watch.py` / `loop_status.py`；每代对话录音 `ai_test/loop_conv/gen*C_conv.md`

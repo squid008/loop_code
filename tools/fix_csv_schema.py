@@ -83,7 +83,9 @@ def main():
         status = '正常' if not bad else f'**混合宽度** {sorted(hist.items())}'
         print(f'  - {name:26s} 表头 {hdr_n} 列 -> 目标 {len(cols)} 列 ; {status}')
         if bad and apply_:
-            st = os.path.join(DOCS, 'history')
+            # ★ 2026-09-15：归档区已从 `docs/history/` 移到**仓库根 `history/`**
+            #   ⚠ 不能用 `DOCS`（会拼成 `docs/history/`，已不存在）✗
+            st = os.path.join(ROOT, 'history')
             os.makedirs(st, exist_ok=True)
             bak = os.path.join(st, f'{name}.bak_{time.strftime("%Y%m%d_%H%M%S")}')
             shutil.copy2(p, bak)

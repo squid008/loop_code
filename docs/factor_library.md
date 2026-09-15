@@ -5,7 +5,7 @@
 > 自 gen34 起新增 **分段独立验证**：L2 费后日度超额序列按时间均分 3 个不相交子区间（约 3 年/段），
 > 要求 ≥2 段各自累计费后超额 >0 —— 拦"靠单段大行情撑全样本高 t、行情一过即失效"的伪稳健候选
 > （防数据窥探/伪衰减）；样本不足以分段时自动放行不误杀。开关：`--seg_n 3 --seg_need 2`。
-> 每代挖掘记录（诊断+B角建议）见 `docs/loop_journal.md`；每代 L2 费后明细流水（逐代累积、带 gen/cat/leaf 列，自 gen16 起）见 `docs/loop_archive.csv`；gen16 前旧快照已归 `docs/history/loop_archive.legacy_pre_gen16.csv`。
+> 每代挖掘记录（诊断+B角建议）见 `docs/loop_journal.md`；每代 L2 费后明细流水（逐代累积、带 gen/cat/leaf 列，自 gen16 起）见 `docs/loop_archive.csv`；gen16 前旧快照已归 `history/loop_archive.legacy_pre_gen16.csv`。
 > **本文件只收录入库因子**，预计每数十轮才 +1 个，文件不会膨胀；round 流水永不并入本文件。
 >
 > 当前 **41 个入库**（截至 gen51，2026-09-10；gen8×1 / gen10×3 / gen11×4 / gen14×1 / gen23×2 / gen31×1 / gen33×1 / gen43×3 / gen45×3 / gen50×4 / gen51×1）。
@@ -625,4 +625,4 @@ neg(corr100(true_range, mf_x_bqty))
 | `docs/loop_archive.csv` | 每代 L2 全量候选流水（expr/指标/passed，引擎逐代追加） |
 | `engine/loop_state.pkl` | 运行状态：bank/seeds/失败库/FSA（`_dump_state.py` 可看） |
 | `docs/factor_roadmap.md` | 研发档案（Round 叙事 + Loop 整体复盘/扩叶落地附录，续做入口） |
-| `docs/history/` | **归档区**：factor_miner round1~7 档案（`factor_archive.md/.csv`）+ gen16 前 Loop L2 旧快照（`loop_archive.legacy_pre_gen16.csv`），均已停更 |
+| `history/` | **归档区**：factor_miner round1~7 档案（`factor_archive.md/.csv`）+ gen16 前 Loop L2 旧快照（`loop_archive.legacy_pre_gen16.csv`），均已停更 |

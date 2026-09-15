@@ -1433,7 +1433,7 @@ def _jury_deep_review(args, l1, loop_llm, rng):
     return (jury_lines, l1, n_jury_kill, n_jury_rev)
 
 
-def _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool_gate_or_all, _pool_obs, _pools, args, cols, dates, e, l1):
+def _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool_gate_or_all, _pool_obs, _pools, args, cols, dates, l1):
     """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
 
     原段落: L2 费后精筛
@@ -1463,10 +1463,14 @@ def _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool
         except Exception as e:
             print(f"  [池指标] [!] 掩码构建失败 -> 本代跳过池指标: {type(e).__name__}: {e}")
             POOL_M = {}
-    return (POOL_M, _lp, _t_l2, _tg, e, top)
+    # ⚠ 2026-09-15 修：原先 return 里带 `_tg`/`e`，两者都**不是本函数产生的** ——
+    #   `e` 是 P0-2 提取时凭空补的形参（函数体从不读）；`_tg` 只在 `if _pool_obs:` 内绑定
+    #   ⇒ 关掉 `--pool_obs` 时会 UnboundLocal。两者都已从签名/返回值移除 ✓
+    #   `_tg` 在 `run()` 里本就由 `for _tg, _M in POOL_M.items()` 重新绑定，不依赖本返回值。
+    return (POOL_M, _lp, _t_l2, top)
 
 
-def _dump_strip_detail(_strip_style, e, strip_rows):
+def _dump_strip_detail(_strip_style, strip_rows):
     """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
 
     原段落: 剥风格明细落盘(2026-09-12, --strip_style; 独立文件, 不进 archive 表头)
@@ -1481,10 +1485,9 @@ def _dump_strip_detail(_strip_style, e, strip_rows):
                   f"剥风格后超额仍为正 {_n_pos}/{len(_sd)})")
         except Exception as e:
             print(f"  [剥风格] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
-    return e
 
 
-def _dump_pool_obs(POOL_M, _pools, args, e, fail_lib, nd, pool_rows, r_, rows, top):
+def _dump_pool_obs(POOL_M, _pools, args, fail_lib, nd, pool_rows, rows, top):
     """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
 
     原段落: 池内指标落盘(2026-09-12, --pool_obs; **长表**, 独立文件)
@@ -1514,7 +1517,7 @@ def _dump_pool_obs(POOL_M, _pools, args, e, fail_lib, nd, pool_rows, r_, rows, t
                       '' if r_['passed'] else 'l2')
     if len(res):
         # 逐代累积流水(带 gen/cat/leaf 列): 文件缺失/为空时写表头, 其后追加
-        # —— 每代 L2 明细永久留档(gen16 前旧快照已归 docs/history/loop_archive.legacy_pre_gen16.csv)
+        # —— 每代 L2 明细永久留档(gen16 前旧快照已归 history/loop_archive.legacy_pre_gen16.csv)
         res.insert(0, 'gen', args.gen)
         # ★ schema-aware 追加(2026-09-13, §8.44): 原先是"只判文件有无/为空"决定写不写表头,
         #   而 §8.34 给本表加了 `max_ex_corr`(第 17 列) ⇒ `loop_archive_300/500.csv` 变成
@@ -1529,7 +1532,7 @@ def _dump_pool_obs(POOL_M, _pools, args, e, fail_lib, nd, pool_rows, r_, rows, t
         print(f"L2 通过 {len(p)}/{len(res)} 个")
         if len(p):
             print(p.round(4).to_string(index=False))
-    return (e, nd, res)
+    return (nd, res)
 
 
 def _critic_diagnose(args, fam_blocked, l1, pool_rows, res, seg_ok_list):
@@ -1550,7 +1553,7 @@ def _critic_diagnose(args, fam_blocked, l1, pool_rows, res, seg_ok_list):
     return (critic, diag, res_c)
 
 
-def _agg_style_diag(_k, cfg, critic, diag, e, l1, obs_df, r, res):
+def _agg_style_diag(_k, cfg, critic, diag, l1, obs_df, r, res):
     """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
 
     原段落: 风格暴露诊断聚合(2026-09-11, --style_obs): 落盘已在 L1 求值后完成, 此处只做分组聚合
@@ -1622,7 +1625,7 @@ def _critic_llm_review(_v, args, critic, diag, l1, next_cfg, reasons, res_c):
     return _v
 
 
-def _save_state(_dup_ex_corr, _e, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, f, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v):
+def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, f, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v):
     """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
 
     原段落: 保存状态
@@ -2373,7 +2376,7 @@ def run(args):
     jury_lines, l1, n_jury_kill, n_jury_rev = _jury_deep_review(args, l1, loop_llm, rng)
 
     # ---- L2 费后精筛 ----
-    POOL_M, _lp, _t_l2, _tg, e, top = _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool_gate_or_all, _pool_obs, _pools, args, cols, dates, e, l1)
+    POOL_M, _lp, _t_l2, top = _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool_gate_or_all, _pool_obs, _pools, args, cols, dates, l1)
     # ---- 市值面板(2026-09-13, roadmap §8.28): 供"**市值加权基准**"口径 ----
     #  为什么: 组合腿是 Top10% **等权**; 基准腿现状是"池内**等权**" ⇒ 两腿同为等权 ⇒ 规模中性
     #   ⇒ 差额 = 纯选股 alpha。而**真实指数**(沪深300)是**自由流通市值加权** ⇒ 若用它当基准,
@@ -2637,19 +2640,19 @@ def run(args):
         # 门槛静默失效是"无人值守"最危险的失败模式 -> 必须上报(拿不到池结果就放行)
         print(f"  [池门槛] [!] {n_pool_nogate} 个候选无池结果 -> 已放行(未参与门槛判定)")
     # ---- 剥风格明细落盘(2026-09-12, --strip_style; 独立文件, 不进 archive 表头) ----
-    e = _dump_strip_detail(_strip_style, e, strip_rows)
+    _dump_strip_detail(_strip_style, strip_rows)
     # ---- 池内指标落盘(2026-09-12, --pool_obs; **长表**, 独立文件) ----
     #  为什么长表: 池集合由 --pools 决定, 宽表(ic_300/ic_500...)一旦换池集合就会
     #  在追加时表头错位(与 loop_archive.csv 同一个坑)。长表 = (gen,expr,pool) 三键, schema 恒定。
     #  `pool_tag`(300好用/300+500好用/全都好用/只有全A好用) 由**离线**派生(阈值可改后重算)。
-    e, nd, res = _dump_pool_obs(POOL_M, _pools, args, e, fail_lib, nd, pool_rows, r_, rows, top)
+    nd, res = _dump_pool_obs(POOL_M, _pools, args, fail_lib, nd, pool_rows, rows, top)
 
     # ---- B角: 诊断本代 + 给出下一代策略 + 写日志 ----
     critic, diag, res_c = _critic_diagnose(args, fam_blocked, l1, pool_rows, res, seg_ok_list)
     # ---- 风格暴露诊断聚合(2026-09-11, --style_obs): 落盘已在 L1 求值后完成, 此处只做分组聚合 ----
     #  判读(见 docs/log/2026-09.md §8.3/§8.4): new vs old 两组对比, 若 L2 候选/通过集的
     #  |lntr|、|lnamt| 中位显著上升 -> 确诊"新排序分在低换手/低成交额方向加倍下注"。
-    next_cfg, reasons = _agg_style_diag(_k, cfg, critic, diag, e, l1, obs_df, r, res)
+    next_cfg, reasons = _agg_style_diag(_k, cfg, critic, diag, l1, obs_df, r, res)
     # ---- 生成侧 LLM 引导留痕(独立引用体小节, 与 ai_review 块同风格) ----
     _log_llm_hint(args, jury_lines, llm_hyp, llm_on, n_jury_kill, n_jury_rev, n_llm_call, n_llm_hit, n_llm_parse)
 
@@ -2657,7 +2660,7 @@ def run(args):
     _v = _critic_llm_review(_v, args, critic, diag, l1, next_cfg, reasons, res_c)
 
     # ---- 保存状态 ----
-    _save_state(_dup_ex_corr, _e, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, f, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v)
+    _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, f, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v)
 
 
 def clone(n):
