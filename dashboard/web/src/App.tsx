@@ -137,9 +137,14 @@ export default function App() {
     setMineBusy(true)
     try {
       const r = await api.mineStartPool(pool)
+      // ★ 2026-09-16（用户："停止一个池然后重新启动，怎么没马上开挖？"）：
+      //   并行模式下**运行期动态加入**（不用等下一轮）⇒ 提示要分模式说清楚 ✓
+      const _par = mine?.execMode === 'parallel'
       say('ok', r.restarted
-        ? `调度器之前没在运行，已自动重启。池 ${pool} 已加入轮转（当前启用：${r.enabled.join(',')}）`
-        : `池 ${pool} 已重新加入轮转，下一轮轮到它`)
+        ? `调度器之前没在运行，已自动重启。池 ${pool} 已加入${_par ? '并行' : '轮转'}（当前启用：${r.enabled.join(',')}）`
+        : (r.merged
+          ? `池 ${pool} 已重新加入${_par ? '并行' : '轮转'}：${_par ? '**马上**就会起一个引擎（不用等下一轮）' : '下一轮轮到它'}`
+          : `池 ${pool} 已重新加入${_par ? '并行' : '轮转'}`))
       await loadAll(true)
     } catch (e) {
       say('err', `启动本池失败：${e instanceof Error ? e.message : String(e)}`)
@@ -395,8 +400,11 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
   const stopped = !!slot?.stopped || (slot != null && !slot.enabled)
   const isRunning = mining || p.running
   const cls = mining ? 'card run' : (inRotation ? 'card armed' : 'card')
+  // ★ 2026-09-16（用户："怎么它又加入轮转、没有马上开挖？"）：**文案要跟实际模式一致**
+  //   —— 并行模式下说"轮转中/加入轮转"会让人以为"要排队等"，而实际是**马上就会起引擎** ✗
+  const qword = mine?.execMode === 'parallel' ? '并行' : '轮转'
   const badge = mining ? (leaving ? '运行中·已移出' : '挖掘中')
-    : (inRotation ? '轮转中'
+    : (inRotation ? (qword + '中')
       : (configured ? '待启动' : (stopped ? '已停止' : '空闲')))
   const dotColor = mining ? 'var(--ok)'
     : (inRotation ? 'var(--sky)' : (configured ? 'var(--amber)' : 'var(--idle)'))
@@ -428,20 +436,24 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
       <div className="card-a">
         <button className="btn start sm" disabled={busy || inRotation} onClick={onStart}
                 title={inRotation
-                  ? `${p.label} 已在轮转里（下一轮就会轮到它）`
+                  ? (qword === '并行'
+                    ? `${p.label} 已在并行队列里（内存够就会起引擎；没在跑说明在等空位）`
+                    : `${p.label} 已在轮转里（下一轮就会轮到它）`)
                   : (leaving
-                    ? `${p.label} 正在跑但已移出轮转。点它 = 重新加入轮转，让它继续参与`
-                    : `把 ${p.label} 加入轮转。如果调度器没在运行，会自动启动`)}>
-          {inRotation ? '已参与轮转' : (leaving ? '重新加入轮转' : '启动本池')}
+                    ? `${p.label} 正在跑但已移出${qword}。点它 = 重新加入，让它继续参与`
+                    : (qword === '并行'
+                      ? `把 ${p.label} 加入并行：★ **马上**就会起一个引擎（不用等下一轮）。如果调度器没在运行，会自动启动`
+                      : `把 ${p.label} 加入轮转。如果调度器没在运行，会自动启动`))}>
+          {inRotation ? `已参与${qword}` : (leaving ? `重新加入${qword}` : '启动本池')}
         </button>
         <button className="btn stop sm" disabled={busy || (!inRotation && !mining)} onClick={onStop}
                 title={(!inRotation && !mining)
-                  ? `${p.label} 既不在轮转也没在跑`
+                  ? `${p.label} 既不参与${qword}也没在跑`
                   : (mining
                     ? (leaving
-                      ? `${p.label} 已移出轮转，正在跑完当前这一代（跑完就会停）。点它可立即结束`
-                      : `停止 ${p.label}：从轮转中移除，并结束它当前那一代。其他池不受影响`)
-                    : `把 ${p.label} 从轮转中移除（它当前没在跑，所以只影响后续轮次）`)}>
+                      ? `${p.label} 已移出${qword}，正在跑完当前这一代（跑完就会停）。点它可立即结束`
+                      : `停止 ${p.label}：从${qword}中移除，并结束它当前那一代。其他池不受影响`)
+                    : `把 ${p.label} 从${qword}中移除（它当前没在跑，所以只影响后续轮次）`)}>
           停止本池
         </button>
       </div>

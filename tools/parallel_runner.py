@@ -199,78 +199,96 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
             RT.log('## 第 {} / {} 轮   启用池={}   本轮停={}   并行上限={}'.format(
                 rnd, rounds, sorted(en), sorted(st) or '无', max_parallel))
             RT.log('#' * 76)
-            queue = list(plan)          # 本轮待跑（每池恰好 1 代）
+            # ---- ★★ 本轮状态：**动态队列**（不是"轮初拍死的列表"）----
+            #   ★ 2026-09-16 二次修订（用户实测："我停止一个池然后重新启动，怎么没马上开挖？"）：
+            #     并行运行中「启动本池」必须**马上生效** ⇒ 每轮迭代**重新算候选**：
+            #     本轮还没启动过、现在仍在启用集、且没被停的池，都能立刻上 ✓
+            #   ★★ 同时保住上一版要求（"我停一个池，别自动把闲置池顶上来"）：
+            #     `deferred` 记录"本轮不自动补位"的池，并记下**顺延那一刻的 stopped 快照**；
+            #     ★ 只有"**你在 stopped 里、之后又被「启动本池」放回来**"的池才允许马上上
+            #       ⇒ 既不会自动顶上来，又让你手动加的那个立刻开挖 ✓✓
+            launched = set()                 # 本轮已启动
+            deferred = {}                    # 池 -> 顺延那一刻的 stopped 快照（用来认"你重新启用"）
             ran_round = False
-            # ★★ 2026-09-16（用户要求：「不要搞成我停一个池然后下一个闲置池就自动跑起来，
-            #   停了就跑 2 个，我自己会选要再加跑哪个池子」）：
-            #   本轮内一旦检测到**用户单独停止**过某个池 ⇒ **本轮不再补位**（就保持"停完剩下的那几个"在跑），
-            #   该池的空槽**留给用户自己决定**（想加回来点「启动本池」）。
-            #   ⚠ 只影响**本轮**：下一轮按 `enabled - stopped` **重新组队**（被停的池不会自己回来）✓
-            paused_refill = False
-            while queue or running:
+            while True:
                 ctl = RT.read_ctl()
                 if ctl.get('stopAll') and not stopped_by_user:
                     stopped_by_user = True
                     RT.log('[CTL] ★ 收到「全部停止」⇒ 不再补新任务，等在跑的 {} 个自然结束'.format(
                         len(running)))
                 if stopped_by_user:
-                    queue = []
+                    for p, _, _ in plan:
+                        if p not in launched:
+                            deferred[p] = set(RT.read_ctl().get('stopped') or [])
                 # ---- 收割已结束的 ----
                 for t in list(running):
                     if t['pr'].poll() is not None:
                         if _reap(t):
                             ran_round = True
                             dirty = True
-                        if t.get('killed') and not paused_refill and not stopped_by_user:
-                            paused_refill = True
-                            RT.log('[CTL] ★ 检测到「单独停止」⇒ **本轮不再补位**：'
+                        if t.get('killed') and len(deferred) == 0 and not stopped_by_user:
+                            _st0 = set(RT.read_ctl().get('stopped') or [])
+                            for p, _, _ in plan:
+                                if p not in launched:
+                                    deferred[p] = set(_st0)
+                            RT.log('[CTL] ★ 检测到「单独停止」⇒ **本轮不再自动补位**：'
                                    '就保持"停完剩下的 {} 个"在跑；空出来的槽**留给你自己决定**'
-                                   '（想加哪个池回来就点「启动本池」）✓'.format(len(running) - 1))
+                                   '（「启动本池」的那个会**马上**开挖）✓'.format(len(running) - 1))
                         running.remove(t)
-                if paused_refill and not running and queue:
-                    RT.log('[CTL] 本轮剩余 {} 个池未启动（{}）⇒ 留到下一轮（下一轮按'
-                           '你保留的启用集重新组队）'.format(
-                               len(queue), ' '.join(p for p, _, _ in queue)))
-                    queue = []
-                # ---- 补位（★ 队列化：跑完一个立刻补一个）----
-                while queue and len(running) < max_parallel and not stopped_by_user and not paused_refill:
-                    p, _g0, _done = queue[0]
+                # ---- 动态候选（★ 每次迭代重算）----
+                en = set(ctl.get('enabled') or [p for p, _, _ in plan])
+                st = set(ctl.get('stopped') or [])
+                cand = [(p, g, d) for (p, g, d) in plan
+                        if p not in launched and p in en and p not in st
+                        and (p not in deferred
+                             or (p in deferred[p] and p not in st))]   # ★ 你放回来的 ⇒ 允许马上上
+                if not running and not cand:
+                    _left = [p for p, _, _ in plan if p not in launched]
+                    if _left:
+                        RT.log('[CTL] 本轮剩余 {} 个池未启动（{}）⇒ 留到下一轮'
+                               '（下一轮按你保留的启用集重新组队）'.format(len(_left), ' '.join(_left)))
+                    break
+                # ---- 启动（能开几个开几个）----
+                while cand and len(running) < max_parallel and not stopped_by_user:
+                    p, _g0, _done = cand[0]
                     ctl = RT.read_ctl()
                     if ctl.get('stopAll'):
                         stopped_by_user = True
                         break
-                    en = set(ctl.get('enabled') or [p2 for p2, _, _ in plan])
-                    st = set(ctl.get('stopped') or [])
-                    if p not in en or p in st:
+                    en2 = set(ctl.get('enabled') or [p2 for p2, _, _ in plan])
+                    st2 = set(ctl.get('stopped') or [])
+                    if p not in en2 or p in st2:
                         RT.log('[SKIP] pool={:<5s} {} ⇒ 本轮跳过（不影响其他池）'.format(
-                            p, '不在启用集合' if p not in en else '已被单独停止'))
-                        queue.pop(0)
+                            p, '不在启用集合' if p not in en2 else '已被单独停止'))
+                        deferred.setdefault(p, set(st2))     # ★ 不占坑：之后你放回来仍能马上上 ✓
+                        cand.pop(0)
                         continue
-                    need = mem_per_engine * (len(running) + 1)
                     free = avail_gb()
                     if free < mem_per_engine:
                         RT.log('[MEM] 可用 {:.1f} GB < 每引擎预算 {:.1f} GB ⇒ 等 15s 再试'
                                '（宁慢不炸；内存是这台机器的真瓶颈）'.format(free, mem_per_engine))
                         time.sleep(15)
                         continue
-                    queue.pop(0)
-                    gen, done = RT.next_gen(p)        # ★ 每代现取（journal 是唯一事实源）
+                    cand.pop(0)
+                    launched.add(p)                      # ★ 真正启动才记"本轮已启动"
+                    gen, done = RT.next_gen(p)           # ★ 每代现取（journal 是唯一事实源）
                     t = _launch(p, gen, n, l2, extra, inject_spec, pools, panel_cache)
                     t['done'] = done
                     running.append(t)
                     RT.write_ctl(round=rnd, curPool=p, curGen=gen, phase='mine',
                                  active=[{'pool': x['pool'], 'gen': x['gen'], 'pid': x['pr'].pid}
                                          for x in running])
-                if queue or running:
+                if running or cand:
                     now = time.time()
                     if now - last_brief > 60:         # 每分钟一条进度（别刷屏）
                         last_brief = now
-                        RT.log('[RUN] 第 {} 轮 | 在跑 {} 个: {} | 排队 {} | 可用 {:.1f} GB'.format(
-                            rnd, len(running), _running_brief(running, now), len(queue),
+                        RT.log('[RUN] 第 {} 轮 | 在跑 {} 个: {} | 待启动 {} | 可用 {:.1f} GB'.format(
+                            rnd, len(running), _running_brief(running, now), len(cand),
                             avail_gb()))
                     time.sleep(5)
             # ---- 一轮结束 ⇒ 自动收尾（**必须等本轮全部跑完**：跨池审查要求"无人在写 docs/"）----
-            if ran_round and not no_global and not queue and not running:
+            #   ⚠ 走到这里保证"没有在跑的、也没有待启动的"（上面 `break` 的条件）⇒ 不必再判 queue ✓
+            if ran_round and not no_global:
                 RT.do_global_tail('第 {} / {} 轮结束（并行模式）'.format(rnd, rounds))
                 dirty = False
             if stopped_by_user:

@@ -283,6 +283,8 @@ export interface MinePoolResp {
   pool: string
   enabled: string[]
   stopped: string[]
+  /** ★ 调度器在跑 ⇒ 只是"把该池并回启用集"（并行下**马上**会起引擎；轮转下等下一轮） */
+  merged?: boolean
   restarted?: boolean
   note: string
 }

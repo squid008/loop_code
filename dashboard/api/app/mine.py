@@ -605,7 +605,12 @@ def start_pool(pool):
     if scheduler():
         _write_ctl(stopped=st, enabled=en, stopAll=False)
         return {'ok': True, 'pool': pool, 'enabled': en, 'stopped': st, 'restarted': False,
-                'note': '已把池 %s 加入轮转（下一轮就轮到它）；其它池的「停止」状态保持不变 ✓' % pool}
+                # ★ 2026-09-16：并行模式下**运行期动态加入** ⇒ 提示要分模式（别让人以为要等下一轮 ✗）
+                'note': ('已把池 %s 加入%s（%s）；其它池的「停止」状态保持不变 ✓'
+                         % (pool, '并行' if (c.get('execMode') == 'parallel') else '轮转',
+                            '**马上**会起一个引擎，不用等下一轮' if (c.get('execMode') == 'parallel')
+                            else '下一轮就轮到它')),
+                'merged': True}
     # ★ 调度器不在 ⇒ 自动重启。⚠ **必须 `reset_stopped=False`** ——
     #   否则 `start()` 默认会 `stopped=[]`，把用户的剔除**全清掉** ✗（用户实测的 BUG）
     rounds = int(c.get('rounds') or DEFAULT_ROUNDS)

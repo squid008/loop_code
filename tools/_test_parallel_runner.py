@@ -95,6 +95,14 @@ def main():
         "if panel_cache and panel_cache != 'off':" in pr)
     chk('A10 run_tracks 支持 --engine_arg=（追加，避免 --extra 整体替换的陷阱）',
         re.search(r"a\.startswith\('--engine_arg='\)", rt) is not None)
+    # ★★ 2026-09-16 v1.10.1（用户："停止一个池然后重新启动，怎么没马上开挖？"）
+    chk('A11 ★ **动态队列**：每轮迭代重算候选（不是"轮初拍死的列表"）',
+        'cand = [(p, g, d) for (p, g, d) in plan' in pr and 'p not in launched' in pr,
+        '拍死的队列 ⇒ 运行期「启动本池」只能等下一轮（用户实测抱怨的点）✗')
+    chk('A12 ★ 顺延池「被重新启用 ⇒ 允许马上上」（既不自顶、又能手动加）',
+        'deferred[p]' in pr and 'p in deferred[p] and p not in st' in pr)
+    chk('A13 ★ 「启动本池」马上生效：真正启动才记 `launched`',
+        'launched.add(p)' in pr and 'RT.next_gen(p)' in pr)
 
     print()
     print('=' * 88)

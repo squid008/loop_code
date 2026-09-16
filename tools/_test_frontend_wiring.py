@@ -133,7 +133,11 @@ chk('★ mine.py：并行数**自动算**（`floor((可用-余量)/每引擎)` �
 chk('★ mine.py：缓存不可用 ⇒ **自动降级为 off**（不让启动失败）+ note 说明',
     '_pc_degraded' in minepy and '自动关掉' in minepy)
 chk('★★ parallel_runner：用户**单独停池**后**本轮不再补位**（空槽留给用户自己决定）',
-    'paused_refill' in prpy and '不再补位' in prpy)
+    '不再自动补位' in prpy and 'deferred' in prpy)
+chk('★★ parallel_runner：运行期「启动本池」**马上生效**（动态队列，不等下一轮）',
+    'launched' in prpy and 'p not in launched' in prpy)
+chk('★ 池卡片文案**跟实际模式一致**（并行下不写"轮转中"，免得像是要排队 ✗）',
+    "qword = mine?.execMode === 'parallel'" in src and '已参与${qword}' in src)
 # ★★ 用户实测"停完再启动变成了轮转"⇒ 根因是 UI 控件与后端"上次设置"脱钩（页面刷新回默认）⇒ 从状态同步 ✓
 CSS = io.open(r'D:\loop_code\dashboard\web\src\styles.css', encoding='utf-8').read()
 chk('★ 控件从**后端状态**同步（没在跑时才对，且只在值变了才覆盖）',
