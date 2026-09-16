@@ -46,19 +46,12 @@ export default function App() {
   //   · **预算**：撤掉（实测它是"排队闸门"不是内存上限，改了没用 ✗）
   //   · **面板共享**：**默认常开**（无副作用：结果逐位相同、载入 28.6s→1.8s、内存更低；
   //      缓存失效时后端**自动降级为 off** 并在提示里说明 ⇒ 不需要用户操心）
-  const [execMode, setExecMode] = useState<'rotate' | 'parallel'>('rotate')
-  // ★★ 2026-09-16（用户实测"停完再点启动，怎么变成轮转了？"）：
-  //   真因 = **UI 的控件状态和后端"上次用的设置"没关系** —— 页面一刷新，控件回到默认（轮转），
-  //   而这时只要没有调度器在跑，点启动就会**按 UI 的默认值**起一个轮转调度器 ✗（用户明明上次用的并行）
-  //   ⇒ 修：**从后端状态同步**（后端以**真实进程命令行/控制文件**为准，是唯一真话来源）✓
-  //   ⚠ 只在"没在跑"时同步，且**只在后端值真的变了**时覆盖 —— 免得每次轮询把用户正在改的冲掉 ✗
-  const lastSync = useRef('')
-  useEffect(() => {
-    if (!mine || mine.running) return
-    if (mine.execMode === lastSync.current) return
-    lastSync.current = mine.execMode
-    setExecMode(mine.execMode === 'parallel' ? 'parallel' : 'rotate')
-  }, [mine])
+  // ★★ 2026-09-16（用户："测试既然可以并行了，就干脆把轮转/并行按钮都隐藏了，先直接默认并行吧"）：
+  //   ⇒ 模式按钮**撤掉**，看板一律走**并行**（`rotate` 仍保留在 CLI/API 里，随时能切回来）✓
+  //   · 并行数：后端按可用内存自动算 · 面板共享：默认常开 · 预算：不暴露
+  //   ⚠ "状态区显示的模式"仍以**真实进程命令行**为准：万一真有轮转调度器在跑（如从命令行起的），
+  //     状态区会如实显示"轮转"，点启动会被后端 409 拦下并提示先全部停止 ✓
+  const MODE: 'parallel' = 'parallel'
   const [mineBusy, setMineBusy] = useState(false)
   const [toast, setToast] = useState<{ kind: 'ok' | 'err' | 'info'; msg: string } | null>(null)
   // ★★★ 2026-09-16 修：**不用 `window.confirm`** ——
@@ -101,8 +94,8 @@ export default function App() {
   const doStart = useCallback(async (pools: string[]) => {
     setMineBusy(true)
     try {
-      // ★ 只传"模式"；并行数由后端按内存自动算、面板共享固定 use（后端缓存失效会自动降级）✓
-      const r = await api.mineStart(pools, rounds, { execMode, panelCache: 'use' })
+      // ★ 只传"模式=并行"；并行数由后端按内存自动算、面板共享固定 use（缓存失效自动降级）✓
+      const r = await api.mineStart(pools, rounds, { execMode: MODE, panelCache: 'use' })
       if (r.reused) {
         say('ok', `调度器已在运行（PID ${(r.schedulerPids ?? []).join(',')}），已更新设置：启用池 ${(r.enabled ?? []).join(',')}，${r.rounds} 轮（没有重复启动）`)
       } else {
@@ -114,7 +107,7 @@ export default function App() {
       say('err', `启动失败：${e instanceof Error ? e.message : String(e)}`)
       await loadAll(true)
     } finally { setMineBusy(false) }
-  }, [rounds, loadAll, execMode])
+  }, [rounds, loadAll])
 
   const doStop = useCallback(async (pool?: string) => {
     setMineBusy(true)
@@ -218,30 +211,15 @@ export default function App() {
                    value={rounds} disabled={mineBusy}
                    onChange={e => setRounds(Math.max(1, Math.min(200, Number(e.target.value) || 1)))} />
           </span>
-          {/* ★★★ 调度模式（2026-09-16）：轮转 / 并行 —— **只有这一个开关** ✓
-              · 并行数**不给输入框**：后端按可用内存**自动算**（"一键启动就全部五池，快爆就自动少一个"）
-              · 面板共享**不给勾选框**：**默认开**（结果逐位相同、载入 28.6s→1.8s；缓存失效自动降级）
-              · 预算也不给（实测它是"排队闸门"不是内存上限 ⇒ 改了没用）
-              ⚠ 模式是**启动参数** ⇒ 跑起来后不能热改（要改先「全部停止」） */}
-          <span className="seg" title={'调度模式：\n' +
-            '· 轮转 = 单调度器依次跑各池，同一时刻只 1 个引擎（最省内存，旧行为）\n' +
-            '· 并行 = 同时开多个引擎（并行数**按可用内存自动定**：能开几个开几个，不够就自动少开）\n' +
-            '★ 实测单引擎只吃 ≈1 个核（瓶颈是内存、不是 CPU）· 面板共享默认开 ⇒ 5 并行约每引擎 3 GB'}>
-            <button className={`segbtn${execMode === 'rotate' ? ' on' : ''}`}
-                    disabled={mineBusy || !!mine?.running}
-                    title="轮转：同一时刻只 1 个引擎（内存 1 份）。这是以前的行为"
-                    onClick={() => setExecMode('rotate')}>轮转</button>
-            <button className={`segbtn${execMode === 'parallel' ? ' on' : ''}`}
-                    disabled={mineBusy || !!mine?.running}
-                    title="并行：一键启动就把池全部并行开起来；并行数按可用内存自动定（不够会自动少开一个）"
-                    onClick={() => setExecMode('parallel')}>并行</button>
-          </span>
+          {/* ★★★ 2026-09-16（用户："把轮转/并行按钮都隐藏了，先直接默认并行吧"）：
+              模式按钮**撤掉** —— 看板一律并行（并行数按内存自动算、面板共享默认开、预算不暴露）✓
+              ⚠ 想回到"轮转"：CLI/API 仍支持（`--exec_mode=rotate`），随时能再放出来 ✓ */}
           <button className="btn start" disabled={mineBusy || !!mine?.running} onClick={() => doStart([])}
                   title={mine?.running
                     ? `调度器已经在运行了（${mine.execMode === 'parallel' ? `并行×${mine.maxParallel} · 共享` : '轮转 · 共享'}）。` +
-                      '要改**模式**的话，先「全部停止」再启动（它是启动参数、不能热改）'
-                    : `启动调度器（${execMode === 'parallel' ? '并行（并行数按内存自动定）' : '轮转'} · 面板共享），` +
-                      '让所有池参与。之前单独停止过的池也会重新加入；已经在跑的话就地更新设置'}>
+                      '要改**模式/并行设置**的话，先「全部停止」再启动（那些是启动参数、不能热改）'
+                    : '启动**并行**调度器（并行数按可用内存自动定 · 面板共享），让所有池参与。' +
+                      '之前单独停止过的池也会重新加入；已经在跑的话就地更新设置'}>
             {mine?.running ? '已在运行' : (mineBusy ? '处理中…' : '一键启动全部')}
           </button>
           <button className="btn stop" disabled={mineBusy || !mine?.running} onClick={() => doStop()}

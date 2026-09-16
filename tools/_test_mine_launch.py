@@ -78,19 +78,18 @@ def main():
         mine.avail_gb = lambda: 20.0
 
         print('=' * 96)
-        print('【1】控制文件**没有**"上次设置" + 不传模式参数 ⇒ 只有**面板共享**是新增的（默认开）')
+        print('【1】控制文件**没有**"上次设置" + 不传模式参数 ⇒ **默认并行 + 面板共享**（用户要求）')
         print('=' * 96)
         _set_ctl({'running': False, 'enabled': ['all'], 'stopped': [], 'rounds': 50})
         r = mine.start(['all'], rounds=5, reset_stopped=True)
         a = FakeProc.last[2:]
-        # ★ 2026-09-16 用户要求「共享一直默认勾、去掉勾选框」⇒ **默认开面板共享**（这是**有意的**默认变更，
-        #   理由：无副作用——结果逐位相同、载入 28.6s→1.8s、内存更低；缓存失效时自动降级 ✓）
-        chk('命令 = [--pools=all, --rounds=5, --panel_cache=use]（**唯一**新增就是面板共享）',
-            a == ['--pools=all', '--rounds=5', '--panel_cache=use'], str(a))
-        chk('★ **模式**仍默认 rotate（没冒 --exec_mode）',
-            not any(x.startswith('--exec_mode') for x in a))
-        chk('返回体 execMode=rotate（模式没变）/ panelCache=use（共享默认开）',
-            r.get('execMode') == 'rotate' and r.get('panelCache') == 'use')
+        # ★ 2026-09-16 用户要求：①「共享默认勾、去掉勾选框」②「干脆把轮转/并行按钮隐藏，默认并行」
+        #   ⇒ 看板侧默认 = **并行 + 面板共享**（`rotate` 仍保留在 CLI/API，随时可切回来）✓
+        chk('含 --exec_mode=parallel（默认并行，20GB 可用只 1 个池 ⇒ 自动并行 1）',
+            '--exec_mode=parallel' in a and '--max_parallel=1' in a, str(a))
+        chk('含 --panel_cache=use（共享默认开）', '--panel_cache=use' in a, str(a))
+        chk('返回体 execMode=parallel / panelCache=use',
+            r.get('execMode') == 'parallel' and r.get('panelCache') == 'use')
 
         print()
         print('【2】并行 + 面板共享 ⇒ 参数**真的**透传到命令行')
@@ -174,7 +173,24 @@ def main():
                 got == want, '实测 %s' % got)
 
         print()
-        print('【7】★★ 面板缓存不可用 ⇒ **自动降级为 off**（不让启动失败），并在 note 里说明')
+        print('【7】★★★ 「启动本池」：**调度器不在时只启动这一个池**（用户："我挨个池子点启动"）')
+        print('=' * 96)
+        mine.scheduler = lambda: []
+        mine.avail_gb = lambda: 20.0
+        _set_ctl({'running': False, 'enabled': ['all', '300', '500'], 'stopped': [], 'rounds': 50,
+                  'execMode': 'parallel', 'panelCache': 'use'})
+        r = mine.start_pool('500')
+        a = FakeProc.last[2:]
+        chk('★ 命令行 `--pools=500`（**只有它**，不是"上次遗留的 all,300,500"）',
+            '--pools=500' in a, str(a))
+        _c = mine.ctl()
+        # ⚠ 中文串里**别塞 ASCII 单引号**（会截断字符串 ⇒ SyntaxError；本项目的老坑）⇒ 用「」
+        chk('★ 控制文件 enabled 只剩「500」（其余池保持"不参与"）',
+            _c.get('enabled') == ['500'], str(_c.get('enabled')))
+        chk('返回体 restarted=True', r.get('restarted') is True)
+
+        print()
+        print('【8】★★ 面板缓存不可用 ⇒ **自动降级为 off**（不让启动失败），并在 note 里说明')
         print('=' * 96)
         _set_ctl({'running': False, 'enabled': ['all'], 'stopped': [], 'rounds': 1})
         mine.avail_gb = lambda: 20.0

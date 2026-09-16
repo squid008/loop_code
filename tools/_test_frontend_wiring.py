@@ -115,8 +115,9 @@ print()
 print('【7】★ 调度模式 / 面板共享：UI 控件必须接到位（2026-09-16 用户之问「前端还没把并行切换加上」）')
 MINE = r'D:\loop_code\dashboard\api\app\mine.py'
 minepy = io.open(MINE, encoding='utf-8').read()
-chk('模式分段控件存在（轮转 / 并行）',
-    "setExecMode('parallel')" in src and "setExecMode('rotate')" in src)
+# ★ 2026-09-16（用户："把轮转/并行按钮都隐藏了，先直接默认并行吧"）⇒ 按钮撤掉、固定并行 ✓
+chk('★ 模式分段控件**已撤**（固定并行），启动固定传 execMode=parallel',
+    'setExecMode' not in src and "MODE: 'parallel'" in src and 'execMode: MODE' in src)
 # ★ 2026-09-16（用户要求）：**UI 只留"模式"一个开关** —— 并行数自动算、预算撤掉、共享默认开
 chk('★ 并行数**输入框已撤**（后端按可用内存自动定：能开几个开几个）',
     'parallelRange' not in src and 'setMaxParallel' not in src)
@@ -138,10 +139,11 @@ chk('★★ parallel_runner：运行期「启动本池」**马上生效**（动�
     'launched' in prpy and 'p not in launched' in prpy)
 chk('★ 池卡片文案**跟实际模式一致**（并行下不写"轮转中"，免得像是要排队 ✗）',
     "qword = mine?.execMode === 'parallel'" in src and '已参与${qword}' in src)
-# ★★ 用户实测"停完再启动变成了轮转"⇒ 根因是 UI 控件与后端"上次设置"脱钩（页面刷新回默认）⇒ 从状态同步 ✓
+# ★★ 用户实测"停完再启动变成了轮转"⇒ 根因是 UI 控件与后端"上次设置"脱钩（页面刷新回默认）
+#   ⇒ 现在**模式固定并行**，这个坑从结构上消失了（不必再同步；状态区仍以真实命令行为准）✓
 CSS = io.open(r'D:\loop_code\dashboard\web\src\styles.css', encoding='utf-8').read()
-chk('★ 控件从**后端状态**同步（没在跑时才对，且只在值变了才覆盖）',
-    'lastSync' in src and 'setExecMode(mine.execMode' in src and 'mine.running) return' in src)
+chk('★ 状态区仍以**真实进程命令行**为准显示模式（UI 固定并行 ≠ 实际在跑什么）',
+    'mine.execMode === ' in src)
 # ⚠ 必须**先剔注释**再断言 —— 注释里就写着 `overflow-x: auto` 这几个字（解释它为何被去掉）✗
 _CSS_NC = re.sub(r'/\*.*?\*/', '', CSS, flags=re.S)
 _m = re.search(r'\.ctrls \{[^}]*\}', _CSS_NC)

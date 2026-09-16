@@ -265,7 +265,7 @@ def state():
     cur = c.get('curPool')
     # ---- ★★★ 调度模式 / 内存设置：**以真实进程命令行为准**（"现在到底怎么跑的"只有它有发言权）----
     _cmd = ((sched[0].get('cmd') if sched else (engs[0].get('cmd') if engs else '')) or '')
-    _mode = _flag(_cmd, 'exec_mode', str, c.get('execMode') or 'rotate')
+    _mode = _flag(_cmd, 'exec_mode', str, c.get('execMode') or 'parallel')
     _mp = _flag(_cmd, 'max_parallel', int, c.get('maxParallel') or 3)
     _mpe = _flag(_cmd, 'mem_per_engine', float, c.get('memPerEngine') or MEM_DEFAULT)
     _pc = _flag(_cmd, 'panel_cache', str, c.get('panelCache') or 'off')
@@ -357,7 +357,9 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
 
     # ---- ★ 调度模式参数：校验 + 缺省继承（`None` ⇒ 沿用上次设置）----
     c0 = ctl()
-    exec_mode = (exec_mode if exec_mode is not None else c0.get('execMode') or 'rotate')
+    # ★ 2026-09-16（用户："干脆把轮转/并行按钮都隐藏了，先直接默认并行吧"）：
+    #   看板侧**默认 = 并行**（`rotate` 仍保留在 CLI / API 里，随时可切回来）✓
+    exec_mode = (exec_mode if exec_mode is not None else c0.get('execMode') or 'parallel')
     panel_cache = (panel_cache if panel_cache is not None else c0.get('panelCache') or 'use')
     exec_mode = str(exec_mode).strip().lower()
     panel_cache = str(panel_cache).strip().lower()
@@ -613,7 +615,12 @@ def start_pool(pool):
                 'merged': True}
     # ★ 调度器不在 ⇒ 自动重启。⚠ **必须 `reset_stopped=False`** ——
     #   否则 `start()` 默认会 `stopped=[]`，把用户的剔除**全清掉** ✗（用户实测的 BUG）
+    # ★★ 2026-09-16（用户："我不一键开启所有池，我挨个池子点启动"）：
+    #   调度器不在时**只启动这一个池**（`enabled = [pool]`）—— 原实现拿"控制文件里遗留的 enabled
+    #   集合"去重启 ⇒ 点一个池会把上次那一堆**全拉起来** ✗（与"挨个点"的预期相反）
+    #   想全部参与 ⇒ 用「一键启动全部」（它走 `start(reset_stopped=True)`）✓
     rounds = int(c.get('rounds') or DEFAULT_ROUNDS)
+    en = [pool]
     r = start(en, rounds, reset_stopped=False)
     _write_ctl(stopped=st, enabled=en)      # ★ 重启后把“只移除该池”的 stopped 写回 ✓
     return {'ok': True, 'pool': pool, 'enabled': en, 'stopped': st, 'restarted': True,
