@@ -413,6 +413,16 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
             mm = m & np.isfinite(v)
             if mm.sum() < 200:
                 continue
+            # ★★ 退化守卫（2026-09-16 实测）：`barra_comovement` 面板是**常数**（全 0）⇒
+            #   逐期 Spearman 恒为 0 ⇒ 存出来是 `mean 0.000 / ir None`，看着像"完全无暴露"，
+            #   其实是"**不可判定**" ✗ ⇒ 一律记 `(年份, None)`（本项目铁律：退化不判定、不臆造）✓
+            #   ⚠⚠ 这里存的是 **(yr, 值) 二元组**（下游要按年做块显著性）⇒ **必须同样塞二元组**；
+            #     塞裸 `None` 会让下游解包炸掉：`TypeError: cannot unpack non-iterable NoneType` ✗（实测踩到）
+            #   ⚠ raw / neut **各 append 一次**（两条序列要等长，否则错位 ✗）
+            if float(np.nanstd(v[mm])) <= 1e-12:
+                series['raw'][s].append((yr, None))
+                series['neut'][s].append((yr, None))
+                continue
             vr = pd.Series(v[mm]).rank(pct=True).values
             xr2 = pd.Series(x[mm]).rank(pct=True).values
             series['raw'][s].append((yr, _rho(xr2, vr)))
@@ -429,13 +439,16 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
            'nPeriodsAll': len(list(rb)), 'nPeriodsInd': len(_elig),
            'indFrom': (int(min(_elig)) if (_elig and ind_ok) else None),
            'ind_names': list(ind_names),            'caliber': (
-               '逐期截面 Spearman（换仓日）· 中性化 = 总市值 + 申万一级行业（FWL；'
-               'raw 与 neut **同一批期**）· 行业面板覆盖率 %.0f%%（自 %s 起）· '
-               '⚠ mean 会被符号翻转抵消，须同看 meanAbs 与 IR · ' % (
-                   (float((iv >= 0).mean()) * 100) if iv.size else 0.0,
-                   int(min(_elig)) if (_elig and ind_ok) else '全程不足') +
-               '★ t 用 **AR(1) 有效样本量**校正（T_eff = T·(1−ac1)/(1+ac1)）—— '
-               '实测相关序列 ac1≈0.93~0.97（风格暴露变化慢），**朴素 t=IR√T 会放大数倍** ✗'),
+              # ★ 这段会**原样显示在看板上** ⇒ 一律自然语言 + 普通标点（不许 `**`/`★`/`⚠`/引号）✓
+              #   （另有一道出口清洗 `factors._plain()` 兜底，两道都做）
+              '逐期截面 Spearman（换仓日）· 中性化 = 总市值 + 申万一级行业（FWL；'
+              'raw 与 neut 用同一批期）· 行业面板覆盖率 %.0f%%（自 %s 起）· '
+              '均值会被符号翻转抵消，须同时看 |均值| 与 IR · ' % (
+                  (float((iv >= 0).mean()) * 100) if iv.size else 0.0,
+                  int(min(_elig)) if (_elig and ind_ok) else '全程不足') +
+              't 用 AR(1) 有效样本量校正（T_eff = T 乘 (1−ac1)/(1+ac1)）：'
+              '实测相关序列 ac1 约 0.93~0.97（风格暴露变化慢），'
+              '朴素 t = IR 乘根号 T 会放大数倍，别直接看它'),
            'raw': {s: _summ(series['raw'][s]) for s in names},
            'neut': {s: _summ(series['neut'][s]) for s in names},
            'ind': {'raw': [_summ(ind_series['raw'][j]) for j in range(len(ind_names))],

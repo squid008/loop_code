@@ -91,11 +91,24 @@ chk('曲线接口 api.curves -> /curves/ 已定义且被页面调用',
     ('curves:' in api and '/curves/' in api and 'api.curves(' in src))
 
 print()
+print('【5·补】★★ 精选池详情必须**真的显示出指标**（2026-09-16 用户："超额年化之类的怎么都是 -"）')
+chk('数值渲染**不再只认库表的 `metricsInfo.found`**（精选池那条路不传它 ⇒ 原来全显示 — ✗）',
+    re.search(r'const metricsReady = metricsInfo \? !!metricsInfo\.found : Object\.keys\(m\)\.length > 0',
+              src) is not None,
+    '要有"没传 metricsInfo ⇒ 看因子自己有没有指标"的回退 ✓')
+chk('渲染用的是 `metricsReady`（而不是 `metricsInfo?.found`）',
+    '{metricsReady ? fmtM(m[key], kind) : ' in src and '{metricsInfo?.found ? fmtM(' not in src)
+chk('精选池详情确实把 `metrics: sel.metrics` 传进详情层',
+    'metrics: sel.metrics' in src)
+chk('★ 顶部内存数字的鼠标提示已**按用户要求删掉**（不要再挂 `memNote`）',
+    'title={mine?.memNote' not in src)
+
+print()
 print('【6】★ 风格相关性画像：横向条形图 + 图例显隐 + 数据来源（2026-09-16 用户要求）')
-chk('风格画像走**同一个 /curves 接口**的 style 字段（不另开接口）',
-    'StyleProfileDto' in api and "'style': d.get('style')" in io.open(
+chk('风格画像走**同一个 /curves 接口**的 style 字段（不另开接口），且**口径串过出口清洗**',
+    'StyleProfileDto' in api and "'style': _plain_style(d.get('style'))" in io.open(
         r'D:\loop_code\dashboard\api\app\sources\factors.py', encoding='utf-8').read(),
-    '另开接口要多一次请求、多一份缓存 ✗')
+    '另开接口要多一次请求、多一份缓存 ✗；口径串必须 `_plain` 过一遍 ✗')
 chk('横向条形图组件已实现', 'function BarChart' in src)
 # ⚠ 文案断言别绑**具体措辞里的引号**：用户 2026-09-16 要求"文案去掉引号" ⇒ 原来断言
 #   `点击隐藏 / 显示「原始」这一根` 立刻失效 ✗ ⇒ 只断言"图例是按钮 + 提示里有隐藏/显示" ✓

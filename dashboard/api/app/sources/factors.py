@@ -80,13 +80,27 @@ def _detail_blocks(txt):
 # ⚠ 只处理"**机器味**"的符号：★/⚠（删除）与 ⇒（换成逗号）。
 #   **不要动 `——`** —— 它是**规范的中文破折号**，不是 AI 味 ✗（2026-09-16 实测：曾把它换成 `：`
 #   反而把「生成 —— 可随时重建」读成「生成 ： 可随时重建」）
-_SYM = (('★', ''), ('⚠', ''), ('⇒', '，'), ('・', '·'))
+# ★ 2026-09-16：把 `✓ ✗ ❗` 也纳入清洗 —— 它们和 `★ ⚠ ⇒` 同类（都是"机味"装饰符号，
+#   在正文里没有语义）⇒ 出口一律去掉 ✓（守门 `_test_ui_quotes.py` 就是这么判的，两边对齐）
+_SYM = (('★', ''), ('⚠', ''), ('⇒', '，'), ('・', '·'),
+        ('✓', ''), ('✗', ''), ('❗', ''),
+        # ⚠ `⚠️` 是 `⚠` + **变体选择符 U+FE0F**（emoji 形态）⇒ 只删 U+26A0 会留个"隐形字符" ✗
+        ('\ufe0f', ''))
 # ★★ 2026-09-16（用户要求「所有前端文案提示涉及到引号的地方都改改去掉引号」）：
 #   引号**一律去掉**（`「」『』“”‘’`）—— 看板是网页，"书名号式"引号是 AI 味的主要来源之一；
 #   `docs/*.md` 本身是**技术文档**（保留原风格，两边各司其职）⇒ **只在这里（后端出口）清洗** ✓
 #   ⚠ 之前在**出口处漏了这一步** ⇒ 用户在看板上仍看得到引号（而这函数只管 `**` 与反引号）✗
 _QM = (('「', ''), ('」', ''), ('『', ''), ('』', ''),
        ('“', ''), ('”', ''), ('‘', ''), ('’', ''))
+
+
+def _plain_style(s):
+    """风格画像：**数值原样透传**，只把口径串过一遍出口清洗 ✓（其余字段是纯数字/名字）"""
+    if not s:
+        return s
+    out = dict(s)
+    out['caliber'] = _plain(s.get('caliber'))
+    return out
 
 
 def _plain(s):
@@ -206,8 +220,9 @@ def library(pool):
             'pool': pool,
             'gen': (r[i_gen].strip() if i_gen is not None and len(r) > i_gen else ''),
             'family': (r[i_fam].strip() if i_fam is not None and len(r) > i_fam else ''),
-            'summary': (r[i_sum].strip() if i_sum is not None and len(r) > i_sum else ''),
-            'status': (r[i_st].strip() if i_st is not None and len(r) > i_st else ''),
+            # ★ 2026-09-16：md 单元格**原样渲染在看板上** ⇒ 出口清洗（`**` / `★ ⚠ ⇒ ✓ ✗` / 引号）✓
+            'summary': _plain(r[i_sum].strip() if i_sum is not None and len(r) > i_sum else ''),
+            'status': _plain(r[i_st].strip() if i_st is not None and len(r) > i_st else ''),
             'expr': '',
         })
     # ★★★ 口径对照（2026-09-15 发现「**三个数字都不一样**」，用户最在意的"两处打架"）：
@@ -265,7 +280,7 @@ def library(pool):
         'caliber': {
             'authoritative': 'stateBank',
             'mdTableRows': len(factors),
-            'mdTableMeans': '累计入库编号（该文件声明"只增不改"）',
+            'mdTableMeans': '累计入库编号（该文件自己声明只增不改）',
             'mdDeclared': int(m.group(1)) if m else None,
             'mdDeclaredMeans': '引擎同步快照，可能落后于 state',
             'stateBank': (st or {}).get('bank_n'),
@@ -346,15 +361,19 @@ def curves(name, max_pts=700):
         strip = {'dates': sd,
                  'navs': {k: _down(_nums(v), max_pts)[0] for k, v in (st.get('navs') or {}).items()},
                  'calmars': st.get('calmars') or {},
-                 'caliber': st.get('caliber')}
+                 # ★ 口径串会**原样显示在看板上** ⇒ 出口处同样清洗 ✓
+                 'caliber': _plain(st.get('caliber'))}
     return {
         'found': True, 'name': d.get('name') or name, 'pool': d.get('pool'),
         'expr': d.get('expr'), 'sign': d.get('sign'), 'gen': d.get('gen'),
         'start': d.get('start'), 'end': d.get('end'), 'n_rebal': d.get('n_rebal'),
         'cost': d.get('cost'), 'window': d.get('window'),
-        'caliber': d.get('caliber'), 'path': rel.replace('\\', '/'),
-        # ★ 风格相关性画像（2026-09-16）：逐期截面 Spearman 的统计量，量小（几百个数）⇒ 原样透传
-        'style': d.get('style'),
+        # ★★ 2026-09-16（用户："t 用 **AR(1) 有效样本量**校正…这还有引号啊"）：
+        #   这个口径串是**离线 JSON 里生成**的、被前端**原样渲染** ⇒ 必须在出口清洗
+        #   （离线数据可能是老版本生成的 ⇒ 不能只改生成端，出口这层必须有 ✓）
+        'caliber': _plain(d.get('caliber')), 'path': rel.replace('\\', '/'),
+        # ★ 风格相关性画像（2026-09-16）：数值原样透传，但**口径串要清洗** ✓
+        'style': _plain_style(d.get('style')),
         'mtime': core.mtime_iso(p),
         'daily': daily, 'period': period, 'strip': strip,
     }
@@ -415,8 +434,11 @@ def selected():
         factors.append({
             'code': code,
             'pool': code.split('_')[1] if '_' in code else 'all',
-            'grade': (re.sub(r'[`*]', '', r[i_grade]).strip() if i_grade is not None and len(r) > i_grade else ''),
-            'stripCalmar': (r[i_sc].strip() if i_sc is not None and len(r) > i_sc else ''),
+            'grade': _plain(re.sub(r'[`*]', '', r[i_grade]).strip()
+                            if i_grade is not None and len(r) > i_grade else ''),
+            # ★★ 2026-09-16（实测残留）：md 里剥风格 Calmar 写成 `**1.228**` ⇒ 原来**原样**返回 ⇒
+            #   前端只好自己 `replace(/\*/g,'')` 遮丑 ✗ ⇒ 出口清洗掉 `**` ✓（前端那层留着也无害）
+            'stripCalmar': _plain(r[i_sc].strip() if i_sc is not None and len(r) > i_sc else ''),
             'expr': (re.sub(r'[`*]', '', r[i_expr]).strip() if i_expr is not None and len(r) > i_expr else ''),
         })
     # ★★ 2026-09-16（用户要求「**精选池也要加详情按钮**」）：把各池库文档的**明细**（完整公式/池标签/sign/叶子）

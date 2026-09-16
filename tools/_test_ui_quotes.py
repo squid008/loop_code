@@ -15,6 +15,7 @@
 """
 import ast
 import io
+import json
 import os
 import re
 import sys
@@ -138,7 +139,7 @@ def check_py(path, bad):
         # 语法错**不算引号问题**（自有测试/编译守门会抓它）⇒ 只提示，不判失败 ✓
         print('  ⚠ 跳过 %s（语法错：%s）' % (rel(path), e))
         return
-    ds = docstring_ids(tree) | sym_table_ids(tree)
+    ds = docstring_ids(tree) | sym_table_ids(tree) | regex_arg_ids(tree)
     lines = src.splitlines()
     for node in ast.walk(tree):
         v = None
@@ -229,6 +230,137 @@ def plain_covers_quotes():
     return [c for c in QUOTES if c not in have], bool(re.search(r'_SYM\s*\+\s*_QM', src))
 
 
+def scan_curve_json(bad):
+    """★ 离线曲线 JSON 的**口径串会被看板原样渲染** ⇒ 也在守门范围内。
+
+    ⚠ 只查 `caliber`（散文）；**不要全量扫字符串** —— 因子表达式等字段不是文案，
+      全扫会有误报 ✗（守门宁可窄一点，但必须准）
+    """
+    d = os.path.join(ROOT, 'docs', 'factor_curves')
+    if not os.path.isdir(d):
+        return 0
+    n = 0
+    for f in sorted(os.listdir(d)):
+        if not f.endswith('.json'):
+            continue
+        try:
+            js = json.load(io.open(os.path.join(d, f), encoding='utf-8'))
+        except Exception:
+            continue
+        cand = [('caliber', js.get('caliber')),
+                ('strip.caliber', (js.get('strip') or {}).get('caliber')),
+                ('style.caliber', (js.get('style') or {}).get('caliber'))]
+        for path, s in cand:
+            if not isinstance(s, str) or not s:
+                continue
+            n += 1
+            hit = [t for t in ('**', '★', '⚠', '⇒', '✗') if t in s] + \
+                  ([c for c in QUOTES if c in s] or [])
+            if hit:
+                bad.append(('docs/factor_curves/%s' % f, 0,
+                            '%s 含 %s：%s' % (path, ''.join(hit), s[:60])))
+    return n
+
+
+MACHINE = ('**', '★', '⚠', '⇒', '✓', '✗', '❗')
+CJK = re.compile(r'[\u4e00-\u9fa5]')
+
+
+def _only_symbols(v):
+    """该字面量**只由机味符号组成**（如 `'⇒'`、`'**'`、`'_SYM'` 表里的条目）⇒ 它是**符号表数据**，
+    不是"文案" ⇒ 豁免 ✓（否则"清洗表本身"会被判违规，等于无法清洗）"""
+    if CJK.search(v):
+        return False
+    return all(ch in '**★⚠⇒✓✗❗・·，\ufe0f ' for ch in v)
+
+
+def regex_arg_ids(tree):
+    """★ 豁免：`re.compile/sub/search/...` 的**模式串**不是文案
+
+    （`r'当前\\s*\\**\\s*(\\d+)'` 里的 `**` 是**正则元字符**，不是"机味加粗" ✗ 别误报）
+    """
+    ids = set()
+    names = ('compile', 'sub', 'subn', 'search', 'match', 'findall', 'finditer',
+             'split', 'fullmatch')
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            f = node.func
+            if isinstance(f, ast.Attribute) and f.attr in names:
+                for a in node.args:
+                    for x in ast.walk(a):
+                        ids.add(id(x))
+    return ids
+
+
+def scan_api_strings(bad):
+    """★ 后端**返回给看板的字符串**（API 模块里非 docstring 的字面量）不许有：
+        ① 机味符号（`** ★ ⚠ ⇒ ✓ ✗`）；② **中文旁边的 ASCII 引号**（引号也该去掉）
+    为什么能这么扫：看板里所有文案最终都来自这些串（`note`/`hint`/表格单元格/口径串）✓
+    """
+    n = 0
+    for dirpath, _d, files in os.walk(API):
+        for f in sorted(files):
+            if not f.endswith('.py'):
+                continue
+            p = os.path.join(dirpath, f)
+            src = io.open(p, encoding='utf-8-sig').read()
+            try:
+                tree = ast.parse(src)
+            except SyntaxError:
+                continue
+            skip = docstring_ids(tree) | sym_table_ids(tree) | regex_arg_ids(tree)
+            for node in ast.walk(tree):
+                if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+                    continue
+                if id(node) in skip or _only_symbols(node.value):
+                    continue
+                v = node.value
+                n += 1
+                hit = [t for t in MACHINE if t in v]
+                # ASCII 引号夹中文（`"...中文..."`）⇒ 也算"文案里的引号"
+                if re.search(r'[\u4e00-\u9fa5][\'"]|[\'"][\u4e00-\u9fa5]', v):
+                    hit.append('引号')
+                if hit:
+                    k = getattr(node, 'lineno', 0)
+                    bad.append((rel(p), k, '含 %s：%s' % (''.join(hit), v.strip()[:70])))
+    return n
+
+
+def scan_config_json(bad):
+    """`dashboard/config.json` 的注释字段会在**配置/口径**页显示 ⇒ 一并守门 ✓"""
+    p = os.path.join(ROOT, 'dashboard', 'config.json')
+    if not os.path.isfile(p):
+        return 0
+    n = 0
+    try:
+        cfg = json.load(io.open(p, encoding='utf-8-sig'))
+    except Exception:
+        return 0
+    stack = [('', cfg)]
+    while stack:
+        path, o = stack.pop()
+        if isinstance(o, dict):
+            for k, v in o.items():
+                stack.append(('%s.%s' % (path, k), v))
+        elif isinstance(o, list):
+            for i, v in enumerate(o):
+                stack.append(('%s[%d]' % (path, i), v))
+        elif isinstance(o, str):
+            n += 1
+            hit = [t for t in MACHINE if t in o]
+            if hit:
+                bad.append(('dashboard/config.json', 0, '%s 含 %s：%s' % (path, ''.join(hit), o[:60])))
+    return n
+
+
+def curves_exit_clean():
+    """出口清洗必须作用在**会被渲染的口径串**上（`factors.curves()`）"""
+    p = os.path.join(API, 'sources', 'factors.py')
+    src = io.open(p, encoding='utf-8-sig').read()
+    return (bool(re.search(r"'caliber':\s*_plain\(", src))
+            and "'style': _plain_style(" in src)
+
+
 def main():
     print('=' * 100)
     print('自检（先证明守门会失败，再查全仓库）')
@@ -239,8 +371,13 @@ def main():
         st.append('后端出口清洗 `_QM` 缺引号字符：%s' % ''.join(miss))
     if not applied:
         st.append('`_plain()` 没有应用 `_QM`（出口没洗引号）')
+    if not curves_exit_clean():
+        st.append('`factors.curves()` 没对**口径串**做出口清洗（离线 JSON 会被原样渲染）')
     print()
     bad = []
+    n_api = scan_api_strings(bad)
+    n_cfg = scan_config_json(bad)
+    n_json = scan_curve_json(bad)
     for nm in ('index.html',):
         p = os.path.join(WEB, nm)
         if os.path.isfile(p):
@@ -258,7 +395,8 @@ def main():
     print('用户可见文案的引号检查（%s）' % QUOTES)
     print('=' * 100)
     if not bad and not st:
-        print('  ✓ 全部干净：前端文案 + 后端返回给看板的串里都没有引号 ✓')
+        print('  ✓ 全部干净：前端文案 + 后端返回串 + 离线曲线口径串（查了 %d 条）都没有引号/机味符号 ✓'
+              % n_json)
         return 0
     for f, k, l in bad:
         print('  ✗ %s:%s  %s' % (f, k, l))

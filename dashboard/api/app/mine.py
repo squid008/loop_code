@@ -83,7 +83,7 @@ def panel_cache_info():
     p = os.path.join(PANEL_CACHE_DIR, 'manifest.json')
     if not os.path.isfile(p):
         return {'exists': False,
-                'hint': '未构建 ⇒ 跑 python tools/build_panel_cache.py（约 1~2 分钟，与池无关、所有池共用）'}
+                'hint': '未构建，请跑 python tools/build_panel_cache.py（约 1~2 分钟，与池无关、所有池共用）'}
     try:
         with io.open(p, encoding='utf-8') as f:
             man = json.load(f)
@@ -99,9 +99,9 @@ def panel_cache_info():
         return {'exists': True, 'gb': man.get('total_gb'), 'builtAt': man.get('created'),
                 'fields': len(man.get('fields') or {}), 'sourceOk': not bad, 'staleSources': bad,
                 'codeSha': man.get('code_sha1'),
-                'hint': ('数据指纹已变（%s）⇒ 缓存**已过期**，要重建否则引擎会拒绝加载 ✗'
+                'hint': ('数据指纹已变（%s），缓存已过期，要重建否则引擎会拒绝加载'
                          % ', '.join(bad)) if bad else
-                        '数据指纹一致 ✓（构造代码指纹由引擎在启动时校验）'}
+                        '数据指纹一致（构造代码指纹由引擎在启动时校验）'}
     except Exception as e:
         return {'exists': False, 'err': repr(e)}
 
@@ -276,18 +276,20 @@ def state():
     if free is None:
         _mnote = ''
     elif _mode == 'parallel':
-        _mnote = ('★ **并行模式**：同时最多 %d 个引擎%s（跑完一个立刻补一个，其余排队）· 面板共享=%s ⇒ %s'
-                  '；可用 %.1f GB ✓' % (
-                      _mp, '（**自动**：按可用内存与启用池数动态定，'
+        # ★ 2026-09-16（用户要求"文案去掉引号/机味符号"）：这些串**原样显示**在看板上
+        #   ⇒ 一律自然语言 + 普通标点（不许 `★ ⚠ ⇒ ✓ ✗ **`）✓ 守门见 `tools/_test_ui_quotes.py`
+        _mnote = ('并行模式：同时最多 %d 个引擎%s（跑完一个立刻补一个，其余排队）· 面板共享=%s，%s'
+                  '；可用 %.1f GB' % (
+                      _mp, '（自动：按可用内存与启用池数动态定，'
                            '你随时点启动本池加池都会立刻开起来）' if _auto else '', _pc,
-                      ('4.6 GB 面板只占**一份物理页**，每进程私有 ≈ %.1f GB ✓' % _mpe)
+                      ('4.6 GB 面板只占一份物理页，每进程私有约 %.1f GB' % _mpe)
                       if _pc != 'off' else
-                      '⚠ 面板缓存**关着** ⇒ 每个引擎各建一份 4.42 GB 面板（N 份！）✗ 强烈建议开面板共享',
+                      '面板缓存关着，每个引擎各建一份 4.42 GB 面板（N 份），强烈建议开面板共享',
                       free))
     else:
-        _mnote = ('★ 单调度器 + **池轮转** ⇒ 同一时刻只有 1 个引擎（约 %.0f GB）%s；可用 %.1f GB ✓' % (
+        _mnote = ('单调度器 + 池轮转：同一时刻只有 1 个引擎（约 %.0f GB）%s；可用 %.1f GB' % (
             GB_PER_ENGINE,
-            '；面板共享=on ⇒ 载入 28.6s→1.8s、内存更低 ✓' if _pc != 'off' else '', free))
+            '；面板共享=on，载入 28.6s→1.8s、内存更低' if _pc != 'off' else '', free))
     return {
         'mode': 'scheduler',              # ★ 模式标识：单调度器 + 池轮转
         'phase': phase,
@@ -322,9 +324,9 @@ def state():
         'defaultRounds': DEFAULT_ROUNDS,
         'roundsRange': [ROUNDS_MIN, ROUNDS_MAX],
         'script': os.path.relpath(RUN_TRACKS, settings.PROJECT_ROOT),
-        'note': ('1 个调度器按轮转跑各池（每轮每池 1 代）⇒ 内存只 1 份、'
-                 '★ **每轮结束自动收尾**；单独停某池只影响该池；'
-                 '一键全部停止 ⇒ 自动进入收尾阶段后退出 ✓'),
+        'note': ('1 个调度器按轮转跑各池（每轮每池 1 代），内存只 1 份、'
+                 '每轮结束自动收尾；单独停某池只影响该池；'
+                 '一键全部停止会自动进入收尾阶段后退出'),
     }
 
 
@@ -423,8 +425,8 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
         _d = [k for k in ('execMode', 'panelCache') if _want[k] != _cur[k]]
         if _d:
             raise MineError(
-                '调度器已在运行（当前 %s）；而 %s 是**启动参数、不能热改** ✗\n'
-                '  ⇒ 想换：先点全部停止，再用新设置启动 ✓'
+                '调度器已在运行（当前 %s）；而 %s 是启动参数、不能热改。\n'
+                ' 想换：先点全部停止，再用新设置启动'
                 % (' '.join('%s=%s' % (k, _cur[k]) for k in _want),
                    ' / '.join('%s=%s' % (k, _want[k]) for k in _d)), 409)
         # 一致 ⇒ 只更新控制文件（启用集合、轮数、清 stopAll；stopped 视 reset_stopped 而定）✓
@@ -440,9 +442,9 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
                 'resetStopped': reset_stopped,
                 'execMode': exec_mode, 'maxParallel': max_parallel,
                 'memPerEngine': mem_per_engine, 'panelCache': panel_cache,
-                'note': ('调度器已在运行（PID %s）⇒ 已就地更新：启用池=%s、轮数=%d%s（未重复起进程）'
+                'note': ('调度器已在运行（PID %s），已就地更新：启用池=%s、轮数=%d%s（未重复起进程）'
                          % ([p['pid'] for p in sched], pool_list, rounds,
-                            '、并清除停止标记' if reset_stopped else '、**保留**已有的停止标记'))}
+                            '、并清除停止标记' if reset_stopped else '、保留已有的停止标记'))}
 
     # ---- 内存护栏（**按模式 + 面板共享**算）----
     # ★ 面板共享开着时，4.42 GB 面板**只占一份物理页**，每进程私有只剩 L1 子面板+缓存 ≈ 3 GB
@@ -452,15 +454,15 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
     if exec_mode == 'parallel':
         _eff = _eff1 if panel_cache == 'off' else max(mem_per_engine, GB_PER_ENGINE_SHARED)
         _need = max_parallel * _eff + MIN_FREE_GB
-        _hint = ('（%s ⇒ 每引擎按 %.1f GB 算）' % (
-            '面板缓存**关着**、每个引擎各建一份 4.42 GB 面板' if panel_cache == 'off'
+        _hint = ('（%s，每引擎按 %.1f GB 算）' % (
+            '面板缓存关着、每个引擎各建一份 4.42 GB 面板' if panel_cache == 'off'
             else '面板共享=on', _eff))
     else:
         _need = _eff1 + MIN_FREE_GB
-        _hint = ('（面板共享=on ⇒ 按 %.1f GB 算）' % GB_PER_ENGINE_SHARED
+        _hint = ('（面板共享=on，按 %.1f GB 算）' % GB_PER_ENGINE_SHARED
                  if panel_cache != 'off' else '')
     if free is not None and free < _need:
-        raise MineError('内存不足：可用 %.1f GB，本次需要约 %.1f GB%s ✗'
+        raise MineError('内存不足：可用 %.1f GB，本次需要约 %.1f GB%s'
                         % (free, _need, _hint), 409)
 
     os.makedirs(LOGD, exist_ok=True)
@@ -496,11 +498,11 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
     time.sleep(3)
     _extra = []
     if exec_mode == 'parallel' and _mp_auto:
-        _extra.append('并行数**按可用内存自动定**为 %d（可用 %.1f GB / 每引擎按 %.0f GB 估）'
+        _extra.append('并行数按可用内存自动定为 %d（可用 %.1f GB / 每引擎按 %.0f GB 估）'
                       % (max_parallel, free or 0,
                          GB_PER_ENGINE_SHARED if panel_cache != 'off' else GB_PER_ENGINE))
     if _pc_degraded:
-        _extra.append('⚠ 面板缓存不可用（%s）⇒ **本次自动关掉面板共享**（载入慢 ~27s、结果不变）'
+        _extra.append('面板缓存不可用（%s），本次自动关掉面板共享（载入慢 ~27s、结果不变）'
                       % ((_pcinfo.get('hint') or _pcinfo.get('err') or '未知原因')[:70]))
     return {'ok': True, 'started': [{'pool': ','.join(pool_list), 'pid': proc.pid,
                                      'alive': _alive(proc.pid), 'cmd': ' '.join(args[1:]),
@@ -509,12 +511,12 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
             'execMode': exec_mode, 'maxParallel': max_parallel,
             'memPerEngine': mem_per_engine, 'panelCache': panel_cache,
             'freeGB': (round(free, 1) if free is not None else None),
-            'note': ('已启动%s（PID %d）：启用池=%s、每池 %d 轮 ⇒ %s 每轮结束自动收尾 ✓'
-                     % ('**并行**调度器' if exec_mode == 'parallel' else '轮转调度器',
+            'note': ('已启动%s（PID %d）：启用池=%s、每池 %d 轮，%s每轮结束自动收尾'
+                     % ('并行调度器' if exec_mode == 'parallel' else '轮转调度器',
                         proc.pid, pool_list, rounds,
-                        ('**同时最多 %d 个引擎**（其余排队）· 面板共享=%s ✓ '
+                        ('同时最多 %d 个引擎（其余排队）· 面板共享=%s '
                          % (max_parallel, panel_cache)) if exec_mode == 'parallel'
-                        else '同一时刻只 1 个引擎（内存 1 份）· 面板共享=%s ✓ ' % panel_cache)
+                        else '同一时刻只 1 个引擎（内存 1 份）· 面板共享=%s ' % panel_cache)
                      + ('；' + '；'.join(_extra) if _extra else ''))}
 
 
@@ -555,15 +557,15 @@ def stop(pool=None, **kw):
             left += [x for x in engines() if x['pid'] not in {y['pid'] for y in left}]
         en = [x for x in (c.get('enabled') or core.POOL_KEYS) if x != pool]
         # ★ 文案按"它当时是否在跑"区分 —— 没在跑却说"杀掉了当前那一代"会误导 ✗
-        _how = ('① 从轮转中移除 ② 结束它当前那一代（该代作废，下次重跑；state 是原子写 ⇒ 不会坏数据）'
+        _how = ('从轮转中移除，并结束它当前那一代（该代作废，下次重跑；state 是原子写，不会坏数据）'
                 if _was_mining else
                 '从轮转中移除（它当前没在跑，所以只影响后续轮次）')
         return {'ok': not left, 'scope': 'pool:%s' % pool, 'killed': killed,
                 'stillRunning': [{'pid': p['pid'], 'kind': 'engine', 'pools': p.get('pools')} for p in left],
-                'note': ('已停止池 %s：%s ⇒ 其他池不受影响 ✓'
-                         '%s' % (pool, _how, '；⚠ 它本来是最后一个启用的池 ⇒ 调度器已无池可跑、'
+                'note': ('已停止池 %s：%s，其他池不受影响'
+                         '%s' % (pool, _how, '；注意它本来是最后一个启用的池，调度器已无池可跑、'
                                               '将自行退出（若还想要它，点启动本池会自动重启调度器）'
-                                              '✓' if not en else ''))}
+                                              if not en else ''))}
 
     # ★ 全部停：标记 stopAll + 杀所有引擎 ⇒ **确保收尾一定发生** ✓
     #   ⚠ 2026-09-16 修 BUG C/D：
@@ -586,15 +588,15 @@ def stop(pool=None, **kw):
     tail = None
     if sched:
         # ★ 调度器在 ⇒ 它读到 `stopAll` 会**自己收尾后退出** ✓（清标记由它负责）
-        note = ('已请求**全部停止**：当前代已杀（作废、下次重跑）⇒ 调度器将**自动收尾**'
-                '（facs 落地 + 跨池审查 + 精选池）随后退出 ✓ ⚠ 收尾期间请勿再启动（会撞车）')
+        note = ('已请求全部停止：当前代已杀（作废、下次重跑），调度器将自动收尾'
+                '（facs 落地 + 跨池审查 + 精选池）随后退出。收尾期间请勿再启动（会撞车）')
     else:
         # ★ 调度器不在 ⇒ 后端**兜底**触发一次收尾（否则用户的"全部停 ⇒ 自动收尾"落空）✓
         _write_ctl(stopAll=False, running=False, phase='idle', curPool=None, curGen=None)
         try:
             tail = run_global()
-            note = ('已停止（无调度器在跑）⇒ **兜底触发了一次收尾审查**（PID %s）✓ '
-                    '收尾完成后刷新即可看到最新精选池' % tail.get('pid'))
+            note = ('已停止（无调度器在跑），兜底触发了一次收尾审查（PID %s）'
+                    '，收尾完成后刷新即可看到最新精选池' % tail.get('pid'))
         except MineError as e:
             note = '已停止。收尾未触发：%s' % e.msg
     return {'ok': True, 'scope': 'all', 'killed': killed, 'stillRunning': [],
@@ -619,9 +621,9 @@ def start_pool(pool):
         _write_ctl(stopped=st, enabled=en, stopAll=False)
         return {'ok': True, 'pool': pool, 'enabled': en, 'stopped': st, 'restarted': False,
                 # ★ 2026-09-16：并行模式下**运行期动态加入** ⇒ 提示要分模式（别让人以为要等下一轮 ✗）
-                'note': ('已把池 %s 加入%s（%s）；其它池的停止状态保持不变 ✓'
+                'note': ('已把池 %s 加入%s（%s）；其它池的停止状态保持不变'
                          % (pool, '并行' if (c.get('execMode') == 'parallel') else '轮转',
-                            '**马上**会起一个引擎，不用等下一轮' if (c.get('execMode') == 'parallel')
+                            '马上会起一个引擎，不用等下一轮' if (c.get('execMode') == 'parallel')
                             else '下一轮就轮到它')),
                 'merged': True}
     # ★ 调度器不在 ⇒ 自动重启。⚠ **必须 `reset_stopped=False`** ——
@@ -636,8 +638,8 @@ def start_pool(pool):
     _write_ctl(stopped=st, enabled=en)      # ★ 重启后把“只移除该池”的 stopped 写回 ✓
     return {'ok': True, 'pool': pool, 'enabled': en, 'stopped': st, 'restarted': True,
             'started': r.get('started'), 'note':
-            ('调度器原本不在运行 ⇒ 已自动重启（轮数沿用 %d）：启用池=%s；'
-             '池 %s 已加入轮转，其它池的停止状态保持不变 ✓' % (rounds, en, pool))}
+            ('调度器原本不在运行，已自动重启（轮数沿用 %d）：启用池=%s；'
+             '池 %s 已加入轮转，其它池的停止状态保持不变' % (rounds, en, pool))}
 
 
 # ---------------------------------------------------------------- 全局收尾（保留，前端已隐藏按钮）
@@ -645,7 +647,7 @@ def run_global():
     """跑**一次性全局收尾**（`--rounds=0`）。⚠ 要求当前无任何挖掘在跑。"""
     c = ctl()
     if scheduler() or engines() or (c.get('running') and (c.get('phase') == 'mine')):
-        raise MineError('仍有挖掘在跑 ⇒ 拒绝收尾（收尾必须"无人写"）✗ 请先全部停止', 409)
+        raise MineError('仍有挖掘在跑，拒绝收尾（收尾要求无人写），请先全部停止', 409)
     args = [sys.executable, RUN_TRACKS, '--pools=%s' % ','.join(core.POOL_KEYS), '--rounds=0']
     os.makedirs(LOGD, exist_ok=True)
     env = dict(os.environ)
@@ -659,4 +661,4 @@ def run_global():
     time.sleep(2)
     return {'ok': True, 'pid': proc.pid, 'alive': _alive(proc.pid),
             'log': os.path.relpath(log, settings.PROJECT_ROOT),
-            'note': '全局收尾已启动（facs 落地 + 跨池审查 + 精选池）✓'}
+            'note': '全局收尾已启动（facs 落地 + 跨池审查 + 精选池）'}

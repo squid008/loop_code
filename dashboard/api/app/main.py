@@ -66,7 +66,7 @@ def meta():
     }
 
 
-@app.get('/api/status', summary='★ 池运行状态快照（是否在跑 / 跑多少轮 / 库规模）')
+@app.get('/api/status', summary='池运行状态快照（是否在跑 / 跑多少轮 / 库规模）')
 def status(fresh: bool = Query(False, description='true=跳过缓存强制重查进程')):
     if fresh:
         core._CACHE.pop('procs', None)
@@ -92,14 +92,14 @@ def library_one(pool: str):
     return factors.library(pool)
 
 
-@app.get('/api/curves/{pool}/{name}', summary='★ 因子曲线（离线预算，详情页图表用）')
+@app.get('/api/curves/{pool}/{name}', summary='因子曲线（离线预算，详情页图表用）')
 def factor_curves(pool: str, name: str, max_pts: int = Query(700, ge=50, le=3000)):
     if '/' in name or '..' in name:
         raise HTTPException(400, '非法因子名')
     return factors.curves(name, max_pts=max_pts)
 
 
-@app.get('/api/selected', summary='★ 精选池（L3 双闸门）')
+@app.get('/api/selected', summary='精选池（L3 双闸门）')
 def selected():
     return factors.selected()
 
@@ -139,12 +139,12 @@ class StopBody(BaseModel):
     pool: str | None = None
 
 
-@app.get('/api/mine/state', summary='★ 挖掘状态（调度器 / 当前池·代数 / 阶段 / 各池启停）')
+@app.get('/api/mine/state', summary='挖掘状态（调度器 / 当前池·代数 / 阶段 / 各池启停）')
 def mine_state():
     return mine.state()
 
 
-@app.post('/api/mine/start', summary='★ 启动调度器（轮转/并行；已在跑 ⇒ 就地更新启用集合与轮数）')
+@app.post('/api/mine/start', summary='启动调度器（轮转/并行；已在跑则就地更新启用集合与轮数）')
 def mine_start(body: StartBody):
     try:
         return mine.start(body.pools, body.rounds, exec_mode=body.execMode,
@@ -154,7 +154,7 @@ def mine_start(body: StartBody):
         raise HTTPException(e.code, e.msg)
 
 
-@app.post('/api/mine/stop', summary='★ 停止 —— 指定池则**只停该池**；不指定则**全部停（随后自动收尾）**')
+@app.post('/api/mine/stop', summary='停止。指定池则只停该池；不指定则全部停（随后自动收尾）')
 def mine_stop(body: StopBody):
     try:
         pool = body.pool if (body.scope == 'pool' and body.pool) else None
@@ -167,7 +167,7 @@ class PoolBody(BaseModel):
     pool: str
 
 
-@app.post('/api/mine/start_pool', summary='★ 单独**恢复**某池（从停止集合移除，下一轮即轮到它）')
+@app.post('/api/mine/start_pool', summary='单独恢复某池（从停止集合移除，下一轮即轮到它）')
 def mine_start_pool(body: PoolBody):
     try:
         return mine.start_pool(body.pool)

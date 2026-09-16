@@ -187,7 +187,11 @@ export default function App() {
             {mine?.curText && <em>{mine.curText}</em>}
             {mine?.roundText && <small>{mine.roundText}/{mine?.rounds ?? '?'}</small>}
           </span>
-          <span className="res" title={mine?.memNote || ''}>
+          {/* ★★ 2026-09-16（用户："顶上 19.4 GB 5 池已配置这里的鼠标提示还有引号…干脆把这里的提示
+              全部删掉"）⇒ **那个 tooltip 直接去掉**（`memNote` 后端仍在，只是不再挂在悬停上）✓
+              —— 该说明（并行数怎么算、面板共享省多少内存）属于"配置/口径"信息，
+                 挂在内存数字上纯属噪音；要查口径请看「配置/口径」页 ✓ */}
+          <span className="res">
             <b className={mine && mine.freeGB !== null && mine.freeGB < 6 ? 'warn' : ''}>
               {mine?.freeGB !== null && mine?.freeGB !== undefined ? `${mine.freeGB} GB` : '—'}
             </b>
@@ -946,6 +950,11 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
     metricsMtime?: string | null; onClose: () => void }) {
   const [copied, setCopied] = useState(false)
   const m = f.metrics ?? {}
+  // ★★ 2026-09-16 修（用户："精选池详情页里的指标数据比如超额年化之类的怎么都是 -"）：
+  //   根因 = 数值渲染原来只认**库表**路径传进来的 `metricsInfo.found`，而精选池那条路**不传**它
+  //   ⇒ `undefined?.found` 为假 ⇒ **所有指标都显示 —**，可数据其实就在 `f.metrics` 里（29 个字段齐全）✗
+  //   ⇒ 没传 `metricsInfo` 时退化成"这个因子自己有没有指标"（有 ⇒ 照常显示）✓
+  const metricsReady = metricsInfo ? !!metricsInfo.found : Object.keys(m).length > 0
   const d = f.detail ?? ({} as NonNullable<LibraryFactor['detail']>)
   const expr = f.expr || f.summary || ''
   const doCopy = async () => {
@@ -1028,7 +1037,7 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
                 {defs.map(([key, label, kind]) => (
                   <div key={key} className="dt-cell">
                     <span className="dk">{label}</span>
-                    <span className="dv">{metricsInfo?.found ? fmtM(m[key], kind) : '—'}</span>
+                    <span className="dv">{metricsReady ? fmtM(m[key], kind) : '—'}</span>
                   </div>
                 ))}
               </div>
