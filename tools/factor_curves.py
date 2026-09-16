@@ -618,19 +618,25 @@ def main():
             n_hist += 1
     if a.include_history:
         print('  ★ --include_history：额外补 **%d 个已移出当前库的历史编号**' % n_hist)
+    # ★★ 2026-09-17（配合用户要的"历史编号也要有曲线"）：
+    #   **同一表达式可能挂着多个名字** —— 历史编号与别的池的在库因子"同式不同名"（实测 9 个历史里有 2 个）
+    #   ⇒ 计算只做一次（省时间），但**每个名字都要落一份文件**；否则按名字查会显示"暂无曲线数据"
+    #     （明明算过、只是存在别的名字下）✗
+    alias = {}
     seen, uniq = set(), []
     for it in items:
+        _nm_i = BF._name_of(it)
+        it['_nm'] = _nm_i
+        alias.setdefault(it['expr'], []).append(_nm_i)
         if it['expr'] in seen:
             continue
         seen.add(it['expr'])
-        it['_nm'] = BF._name_of(it)
         uniq.append(it)
 
     def _path(nm):
         return os.path.join(CURVE_DIR, '%s.json' % nm)
 
-    def _need(it):
-        p = _path(it['_nm'])
+    def _need_one(p):
         if not os.path.exists(p):
             return True
         if not a.only_new:
@@ -664,6 +670,10 @@ def main():
             return (not _style_ok(d)) or _need2(d)
         return (('nav_e' not in d) or ('strip' not in d) or (not _style_ok(d))
                 or _need2(d))
+
+    def _need(it):
+        # ★ 该表达式的**任一名字**缺文件/缺阶段 ⇒ 都要重算（保证每个名字都有文件）✓
+        return any(_need_one(_path(x)) for x in (alias.get(it['expr']) or [it['_nm']]))
 
     uniq = [it for it in uniq if _need(it)]
     if a.limit:
@@ -792,8 +802,12 @@ def main():
             cur.setdefault('pool', it['pool'])
             cur.setdefault('expr', it['expr'])
             cur.setdefault('sign', sign)
-            with io.open(p, 'w', encoding='utf-8') as f:
-                json.dump(cur, f, ensure_ascii=False, separators=(',', ':'))
+            # ★ 每个名字各写一份（别名副本把 `name` 改成**它自己的编号**，免得详情页显示别人的名字）✓
+            for nm_o in (alias.get(it['expr']) or [nm]):
+                cc = cur if nm_o == nm else dict(cur, name=nm_o)
+                cc.setdefault('name', nm_o)
+                with io.open(_path(nm_o), 'w', encoding='utf-8') as f:
+                    json.dump(cc, f, ensure_ascii=False, separators=(',', ':'))
             ok += 1
         except Exception as e:
             print('    [!] 失败 %s: %s: %s' % (nm, type(e).__name__, e))
