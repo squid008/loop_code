@@ -1,0 +1,38 @@
+fix(v1.3.10): 修「停了全A再启动 ⇒ 其余等候轮转的池子全被取消」— 前端接线接错
+
+【用户报】「我把全A停了再启动，怎么剩下的等候轮转的池子都给取消掉了？」
+
+【★★★★★ 真凶：一行接线】dashboard/web/src/App.tsx 池卡片：
+  修前: onStart={() => doStart([p.key])}   走 /api/mine/start（整体启动接口）
+        ⇒ 后端 start(['all']) 把 _write_ctl(enabled=['all'])
+        ⇒ enabled 被整体改写 ⇒ 其余 4 个池全被移出轮转 ✗✗ 正是用户看到的
+  修后: onStart={() => doStartPool(p.key)} 走 /api/mine/start_pool（只动该池）✓
+  现场证据完全吻合: enabled=['all'](本该 5 个池) · stopped=[] · curPool=300
+
+【★★ 更糟】v1.3.9 我已经写了正确的 doStartPool()，却忘了接到这里（死代码）✗
+
+【修】
+  ① onStart 改接 doStartPool
+  ② 「一键启动全部」确认框加透明提示（它确实会清 stopped，说明白更好）
+  ③ 修掉我插注释的位置错误（JSX 箭头函数返回表达式里不能用 {/* */}）
+
+【★★★★★ 为什么上次没测出（方法论漏洞）】
+  v1.3.9 的端到端测试是直接打 API ⇒ 后端是对的
+  但完全没覆盖「前端点按钮时调的是哪个接口」⇒ 接线错了也测不出来
+  ⇒ 新增常驻回归 tools/_test_frontend_wiring.py（静态断言，不改运行状态，命名 _test_* 会自动进回归）：
+     ① 池卡片 onStart 必须接 doStartPool（且不得误接 doStart([）
+     ② 顶栏「一键启动全部」接 doStart([]) ·「全部停止」接 doStop()
+     ③ 三个处理函数都必须真的被引用（防「写了没接」的死代码）
+     ④ 页面用到的 api.mine* 必须在 api.ts 有定义（防拼错 endpoint）
+
+【验证（实测）】
+  【0】基线 5 池在轮转 ✓
+  【1】停 all        ⇒ stopped=['all'] · enabled 仍 5 个池 ✓
+  【2】启动 all(新)  ⇒ stopped=[]      · enabled 仍 5 个池 ✓✓【本次修复】
+  【3】对照实验（旧接法 /api/mine/start {pools:['1000']}）⇒ enabled=['1000'] ✗ ⇒ 证实旧接法即 bug 本体 ✓
+  【4】恢复 ⇒ enabled 5 个池 · stopped=[] ✓
+  tsc 0 错 · 编译 116 · 引号干净 · 15/15 测试 · 版本 1.3.9→1.3.10 守门通过
+
+【★ 教训】
+  1. 改后端接口语义时，必须同时检查前端各处调用点（/mine/start 与 /mine/start_pool 语义不同）
+  2. 「后端对」≠「用户点得到」—— 端到端必须覆盖「点击→接口」这一跳

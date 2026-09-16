@@ -86,6 +86,8 @@ export default function App() {
     ask('启动挖掘', [
       `参与的池：${label}`,
       `每个池跑：${rounds} 轮`,
+      // ★ 透明化（用户报过"配置被悄悄改了"）：一键启动全部**会清掉**之前的「停止」标记 ✓
+      ...(pools.length ? [] : ['注意：这会把之前单独「停止」过的池也重新加入轮转。']),
       '',
       '会用一个调度器依次跑这些池，每轮每个池各跑 1 代。',
       `内存只占一份（约 ${mine?.gbPerEngine ?? 9} GB），不再是每个池一份。`,
@@ -297,11 +299,18 @@ export default function App() {
         ))}
       </nav>
 
+      {/* ★★★★★ 2026-09-16 修（用户报「把全A停了再启动，剩下的等候轮转的池子都给取消掉了」）：
+          池卡片的「启动本池」原来接的是 `doStart([p.key])` ⇒ 走 `/api/mine/start`（**整体启动接口**）
+          ⇒ 后端 `start(['all'])` 会把 `enabled` **改写为 `['all']`** ⇒ **其余 4 个池全被移出轮转** ✗✗
+          ⇒ 正确语义 = 「**只把这一池加回轮转**」= `POST /api/mine/start_pool` ⇒ 只动该池 ✓
+          ⚠ 我在 v1.3.9 写了 `doStartPool()` 却**忘了接到这里**（成了死代码）✗
+            —— 而当时的"端到端测试"是**直接打 API** ⇒ **没覆盖到前端接线** ✗（这是漏洞）
+          ⇒ 已加 `tools/_test_frontend_wiring.py` 进回归，专门盯这类"写了没接" ✗ */}
       {tab === 'pools' && status && (
         <section className="cards">
           {status.pools.map(p => (
             <PoolCard key={p.key} p={p} nowMs={nowMs} mine={mine} busy={mineBusy}
-                      onStart={() => doStart([p.key])} onStop={() => doStop(p.key)} />
+                      onStart={() => doStartPool(p.key)} onStop={() => doStop(p.key)} />
           ))}
         </section>
       )}
