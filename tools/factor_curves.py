@@ -597,21 +597,27 @@ def main():
             return 'nav_e' not in d
         if a.stage == 'strip':
             return 'strip' not in d
+        def _style_ok(dd):
+            """★ 不只检查"有没有 style"，还要**统计量齐全**（老版本没 `tAdj`/`tYr`
+            ⇒ 必须视为"要重算"，否则新旧混在一张表里 ✗ —— 2026-09-16 实测漏过 4 个）"""
+            st = dd.get('style') or {}
+            if not st.get('styles'):
+                return False
+            return all({'tAdj', 'tYr', 'winYr'} <= set((st.get('raw') or {}).get(s, {}))
+                       for s in st['styles'])
+
+        def _need2(dd):
+            return not all(k in ((dd.get('strip') or {}).get('navs') or {})
+                           for k in ('floatcap', 'caplimit'))
+
         if a.stage == 'style':
-            # ★ 还要检查**统计量齐全**（老版本没算 `tAdj` ⇒ 视为"要重算"，避免新旧混在一张表里 ✗）
-            st = d.get('style') or {}
-            return ('style' not in d) or any(
-                not {'tAdj', 'tYr', 'winYr'} <= set((st.get('raw') or {}).get(s, {}))
-                for s in (st.get('styles') or []))
-        _need2 = lambda dd: not all(k in ((dd.get('strip') or {}).get('navs') or {})
-                                    for k in ('floatcap', 'caplimit'))
+            return not _style_ok(d)
         if a.stage == 'strip2':
             return _need2(d)
         if a.stage == 'style+strip2':
-            return ('style' not in d) or _need2(d)
-        return (('nav_e' not in d) or ('strip' not in d) or ('style' not in d)
-                or not all(k in ((d.get('strip') or {}).get('navs') or {})
-                           for k in ('floatcap', 'caplimit')))
+            return (not _style_ok(d)) or _need2(d)
+        return (('nav_e' not in d) or ('strip' not in d) or (not _style_ok(d))
+                or _need2(d))
 
     uniq = [it for it in uniq if _need(it)]
     if a.limit:
