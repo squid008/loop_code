@@ -299,9 +299,19 @@ tr.outbank .fcode { color: var(--mut); }
    把**会变宽**的几处钉死宽度 ⇒ 数值变化不再推动邻居、也不再触发整排重排 ✓ */
 .ctrls .res b { min-width: 62px; text-align: right; font-variant-numeric: tabular-nums; }
 .ctrls .res small { min-width: 68px; text-align: right; }
-.ctrls .phase { min-width: 190px; }                 /* 相位条：idle 时也不缩（避免邻居位移）*/
-.ctrls .phase em { min-width: 88px; }               /* "500 · gen 17" */
-.ctrls .phase small { min-width: 58px; text-align: right; }   /* "第1轮/50" */
+/* ★★★ 2026-09-17 用户要求：「这个一坨会随着轮次、内存数据变动而改变长度，就搞成**固定的宽度**吧，
+   卡片宽度不要变来变去的；第一个空闲的那个卡片宽度可以**对齐下面 0/5 那个卡片**」
+   ⇒ ① **相位卡**定宽 218px（= KPI 卡在常见窗口下的宽度 (1136−4×12)/5 ≈ 218，**与下面的 0/5 卡对齐**）
+      ② **内存卡**定宽 292px（**足够放下"运行中"最宽的内容**：`3.1 GB` + `并行×5（自动）· 共享` + `4/5 池在跑`）
+      ③ 两者都 `overflow: hidden` + 内部省略号 ⇒ **内容再变，卡宽也不变** ✓
+      ④ 内存卡用 `space-between` 把三部分摊开（idle 时不会在右边留一大块空白）✓
+   ⚠ 为什么要"定宽"而不是"min-width"：`min-width` 只保证下限，**内容变宽时卡片仍然会变宽** ✗ */
+.ctrls .phase { width: 218px; overflow: hidden; }
+.ctrls .phase em { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctrls .phase small { margin-left: auto; }          /* 轮次靠右 ⇒ 中间内容变化时位置稳定 ✓ */
+.ctrls .res { width: 292px; justify-content: space-between; overflow: hidden; }
+.ctrls .res .mode { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ctrls .res .mode.off { color: var(--mut); }        /* 未运行时占位（保持卡宽不变、又说明状态）✓ */
 .ctrls .btn.start { min-width: 116px; }             /* "一键启动全部" / "已在运行" 宽度不同 ⇒ 钉死 */
 /* ★ 极窄屏（<1000px）的**优雅降级**：宁可靠"少显示一点次要信息"保持一行，
    也不要折行/横滑 —— 先省掉最不关键的"x/y 池在跑"与"相位条的预留宽度" ✓ */

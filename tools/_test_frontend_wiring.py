@@ -122,10 +122,23 @@ chk('控件栏内部**不换行**且**不被压缩**（整条整体换行交给 
 chk('★ **会变宽的内存数字**定宽 + 等宽数字（一变宽就把邻居挤走 ⇒ 跳行）',
     re.search(r'\.ctrls \.res b \{ min-width: 62px', css) is not None,
     '`3.1 GB` → `19.4 GB` 宽度会变 ⇒ 必须 min-width + tabular-nums')
-chk('相位条 / 启动按钮也定宽（gen、轮数、按钮文案一变就整体位移 ✗）',
-    '.ctrls .phase { min-width: 190px; }' in css and '.ctrls .btn.start { min-width: 116px; }' in css)
+# ⚠ 2026-09-17 更新：相位卡由 `min-width: 190px` 改成**定宽**（见下面那组断言），
+#   这里只保留"启动按钮定宽"（"一键启动全部"/"已在运行"/"处理中…" 文案不同 ⇒ 不定宽就整体位移 ✗）
+chk('启动按钮定宽（文案一变就整体位移 ✗）',
+    '.ctrls .btn.start { min-width: 116px; }' in css)
 chk('极窄屏**优雅降级**（先省次要文字，而不是折行或横滑）',
     '@media (max-width: 1000px)' in css)
+# ★★ 2026-09-17 用户第二批：「这个一坨会随着轮次、内存数据变动而改变长度，就搞成**固定的宽度**吧，
+#   卡片宽度不要变来变去的；第一个空闲的那个卡片宽度可以**对齐下面 0/5 那个卡片**」
+chk('★ 相位卡**定宽 218px**（= KPI 卡常见宽度 (1136−4×12)/5 ⇒ 与下面 0/5 卡左右对齐）',
+    re.search(r'\.ctrls \.phase \{ width: 218px', css) is not None,
+    '用 min-width 不够 —— 内容变宽时卡片仍会变宽 ✗')
+chk('★ 内存卡**定宽 292px**（够放"运行中"最宽内容 ⇒ 开始挖掘时卡片不变宽）',
+    re.search(r'\.ctrls \.res \{ width: 292px', css) is not None)
+chk('★ 内存卡的"模式"格**永远渲染**（未运行时显示占位 ⇒ 卡宽恒定且不留空白）',
+    "'mode' + (mine?.running ? '' : ' off')" in src and '未运行' in src)
+chk('相位卡文案**压缩**（218px 塞得下；完整信息留在鼠标提示里）',
+    'compactCur' in src and 'compactRound' in src)
 
 print()
 print('【6】★ 风格相关性画像：横向条形图 + 图例显隐 + 数据来源（2026-09-16 用户要求）')

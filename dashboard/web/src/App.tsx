@@ -176,6 +176,9 @@ export default function App() {
         </div>
         <div className="ctrls">
           {/* 顶部状态条：空闲 / 挖掘中 / 收尾审查中 */}
+          {/* ★★ 2026-09-17（用户："这个一坨会随着轮次、内存数据变动而改变长度，搞成固定宽度吧"）：
+              相位卡与内存卡都**定宽**（CSS），这里把相位卡的文案**压缩**以便塞进 218px ✓
+              （完整信息仍在鼠标提示里 ✓） */}
           <span className={`phase ${mine?.phase ?? 'idle'}`} title={
             `当前状态：${mine?.phaseLabel ?? '—'}\n` +
             (mine?.curText ? `正在跑：${mine.curText}\n` : '') +
@@ -184,8 +187,8 @@ export default function App() {
             (mine?.updated ? `状态更新于 ${mine.updated}` : '')}>
             <i className="pdot" />
             <b>{mine?.phaseLabel ?? '—'}</b>
-            {mine?.curText && <em>{mine.curText}</em>}
-            {mine?.roundText && <small>{mine.roundText}/{mine?.rounds ?? '?'}</small>}
+            {mine?.curText && <em>{compactCur(mine.curText)}</em>}
+            {mine?.roundText && <small>{compactRound(mine.roundText)}/{mine?.rounds ?? '?'}</small>}
           </span>
           {/* ★★ 2026-09-16（用户："顶上 19.4 GB 5 池已配置这里的鼠标提示还有引号…干脆把这里的提示
               全部删掉"）⇒ **那个 tooltip 直接去掉**（`memNote` 后端仍在，只是不再挂在悬停上）✓
@@ -195,15 +198,16 @@ export default function App() {
             <b className={mine && mine.freeGB !== null && mine.freeGB < 6 ? 'warn' : ''}>
               {mine?.freeGB !== null && mine?.freeGB !== undefined ? `${mine.freeGB} GB` : '—'}
             </b>
-            {/* ★ 当前**实际**在跑的模式（以进程命令行为准，不是 UI 上选的那个） */}
-            {mine?.running && (
-              <em className="mode">
-                {/* ★ 并行数是**自动**的 ⇒ 标出来（否则用户看到 ×1 会以为"只能跑一个" ✗） */}
-                {mine.execMode === 'parallel'
-                  ? `并行×${mine.maxParallel}${mine.autoParallel ? '（自动）' : ''}` : '轮转'}
-                {mine.panelCache !== 'off' ? ' · 共享' : ''}
-              </em>
-            )}
+            {/* ★ 当前**实际**在跑的模式（以进程命令行为准，不是 UI 上选的那个）
+                ★★ 2026-09-17：**这一格永远渲染** —— 否则"开始挖掘"时卡片会突然变宽 ✗
+                （未运行时显示"未运行"占位 ⇒ 卡宽恒定、也不留空白）✓ */}
+            <em className={'mode' + (mine?.running ? '' : ' off')}>
+              {mine?.running
+                ? (`${mine.execMode === 'parallel'
+                    ? `并行×${mine.maxParallel}${mine.autoParallel ? '（自动）' : ''}` : '轮转'}`
+                   + (mine.panelCache !== 'off' ? ' · 共享' : ''))
+                : '未运行'}
+            </em>
             {/* 区分“正在轮转”与“只是配置了但调度器没跑”（★ 文字缩短，免得把顶栏挤出一条滚动条 ✗） */}
             <small>{mine?.running
               ? `${(mine?.runningPools ?? []).length}/${(mine?.enabled ?? []).length} 池在跑`
@@ -594,6 +598,12 @@ type FactorLike = Pick<LibraryFactor, 'code' | 'expr' | 'detail' | 'metrics'> & 
 }
 
 const fmtD8 = (d: number) => `${String(d).slice(0, 4)}-${String(d).slice(4, 6)}-${String(d).slice(6, 8)}`
+
+// ★ 2026-09-17：顶栏相位卡的**紧凑文案**（卡片是定宽的 218px；完整信息在鼠标提示里）✓
+/** `500 · gen 17` → `500 gen17` */
+const compactCur = (t?: string | null) => (t || '').replace(/\s*·\s*gen\s*/, ' gen')
+/** `第 1 轮` → `1`（配合后面的 `/50` 显示成 `1/50`） */
+const compactRound = (t?: string | null) => (t || '').replace(/^第\s*/, '').replace(/\s*轮$/, '')
 
 // ================================================================ 曲线（SVG，零依赖）
 // ★ 2026-09-16（用户要求：指标下面加曲线图）：数据**离线预算**（`tools/factor_curves.py`），

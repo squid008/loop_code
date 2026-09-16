@@ -401,30 +401,48 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
         g = iv[i][m]
         yr = int(str(int(d))[:4])                           # ★ 年份（供"分年度块"显著性）
         xr = pd.Series(x[m]).rank(pct=True).values          # 因子秩（子集内）
-        _xn, _deg = _neut_size_ind(xr, pd.Series(sv['lncap'][i][m]).rank(pct=True).values, g, m)
-        xr_n = np.full(len(xr), np.nan) if _deg else pd.Series(_xn).rank(pct=True).values
+        # ★★ 2026-09-17 修「很多风格的剥后是 `—`」（用户实测 F07_1000 之问，探针定位）：
+        #   真因 = 中性化变量（`lncap` 的秩）在子集里有 **NaN**，而 `_neut_size_ind` 里
+        #   `xc[m] -= xr[m].mean()` 会**把 NaN 传染给整组** ⇒ 残差整列 NaN ⇒ 相关 NaN ⇒ 显示 `—` ✗
+        #   ⚠ 而且**同一个因子不同行结论还不一致**（`lncap` 自己的子集不含 NaN ⇒ 有值；
+        #     `barra_size` 的子集含 NaN ⇒ 没值 —— 两者秩相关 0.998，本该同结论）✗
+        #   ⇒ 中性化的**样本必须同时要求"中性化变量有限"** ✓
+        _lc = np.isfinite(sv['lncap'][i])
+        mk = m & _lc
+        if mk.sum() < 200:
+            continue
+        _xn, _deg = _neut_size_ind(xr[_lc[m]], pd.Series(sv['lncap'][i][mk]).rank(pct=True).values,
+                                   iv[i][mk], mk)
+        # ⚠ 剥后序列的长度 = `mk.sum()`（不是 `m.sum()`）⇒ 下游与它配对的**必须用同一子集**的掩码 ✓
+        xr_n = np.full(int(mk.sum()), np.nan) if _deg else pd.Series(_xn).rank(pct=True).values
+        g_k = iv[i][mk]                                     # ★ 与 xr_n 同长度的行业码
         r2s['raw'].append(_ind_r2(xr, g))
         # ★ 退化（中性化后≈0）⇒ **记 NaN 不臆造**（见 `_neut_size_ind` 注释）
-        r2s['neut'].append(np.nan if _deg else _ind_r2(xr_n, g))
+        r2s['neut'].append(np.nan if _deg else _ind_r2(xr_n, g_k))
         # 行业 |相关|：把"行业哑变量"当 0/1 变量，与因子秩做点双列相关 = 组均值差
         gm, sx = xr.mean(), xr.std()
+        _nm_n, _ns_n = float(np.nanmean(xr_n)), float(np.nanstd(xr_n))
         for j in range(len(ind_names)):
-            mj = g == j
+            mj = g == j                                     # raw：`m` 子集
+            mjk = g_k == j                                  # neut：`mk` 子集（长度与 xr_n 一致）
             if mj.sum() < 5:
                 ind_series['raw'][j].append((yr, np.nan))
+            else:
+                ind_series['raw'][j].append(
+                    (yr, float((xr[mj].mean() - gm) / (sx + 1e-12)
+                               * np.sqrt(mj.mean() * (1 - mj.mean())))))
+            if _deg or mjk.sum() < 5:
                 ind_series['neut'][j].append((yr, np.nan))
-                continue
-            ind_series['raw'][j].append(
-                (yr, float((xr[mj].mean() - gm) / (sx + 1e-12)
-                           * np.sqrt(mj.mean() * (1 - mj.mean())))))
-            ind_series['neut'][j].append(
-                (yr, np.nan if _deg else
-                 float((xr_n[mj].mean() - np.nanmean(xr_n)) / (np.nanstd(xr_n) + 1e-12)
-                       * np.sqrt(mj.mean() * (1 - mj.mean())))))
+            else:
+                ind_series['neut'][j].append(
+                    (yr, float((xr_n[mjk].mean() - _nm_n) / (_ns_n + 1e-12)
+                               * np.sqrt(mjk.mean() * (1 - mjk.mean())))))
         for s in names:
             v = sv[s][i]
             mm = m & np.isfinite(v)
-            if mm.sum() < 200:
+            # ★ 2026-09-17：**中性化样本还要要求 `lncap` 有限**（否则 NaN 传染 ⇒ 相关 NaN ⇒ 显示 `—`）✗
+            mmn = mm & _lc
+            if mm.sum() < 200 or mmn.sum() < 200:
                 continue
             # ★★ 退化守卫（2026-09-16 实测）：`barra_comovement` 面板是**常数**（全 0）⇒
             #   逐期 Spearman 恒为 0 ⇒ 存出来是 `mean 0.000 / ir None`，看着像"完全无暴露"，
@@ -439,12 +457,20 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
             vr = pd.Series(v[mm]).rank(pct=True).values
             xr2 = pd.Series(x[mm]).rank(pct=True).values
             series['raw'][s].append((yr, _rho(xr2, vr)))
-            g2 = iv[i][mm]
-            xn, deg = _neut_size_ind(xr2, pd.Series(sv['lncap'][i][mm]).rank(pct=True).values, g2, mm)
+            # ★★ 剥后相关**用自己的子集**（含 lncap 有限）✓
+            vr_n = pd.Series(v[mmn]).rank(pct=True).values
+            xr2n = pd.Series(x[mmn]).rank(pct=True).values
+            g2 = iv[i][mmn]
+            xn, deg = _neut_size_ind(xr2n, pd.Series(sv['lncap'][i][mmn]).rank(pct=True).values,
+                                     g2, mmn)
+            # ★ 兜底：中性化结果里**出现 NaN 一律判"不可判定"**（不许让 NaN 悄悄变成 `—` 而不留痕 ✗）
+            if not deg and not np.isfinite(xn).all():
+                deg = True
             if deg:
                 series['neut'][s].append((yr, np.nan))      # ★ 退化 ⇒ 不判定
                 continue
-            series['neut'][s].append((yr, _rho(pd.Series(xn).rank(pct=True).values, vr)))
+            # ⚠ 这里必须用 **`vr_n`**（`mmn` 子集）—— 用 `vr`（`mm` 子集）长度不一致 ⇒ 广播报错 ✗（实测踩到）
+            series['neut'][s].append((yr, _rho(pd.Series(xn).rank(pct=True).values, vr_n)))
     out = {'n_periods': len(series['raw'][names[0]]), 'styles': list(names),
            # ★ 行业面板的**覆盖情况必须让人看见**（没行业编码的股票按"自成一组"处理）
            'indCover': _r(float((iv >= 0).mean())) if iv.size else None,
