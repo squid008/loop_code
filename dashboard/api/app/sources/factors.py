@@ -149,7 +149,11 @@ def _metrics_table():
         d['_num'] = {k: _num(v) for k, v in d.items()}
         out[nm] = d
     return out, core.mtime_iso(p), {'found': True, 'path': os.path.relpath(p, core.ROOT),
-                                    'rows': len(out)}
+                                    'rows': len(out),
+                                    # ★★ 2026-09-17（用户："想看历史编号的费后指标"）：
+                                    #   新格式的 CSV 带 **`in_bank` 列**（1=当前库 / 0=已移出的历史编号）
+                                    #   ⇒ 可以**直接读**"在不在库"，不再需要"表条数 == 库条数"那条脆弱推断 ✓
+                                    'inBankCol': ('in_bank' in [str(x).strip() for x in head])}
 
 
 def _md_table(lines, header_hint, max_rows=400):
@@ -240,13 +244,23 @@ def library(pool):
     # ★ 指标表里**属于本池**的条目（按 CSV 的 `pool` 列统计 —— 比按名字匹配更稳：
     #   库里可能有"没进库文档、因而没有 F 编号"的因子，它叫 `X<hash>`，名字对不上但确实属于本池）✓
     _mt_pool = {nm: v for nm, v in mtab.items() if (v.get('pool') or 'all') == pool}
-    _measured = sum(1 for nm in _names if nm in mtab)
-    # ★★ `inBankKnown` = 「指标表对本池**条数恰好等于当前有效库**」——
-    #   只有这时才敢用"不在表里"推断"已移出库"。
-    #   ⚠⚠ 否则会**误判**：表还没跑完（或只跑了一部分）时，**所有行都会被标成「历史」** ✗
-    #   （2026-09-16 实测：表里只有 2 条全A 记录时，`/api/library/1000` 的 10 行全变「历史」）
-    inbank_known = (bool(mt_info.get('found')) and bank_n is not None
-                    and len(_mt_pool) == bank_n)
+    # ★★ 2026-09-17：CSV 现在**显式带 `in_bank` 列** ⇒ 优先读它（老格式没有 ⇒ 回退旧推断）✓
+    _has_ib = bool(mt_info.get('inBankCol'))
+
+    def _inb(nm):
+        if _has_ib:
+            return str((mtab.get(nm) or {}).get('in_bank', '')).strip() not in ('0', 'false', 'False')
+        return nm in mtab
+    _measured = sum(1 for nm in _names if _inb(nm))          # = 本池**在库且已测**的条数
+    _nhist = sum(1 for nm, v in _mt_pool.items() if _has_ib and not _inb(nm))
+    # ★★ `inBankKnown` = 敢不敢判"在不在库"：
+    #   · **新格式**（有 `in_bank` 列）⇒ 表里直接写着 ⇒ 一定敢 ✓（这正是加这一列的原因）
+    #   · **老格式** ⇒ 只能靠"表对本池**条数恰好等于当前有效库**"来推；
+    #     ⚠⚠ 否则会**误判**：表没跑完时**所有行都会被标成「历史」** ✗
+    #     （2026-09-16 实测：表里只有 2 条全A 记录时，`/api/library/1000` 的 10 行全变「历史」）
+    inbank_known = (bool(mt_info.get('found')) and _has_ib) or \
+        (bool(mt_info.get('found')) and not _has_ib and bank_n is not None
+         and len(_mt_pool) == bank_n)
     # ★★ 「**在库里、但库文档没有编号**」的因子（2026-09-16 实证：1000 池有 1 个，gen11 入库）
     #   ⇒ 成因 = §8.44 那个 `_lib_sync` 静默跳过的 bug 期间留下的缺口 ⇒ **如实展示，不隐藏** ✓
     orphans = [{'name': nm, 'expr': (v.get('expr') or ''),
@@ -263,7 +277,9 @@ def library(pool):
         for k in ('poolTagNote', 'strip', 'metricsDocText'):     # 散文类 ⇒ 出口处清洗
             f['detail'][k] = _plain(d.get(k, ''))
         f['metrics'] = (mtab.get(nm) or {}).get('_num') or {}
-        f['inBank'] = ((nm in mtab) if inbank_known else None)   # 三态：True/False/None(未知)
+        # 三态：True 在库 / False 已移出 / None 未知（表不完整或没跑）✓
+        f['inBank'] = (_inb(nm) if (inbank_known and nm in mtab) else
+                       (False if inbank_known else None))
     return {
         'pool': pool, 'label': core.pool_label(pool), 'found': True,
         'declaredCount': int(m.group(1)) if m else None,   # md 声明（可能落后）
@@ -274,7 +290,11 @@ def library(pool):
         'metricsFound': mt_info.get('found'),
         'metricsInfo': mt_info,
         'metricsMtime': mt_mtime,
-        'metricsMeasured': len(_mt_pool),
+        # `metricsMeasured` = **本池在库且已测**的条数（与 `stateBank` 比才说明"表跑完了没"）✓
+        #   ⚠ 不能再用 `len(_mt_pool)` —— 表里加进历史编号后条数会**大于**库大小 ⇒ 误报"没跑完" ✗
+        'metricsMeasured': _measured,
+        # ★ 顺带告诉前端：表里还有多少个**已移出的历史编号**也有指标（它们只有 `--include_history` 才算）✓
+        'metricsHistory': _nhist,
         'inBankKnown': inbank_known,
         'orphans': orphans,
         'caliber': {

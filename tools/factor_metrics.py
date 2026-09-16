@@ -44,7 +44,12 @@ DOCS = os.path.join(ROOT, 'docs')
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, 'engine'))
 
-COLS = ['name', 'pool', 'gen', 'expr', 'sign', 'ic', 'ic_doc', 'ic_ir', 'ic_win',
+COLS = ['name', 'pool',
+        # ★★ 2026-09-17（用户："想看历史编号的费后指标/曲线"）：新增 `in_bank` 列（1=在 state.bank，
+        #   0=**已移出当前库的历史编号**）。为什么必须是**显式列**而不是"表里有就是在库"：
+        #   一旦把历史编号也补进来，"不在表里 = 已移出"这条推断就**失效**了 ✗
+        #   （API 原来正是靠"表条数 == 当前库条数"来推的 —— 见 `factors.library()` 的 `inbank_known`）
+        'in_bank', 'gen', 'expr', 'sign', 'ic', 'ic_doc', 'ic_ir', 'ic_win',
         # —— 超额口径 ——
         'ann_ex', 'dd', 'calmar', 'sharpe',
         # —— 组合自身口径（2026-09-16 引擎新增字段）——
@@ -69,6 +74,9 @@ def main():
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--only-new', action='store_true',
                     help='只补 `factor_metrics.csv` 里还没有的因子（增量；已算的跳过）')
+    ap.add_argument('--include_history', action='store_true',
+                    help='★ 也补**已移出当前库的历史编号**（从库文档取公式反向解析；'
+                         '默认只算 state.bank = 当前有效库）')
     ap.add_argument('--cost', type=float, default=0.004, help='往返成本（默认 0.004 = 引擎主用档）')
     ap.add_argument('--window', type=int, default=5)
     ap.add_argument('--panel_cache', default='off', choices=['off', 'use', 'build'])
@@ -85,19 +93,34 @@ def main():
     from factor_miner import evaluate_real, cs_rank
 
     # ---- 收集：**以 state.bank 为权威**（真正在库里的因子），文档提供 F 编号/IC 参照 ----
+    #   ★ 2026-09-17：`--include_history` 时**额外**补"库文档里有、bank 里没有"的编号（= 已移出）
     items = []
+    n_hist = 0
     for p in [x.strip() for x in a.pools.split(',') if x.strip()]:
         nodes = BF.load_bank_nodes(p)
         if not nodes:
             print('  [{}] state 不存在或无 bank -> 跳过'.format(p))
             continue
         ics = BF.load_archive_ic(p)
-        lib = {r['expr']: r for r in BF.parse_library(p)}
+        lib_rows = BF.parse_library(p)
+        lib = {r['expr']: r for r in lib_rows}
         for expr, nd in nodes.items():
             L = lib.get(expr) or {}
             items.append(dict(pool=p, no=L.get('no') or BF._fallback_name(expr), expr=expr,
-                              node=nd, ic_lib=L.get('ic'), ic_arc=ics.get(expr),
+                              node=nd, in_bank=1, ic_lib=L.get('ic'), ic_arc=ics.get(expr),
                               ae_lib=L.get('ann_ex'), gen=L.get('gen') or ''))
+        if not a.include_history:
+            continue
+        for r in lib_rows:
+            if r['expr'] in nodes:
+                continue                      # 在库里 ⇒ 上面已经加过（避免重复）
+            items.append(dict(pool=p, no=r.get('no') or BF._fallback_name(r['expr']),
+                              expr=r['expr'], node=None, in_bank=0,
+                              ic_lib=r.get('ic'), ic_arc=ics.get(r['expr']),
+                              ae_lib=r.get('ann_ex'), gen=r.get('gen') or ''))
+            n_hist += 1
+    if a.include_history:
+        print('  ★ --include_history：额外补 **{} 个已移出当前库的历史编号**'.format(n_hist))
     seen, uniq = {}, []
     for it in items:
         if it['expr'] in seen:
@@ -134,6 +157,19 @@ def main():
     for i, it in enumerate(uniq, 1):
         nm, expr, nd = BF._name_of(it), it['expr'], it['node']
         t1 = time.time()
+        if nd is None:
+            # ★ 历史编号：库里没有 Node ⇒ 从库文档的表达式文本**反向解析**
+            #   ⚠⚠ 必须**临时放开** `LLM_MAX_SIZE`：`parse_expr` 有一道节点数上限，超限时
+            #      **静默返回 None**（`load_bank_nodes` 的注释里就记着这个坑：全A F01 曾因超限返回 None ✗）
+            _cap = LE.LLM_MAX_SIZE
+            LE.LLM_MAX_SIZE = 10 ** 9
+            try:
+                nd = LE.parse_expr(expr)
+            finally:
+                LE.LLM_MAX_SIZE = _cap
+            if nd is None:
+                print('  [{}] **表达式反解失败**（跳过，不臆造）：{}'.format(nm, expr[:70]))
+                continue
         try:
             v = LE.eval_expr(nd, B, {})
             fac = cs_rank(pd.DataFrame(v, index=dates, columns=cols).astype('float64'))
@@ -157,7 +193,8 @@ def main():
             warn.append(nm)
         yr = rr.get('yr') or {}
         rows.append(dict(
-            name=nm, pool=it['pool'], gen=it['gen'], expr=expr, sign=sign,
+            name=nm, pool=it['pool'], in_bank=it.get('in_bank', 1),
+            gen=it['gen'], expr=expr, sign=sign,
             ic=rr['ic'], ic_doc=it['ic_ref'], ic_ir=rr['ic_ir'], ic_win=rr['ic_win'],
             ann_ex=rr['ann_ex'], dd=rr['dd'], calmar=rr['calmar'], sharpe=rr['sharpe'],
             ann_top=rr.get('ann_top'), dd_top=rr.get('dd_top'),

@@ -103,8 +103,11 @@ export interface LibraryDto {
   metricsFound?: boolean
   metricsInfo?: { found: boolean; path?: string; rows?: number }
   metricsMtime?: string | null
+  /** ★ 本池**在库且已测**的条数（与 `stateBank` 比才说明"表跑完了没"） */
   metricsMeasured?: number
-  /** ★ 只有当指标表对本池**条数恰好等于当前有效库**时才为 true —— 这时才敢标「历史」行 */
+  /** ★ 表里**已移出的历史编号**也算过指标的条数（`--include_history`；默认 0） */
+  metricsHistory?: number
+  /** ★ 敢不敢判"在不在库"：新格式（表带 `in_bank` 列）恒为 true；老格式需条数恰好相等 */
   inBankKnown?: boolean
   /** ★ 「在库里、但库文档没有编号」的因子（文档同步漏记的历史缺口，如实展示） */
   orphans?: Array<{ name: string; expr: string; ann_ex: number | null }>

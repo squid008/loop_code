@@ -74,7 +74,20 @@ def _aligned(it, B, dates, cols, close, cost, window):
     import loop_engine as LE
 
     nm = it['_nm']
-    v = LE.eval_expr(it['node'], B, {})
+    nd = it['node']
+    if nd is None:
+        # ★ 历史编号（已移出当前库）：库里没有 Node ⇒ 从库文档的公式**反向解析**
+        #   ⚠⚠ 必须临时放开 `LLM_MAX_SIZE` —— `parse_expr` 对节点数有上限，超限时**静默返回 None** ✗
+        _cap = LE.LLM_MAX_SIZE
+        LE.LLM_MAX_SIZE = 10 ** 9
+        try:
+            nd = LE.parse_expr(it['expr'])
+        finally:
+            LE.LLM_MAX_SIZE = _cap
+        if nd is None:
+            print('    [!] %s **表达式反解失败**（跳过，不臆造）：%s' % (nm, it['expr'][:60]))
+            return None, None, 1
+    v = LE.eval_expr(nd, B, {})
     fac = fm.cs_rank(pd.DataFrame(v, index=dates, columns=cols).astype('float64'))
     rr = fm.evaluate_real(fac, close, nm, cost=cost, window=window,
                           with_daily=True, with_ex=True)
@@ -562,6 +575,9 @@ def main():
                     choices=['core', 'strip', 'style', 'strip2', 'style+strip2', 'all'])
     ap.add_argument('--self-test', action='store_true',
                     help='★ 只做**恒等不变量自检**（不写任何文件）：拿"已知答案"的合成因子上验风格画像')
+    ap.add_argument('--include_history', action='store_true',
+                    help='★ 也给**已移出当前库的历史编号**出曲线（从库文档取公式反向解析；'
+                         '默认只算 state.bank = 当前有效库）')
     ap.add_argument('--cost', type=float, default=0.004)
     ap.add_argument('--window', type=int, default=5)
     ap.add_argument('--panel_cache', default='off', choices=['off', 'use', 'build'])
@@ -573,18 +589,35 @@ def main():
     os.makedirs(CURVE_DIR, exist_ok=True)
 
     items = []
+    n_hist = 0
     for p in [x.strip() for x in a.pools.split(',') if x.strip()]:
         nodes = BF.load_bank_nodes(p)
         if not nodes:
             continue
         ics = BF.load_archive_ic(p)
-        lib = {r['expr']: r for r in BF.parse_library(p)}
+        lib_rows = BF.parse_library(p)
+        lib = {r['expr']: r for r in lib_rows}
         for expr, nd in nodes.items():
             L = lib.get(expr) or {}
             items.append(dict(pool=p, no=L.get('no') or BF._fallback_name(expr), expr=expr,
                               node=nd, gen=L.get('gen') or '',
                               ic_ref=(ics.get(expr) if ics.get(expr) is not None else L.get('ic')),
                               ae_lib=L.get('ann_ex'), _nm=None))
+        if not a.include_history:
+            continue
+        # ★ 2026-09-17（用户："想看历史编号的费后指标/曲线"）：
+        #   库文档里有、bank 里没有 ⇒ **已移出当前库的历史编号** ⇒ 也给它出曲线 ✓
+        for r in lib_rows:
+            if r['expr'] in nodes:
+                continue
+            items.append(dict(pool=p, no=r.get('no') or BF._fallback_name(r['expr']),
+                              expr=r['expr'], node=None, gen=r.get('gen') or '',
+                              ic_ref=(ics.get(r['expr']) if ics.get(r['expr']) is not None
+                                      else r.get('ic')),
+                              ae_lib=r.get('ann_ex'), _nm=None))
+            n_hist += 1
+    if a.include_history:
+        print('  ★ --include_history：额外补 **%d 个已移出当前库的历史编号**' % n_hist)
     seen, uniq = set(), []
     for it in items:
         if it['expr'] in seen:

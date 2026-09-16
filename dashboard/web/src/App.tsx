@@ -474,8 +474,10 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
           <li>文件声明 = {fmt(lib.declaredCount)} —— <span>引擎同步的快照，可能落后</span></li>
         </ul>
         <div className="note">
-          行数比当前有效库多的原因：编号是累计的，而因子会被移出库（比如剥风格后发现它只是纯风格因子）。
-          带历史标记的行就是已不在当前库的编号；点编号可以看完整公式和各项指标。
+          {/* ★ 2026-09-17 用户要求：删掉"点编号可以看完整公式和各项指标"（历史行本来就没有指标，
+              再这么说会误导）✓ 文案合并成一句 */}
+          行数比当前有效库多的原因：编号是累计的，而因子会被移出库（比如剥风格后发现它只是纯风格因子），
+          带历史标记的行就是已不在当前库的编号。
         </div>
         {(lib.orphans ?? []).length > 0 && (
           <div className="note">
@@ -491,9 +493,15 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
             所以有效库比本表里在库的行数多 {lib.orphans?.length} 个。
           </div>
         )}
+        {(lib.metricsHistory ?? 0) > 0 && (
+          <div className="note">
+            另有 <b>{lib.metricsHistory}</b> 个已移出的历史编号也算过指标（跑参数带了
+            <code>--include_history</code>），这类行点开详情能看到费后指标，不再是空的。
+          </div>
+        )}
         {stale && (
           <div className="note">
-            指标表还没跑完（本池 {lib.metricsMeasured} / 有效库 {fmt(lib.stateBank)} 条），
+            指标表还没跑完（本池在库 {lib.metricsMeasured} / 有效库 {fmt(lib.stateBank)} 条），
             所以暂时不标历史。跑完 python tools/factor_metrics.py 即可对齐。
           </div>
         )}
@@ -520,7 +528,11 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
               <td className="mono">{f.gen}</td>
               <td>{f.family}</td>
               <td className="sum">{f.summary}</td>
-              <td><span className={f.inBank === false ? 'status hist' : 'status'}>{f.status}</span></td>
+              {/* ★ 历史行的**状态文案也要说实话** —— 明细行里写的还是"已入库"（当年入库时的记录，
+                  文件只增不改）⇒ 会被读成"还在库里" ✗ ⇒ 这里直接标"已移出当前库" ✓ */}
+              <td><span className={f.inBank === false ? 'status hist' : 'status'}>
+                {f.inBank === false ? '已移出当前库（历史）' : f.status}
+              </span></td>
               <td><button className="btn sm" onClick={() => setSel(f)}>详情</button></td>
             </tr>
           ))}
@@ -1031,9 +1043,10 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
             //   已移出的历史编号不在其中 ⇒ 没有费后指标（曲线同理，只覆盖当前库那 51 个）✓
             //   ⚠ 别只甩一个 `—` 让人以为"出错了/数据丢了" ✗
             <div className="dt-note">
-              这个编号没有统一口径指标：指标表和曲线都只覆盖<b>当前有效库</b>
-              （引擎 state.bank 里的因子）。本编号带<b>历史</b>标签 = 已移出当前库，
-              所以没有做费后重算 —— 数据没丢，是它当前不在库里。
+              这个编号还没有统一口径指标：默认只算<b>当前有效库</b>（引擎 state.bank 里的因子），
+              本编号带<b>历史</b>标签 = 已移出当前库。想看它的指标/曲线，跑一次
+              <code>python tools/factor_metrics.py --include_history</code> 与
+              <code>python tools/factor_curves.py --include_history --only-new</code> 即可补上。
             </div>
           )}
           <div className="dt-note">
