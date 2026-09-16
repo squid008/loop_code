@@ -187,7 +187,12 @@ export default function App() {
             <b className={mine && mine.freeGB !== null && mine.freeGB < 6 ? 'warn' : ''}>
               {mine?.freeGB !== null && mine?.freeGB !== undefined ? `${mine.freeGB} GB` : '—'}
             </b>
-            <small>{(mine?.enabled ?? []).length} 池参与</small>
+            {/* ★ 区分"真的在轮转"与"只是配了但调度器没跑"，避免与顶栏"空闲"自相矛盾✗ */}
+            <small>{mine?.running
+              ? `${(mine?.enabled ?? []).length} 池参与轮转`
+              : ((mine?.enabled ?? []).length
+                ? `${(mine?.enabled ?? []).length} 池已配置·未运行`
+                : '未配置')}</small>
           </span>
           <span className="rounds" title={`每池轮数（1~${mine?.roundsRange?.[1] ?? 200}）；一轮 = 每个启用的池各跑 1 代`}>
             轮数
@@ -332,17 +337,25 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
   const st = p.state
   const slot = mine?.byPool?.[p.key]
   const mining = !!slot?.mining                     // ★ 正在跑它这一代
-  const inRotation = !!slot?.enabled && !slot?.stopped   // ★ 参与轮转（下一轮会轮到）
+  // ★★★ 2026-09-16 修 BUG F：`inRotation` **必须**加"调度器在跑"这个前提！
+  //   原写法只看 `enabled` ⇒ 调度器停止后（`enabled` 仍保留上次的配置）⇒ 卡片**谎报"轮转中"**
+  //   且「启动本池」被禁用 ⇒ 用户看到"上写空闲、卡片却写已参与轮转"的**自相矛盾** ✗
+  //   ⇒ 语义拆分：`configured` = "已配置参与轮转"（意图）；`inRotation` = "此刻真的在轮转"（在跑）✓
+  const schedRunning = !!mine?.running
+  const configured = !!slot?.enabled && !slot?.stopped
+  const inRotation = schedRunning && configured
   const stopped = !!slot?.stopped || (slot != null && !slot.enabled)
   const isRunning = mining || p.running
   const cls = mining ? 'card run' : (inRotation ? 'card armed' : 'card')
-  const badge = mining ? '挖掘中' : (inRotation ? '轮转中' : (stopped ? '已停止' : '空闲'))
+  const badge = mining ? '挖掘中'
+    : (inRotation ? '轮转中'
+      : (configured ? '待启动' : (stopped ? '已停止' : '空闲')))
+  const dotColor = mining ? 'var(--ok)'
+    : (inRotation ? 'var(--sky)' : (configured ? 'var(--amber)' : 'var(--idle)'))
   return (
     <div className={cls}>
       <div className="card-h">
-        <span className="dot" style={{
-          background: mining ? 'var(--ok)' : (inRotation ? 'var(--sky)' : 'var(--idle)'),
-        }} />
+        <span className="dot" style={{ background: dotColor }} />
         <b>{p.label}</b>
         <span className="pid">{p.key === 'all' ? '全A' : p.key}</span>
         <span className="state">{badge}</span>
@@ -362,8 +375,11 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
         <button className="btn start sm" disabled={busy || inRotation} onClick={onStart}
                 title={inRotation
                   ? `「${p.label}」已在轮转里（下一轮就会轮到它）⇒ 无需操作`
-                  : `把「${p.label}」加入轮转：若调度器不在运行会自动重启 ✓`}>
-          {inRotation ? '已参与轮转' : '启动本池'}
+                  : (configured
+                    ? `「${p.label}」已配置参与轮转，但**调度器当前没在运行** ⇒ 点它会**自动重启调度器** ✓`
+                    : `把「${p.label}」加入轮转：若调度器不在运行会自动重启 ✓`)}>
+          {inRotation ? '已参与轮转'
+            : (configured ? '启动（调度器未运行）' : '启动本池')}
         </button>
         <button className="btn stop sm" disabled={busy || (stopped && !mining)} onClick={onStop}
                 title={stopped && !mining
