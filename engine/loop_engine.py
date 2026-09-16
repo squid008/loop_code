@@ -127,6 +127,44 @@ DEFAULT_CFG = dict(leaf_w={}, op_bias={}, depth=[2, 3, 4],
 # BARRA 连续风格11(barra.h5,行业哑不入叶) / 财报PIT as-of比率8(fa_pit.h5,按info_date无未来函数)
 from loop_fields import MF16, BARRA_LEAVES, FA_LEAVES, LEAVES, FIELDS
 
+# ★★★ 2026-09-16 新增「面板只读缓存」模式（`--panel_cache`，**默认 off ⇒ 与改造前逐位不变**）
+#   实测：面板 B = 4.42 GB 且**构造完成后只读**；而 Windows 是 spawn(无 fork) ⇒
+#   每个引擎进程各建一份。落成只读 memmap 后多进程共享同一批物理页（省内存 + 免重建）✓
+#   实现见 `engine/panel_cache.py`（含过期检测/只读保护 → 不会静默用旧面板）。
+PANEL_CACHE = 'off'
+
+
+def set_panel_cache(mode):
+    """切换面板缓存模式：`off`(默认, 现状) / `use`(必须命中) / `build`(构造并落盘)。
+
+    ★ 必须在 `run()` 之前调用（与 `set_mine_pool` 同理）：`base_fields()` 在 run 内首次被调用。
+    """
+    global PANEL_CACHE
+    m = (mode or 'off').strip().lower()
+    if m not in ('off', 'use', 'build'):
+        raise SystemExit('[--panel_cache] 非法取值 %r（可选: off/use/build）' % (mode,))
+    PANEL_CACHE = m
+    return PANEL_CACHE
+
+
+def set_mem_budget(lru_max=400, cache2_max=150, vreuse_cap_mb=2000.0):
+    """调「**每进程私有缓存**」的上限（**默认值 = 现状 ⇒ 不传就是旧行为**）。
+
+    ★ 为什么需要它：并行跑 N 个池时，**面板**可以靠 `--panel_cache=use` 跨进程共享，
+      但 `_LRU` / `cache2` / `VCACHE` 是**每进程私有**的（私有脏写，不能共享）⇒
+      它们才是"并行时的内存地板"。要把总占用压到某个数（如 ≤10 GB），
+      就得按 N 把这份预算切小 ✓
+    ★ 代价：缓存越小 ⇒ 越多的子树要**现场重算** ⇒ 每代变慢（时间换内存）。
+    """
+    global LRU_MAX, CACHE2_MAX, _VREUSE_CAP_MB
+    LRU_MAX = max(20, int(lru_max))
+    CACHE2_MAX = max(20, int(cache2_max))
+    _VREUSE_CAP_MB = max(0.0, float(vreuse_cap_mb))
+    print('[内存预算] 每进程私有缓存: LRU_MAX=%d 条 · cache2_max=%d 条 · VCACHE<=%.0f MB '
+          '(面板是否共享见 --panel_cache)' % (LRU_MAX, CACHE2_MAX, _VREUSE_CAP_MB), flush=True)
+    return LRU_MAX, CACHE2_MAX, _VREUSE_CAP_MB
+
+
 _BASE = None
 L1_STOCKS = 2000          # L1 粗筛抽样的股票数(越小越快, 但IC估计误差越大)
 L1_ROWS = None
@@ -146,11 +184,14 @@ _VREUSE_MB = [0.0]        # 已占用 MB(list 便于就地累加)
 _VREUSE_CAP_MB = 2000.0   # 上限 2GB; 超了就不再存(未命中者在去相关/去重处回退为现场 eval)
 
 
-def base_fields():
-    """返回 {name: (T,S) float32} 基础字段 + 日期/列"""
-    global _BASE
-    if _BASE is not None:
-        return _BASE
+def _build_panel_fresh():
+    """从 h5 **现场构造**面板（原 `base_fields()` 的前半段，2026-09-16 为缓存功能**逐字搬运**）。
+
+    ★ 为什么单独抽出来：`--panel_cache=build` 需要"构造一份全新的"来落盘；
+      测试也要拿它跟"缓存里读出来的"逐字段对拍（`tools/_test_panel_cache.py`）。
+    ★★ **本函数的任何改动都会让面板缓存自动失效**（`panel_cache.code_sha1()` 折了它的源码 SHA1）
+      —— 这是刻意的：否则改了构造逻辑却用旧缓存 ⇒ **静默改变结果** ✗
+    """
     P = load_panel(FIELDS)
     P = prepare(P)
     close = P['close'].astype('float64')
@@ -195,6 +236,45 @@ def base_fields():
         B['true_range'] = (np.maximum(
             rng, np.maximum(np.abs(h - pc), np.abs(l - pc))) / pc).astype(np.float32)
     del pc, rng
+    return B, dates, cols, close
+
+
+# ★ 面板缓存的有效性 = 「构造代码」的指纹（惰性求值：只在真的用缓存时才算）
+_PANEL_CODE_SHA1 = None
+
+
+def _panel_sha1():
+    """`_build_panel_fresh` 的源码 SHA1（面板缓存靠它感知"构造逻辑改过了"）。"""
+    global _PANEL_CODE_SHA1
+    if _PANEL_CODE_SHA1 is None:
+        import panel_cache as _pc
+        _PANEL_CODE_SHA1 = _pc.code_sha1(_build_panel_fresh)
+    return _PANEL_CODE_SHA1
+
+
+def base_fields():
+    """返回 {name: (T,S) float32} 基础字段 + 日期/列"""
+    global _BASE
+    if _BASE is not None:
+        return _BASE
+    # ★★★ 2026-09-16「面板只读缓存」（`--panel_cache`，**默认 off ⇒ 与改造前逐位不变**）：
+    #   面板 4.42 GB 且构造后只读 ⇒ 落成只读 memmap 后多进程共享同一批物理页（spawn 下也能省内存）。
+    #   · `use`   = 必须命中；缺失/过期**直接报错**（绝不偷偷重建，更不会拿旧面板算新结果）
+    #   · `build` = 现场构造一份并落盘，随后继续用（结果与 off **逐位相同**）
+    #   ⚠ 只有"面板从哪来"变了；`B_sub` / `L1_POOL_MASK` 等派生逻辑**保持逐字不变** ✓
+    if PANEL_CACHE == 'off':
+        B, dates, cols, close = _build_panel_fresh()
+    else:
+        import panel_cache as _pc
+        if PANEL_CACHE == 'use':
+            B, dates, cols, _cv, _man = _pc.load(_panel_sha1())
+            # close 只有 0.14 GB，**拷一份**避免"pandas 直接操作只读块"的一类意外
+            close = pd.DataFrame(np.array(_cv), index=pd.Index(dates), columns=cols)
+            print('[面板缓存] 只读映射命中: %d 字段 / %.2f GB -> %s'
+                  % (len(B), _pc.size_gb(B), _pc.CACHE_DIR), flush=True)
+        else:
+            B, dates, cols, close = _build_panel_fresh()
+            _pc.save(B, dates, cols, close.values, _panel_sha1())
     # ★L1 子面板: 粗筛不需要全样本(瓶颈是内存带宽, 不是计算)。
     #   时间只取 START 之后 + 截面随机抽样 -> 数据量降到 ~1/4, 实测整体提速 3~4 倍。
     #   L1 只是排序用, 抽样误差可接受; L2 精筛仍用全样本。
@@ -2932,6 +3012,22 @@ if __name__ == '__main__':
     ap.add_argument('--n', type=int, default=600)
     ap.add_argument('--gen_only', action='store_true',
                     help='dry-run: 只跑候选生成段验证产量, 不跑L1/L2/不写状态')
+    ap.add_argument('--panel_cache', choices=['off', 'use', 'build'], default='off',
+                    help='面板只读缓存(2026-09-16, 默认 off = 现状): 把 4.42GB 的面板落成'
+                         '【只读 memmap】(engine/_panel_cache/) -> 多个引擎进程共享同一批物理页'
+                         '(Windows spawn 下也能省内存), 且免去每次约 14.6s 的 h5 重建。'
+                         'off=现场构造(与改造前逐位相同); use=读缓存(缺失/过期**直接报错**, '
+                         '不偷偷重建); build=现场构造并落盘后继续(结果与 off 逐位相同)。'
+                         '[!] 缓存与池无关, 过期检测 = 来源 h5 的(size,mtime_ns) + 构造函数源码 SHA1')
+    # ★ 2026-09-16「每进程私有缓存预算」（默认 = 现状 ⇒ 不传就是旧行为）
+    #   并行跑 N 个池时，面板可共享、这三份缓存不能 ⇒ 它们是并行时的内存地板。
+    ap.add_argument('--lru_max', type=int, default=400,
+                    help='L1 子树缓存(条数)上限, 防 L1 段 OOM(默认 400 = 现状)。'
+                         '并行时按内存预算调小(时间换内存: 越小越多子树现场重算)')
+    ap.add_argument('--cache2_max', type=int, default=150,
+                    help='去相关/去重阶段 cache2(条数)上限(默认 150 = 现状)')
+    ap.add_argument('--vreuse_cap_mb', type=float, default=2000.0,
+                    help='跨阶段复用缓存 VCACHE 上限 MB(默认 2000 = 现状; 仅 --reuse_v=1 时生效)')
     ap.add_argument('--min_ic', type=float, default=0.02)
     ap.add_argument('--min_calmar', type=float, default=0.5)
     ap.add_argument('--min_stab', type=float, default=0.30)
@@ -3133,4 +3229,7 @@ if __name__ == '__main__':
                          '(默认2: 3段中≥2段为正, 拦"靠单段行情撑全样本"候选)')
     _args = ap.parse_args()
     set_mine_pool(_args.mine_pool)   # ★必须在 run() 之前: 路径后缀 & L1 池掩码都在 run 内部生效
+    set_panel_cache(_args.panel_cache)   # ★同上: base_fields() 在 run() 内部首次被调用
+    # ★ 2026-09-16：把「私有缓存预算」落到模块全局（默认值与改造前完全相同 ⇒ 逐位不变）
+    set_mem_budget(_args.lru_max, _args.cache2_max, _args.vreuse_cap_mb)
     run(_args)

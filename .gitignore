@@ -11,6 +11,11 @@ _commit_msg.txt
 *.npy
 *.pkl
 
+# ★ 面板只读缓存（2026-09-16, --panel_cache；由 tools/build_panel_cache.py 重建）
+#   ⚠ 必须**整目录**忽略：`*.npy` 只盖住数据文件，`manifest.json`/`cols.json` 会漏进来 ✗
+engine/_panel_cache/
+engine/_panel_cache.tmp/
+
 # 运行产物 / 图形 / 日志
 *.png
 *.log

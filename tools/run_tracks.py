@@ -21,6 +21,21 @@
   python tools/run_tracks.py --pools=all --inject_pools=300,500,1000   # 显式指定注入
   python tools/run_tracks.py --pools=all --inject_pools=none           # 关掉注入
 
+★★★ 调度模式开关（2026-09-16 新增；**默认 rotate = 现状，旧行为一行不改**）：
+  python tools/run_tracks.py --pools=300,500,1000 --exec_mode=parallel \
+         --max_parallel=3 --mem_per_engine=3.0 --panel_cache=use
+  · `--exec_mode=rotate`（默认）= 单调度器 + 池轮转（同时 1 个引擎；v1.3.0 起）
+  · `--exec_mode=parallel`      = **有界并行**（同时最多 `--max_parallel` 个，其余排队）
+    —— 实现是**独立模块** `tools/parallel_runner.py`（本文件只"分叉 + 透传"）
+  · `--max_parallel=N`   并行上限（默认 3）· `--mem_per_engine=G` 每引擎内存预算（默认 3.0）
+  · `--panel_cache=use`  ★ 强烈建议配合并行使用：把 4.42 GB 面板落成**只读 memmap**，
+    多进程**共享同一批物理页**（否则 N 个引擎 = N × 4.42 GB ⇒ 必爆）
+    ⇒ 先构建一次（**与池无关，所有池共用**）：`python tools/build_panel_cache.py`
+  · ⚠ 想压总内存就再调"每进程私有缓存"（面板可共享，这三份不能）：
+    `--engine_arg=--lru_max=120 --engine_arg=--vreuse_cap_mb=600`
+  · ★★ 加引擎参数请用 **`--engine_arg=`（追加）**；`--extra=` 是**整体替换**默认那组参数
+    （会连 `--pool_obs/--min_pool_calmar/--pool_gate_or_all` 一起丢掉 ✗，只留给 A/B 覆盖实验用）
+
  ★★ `--no_global`（2026-09-16 新增）：**跳过一轮结束后的"全局收尾"**。
     收尾两项（`build_facs.py --only-new` + `cross_pool_review.py`）是**全局动作** ——
     尤其跨池审查必须"看全所有池"才能去重（见下方 L332 注释）⇒
@@ -285,6 +300,21 @@ def main():
     #     ⇒ 所以：**池驱动一律加 `--no_global`**；全局收尾由**单独一次**调用完成
     #       （看板「收尾审查」按钮 / 或 `run_tracks.py --pools=... --rounds=0`）✓
     no_global = False
+    # ★★★ 2026-09-16 新增「调度模式」开关（**默认 rotate = 现状，一行不改**）：
+    #   rotate   = 单调度器 + 池轮转（同时只 1 个引擎；v1.3.0 起）
+    #   parallel = **有界并行**（同时最多 N 个引擎，其余排队）⇒ **委托**给独立模块
+    #              `tools/parallel_runner.py`（本文件只做"分叉 + 透传"，不塞逻辑）
+    #   ★ 为什么现在能并行：实测**单引擎只吃 1 个核**（等效核 0.99）⇒ 瓶颈是内存不是 CPU；
+    #     而 `--panel_cache=use` 把 4.42 GB 面板落成**只读 memmap** ⇒ 多进程共享同一批物理页 ✓
+    exec_mode = 'rotate'
+    max_parallel = 3          # 并行上限（仅 parallel 模式）
+    mem_per_engine = 3.0      # 每引擎内存预算 GB（仅 parallel 模式；不足就排队等）
+    panel_cache = 'off'       # 透传给引擎：off(默认,现状) / use / build（见 tools/build_panel_cache.py）
+    # ★★ 2026-09-16 新增 `--engine_arg=...`（可重复）：**追加**到默认 extra。
+    #   为什么需要：`--extra=` 是"**整体替换**"默认那组引擎参数 ⇒ 一旦用它加个小参数，
+    #   就会把 `--pool_obs --min_pool_calmar --pool_gate_or_all ...`（池内判定必需）一起丢掉 ✗✗
+    #   ⇒ 加参数请用 `--engine_arg=`；`--extra=` 保留给"整组覆盖"的 A/B 实验场景 ✓
+    engine_args = []
     # ★★ 池内挖掘的**必要参数组**（2026-09-13 实测；不传 = 白跑一整夜）
     #   300/500 gen6~8 六代全部 `fail_calmar = 1.000`（**100%** 因全A Calmar 不足被砍），
     #   B角原话:「L2中100%因Calmar不足(信号弱)」。根因：我只传了 `--pool_obs`，
@@ -380,9 +410,21 @@ def main():
             dry = True
         elif a == '--no_global':
             no_global = True
+        elif a.startswith('--exec_mode='):
+            exec_mode = a.split('=', 1)[1].strip().lower()
+        elif a.startswith('--max_parallel='):
+            max_parallel = max(1, int(a.split('=', 1)[1]))
+        elif a.startswith('--mem_per_engine='):
+            mem_per_engine = float(a.split('=', 1)[1])
+        elif a.startswith('--panel_cache='):
+            panel_cache = a.split('=', 1)[1].strip().lower()
         elif a.startswith('--extra='):
             extra = [x for x in a.split('=', 1)[1].split() if x]
+        elif a.startswith('--engine_arg='):
+            engine_args += [x for x in a.split('=', 1)[1].split() if x]
 
+    if engine_args:                      # ★ 追加式（不受参数书写顺序影响）
+        extra = extra + engine_args
     log('=' * 76)
     log('多池轨道驱动: 池={}  每池 {} 轮  n={} l2={}  dry={}'.format(pools, rounds, n, l2, dry))
     log('透传引擎参数: {}'.format(' '.join(extra)))
@@ -405,6 +447,14 @@ def main():
         log('     ⚠ 只给 `all` 轨道注入（池轨道的价值是"给式子打池内标签"，注入全A 库会让它无产出）；'
             '`--inject_pools=none` 可关。')
     log('=' * 76)
+    # ★★★ 2026-09-16：**调度模式分叉**（默认 rotate ⇒ 下面的轮转逻辑与改造前逐字一致）★
+    #   并行语义（队列/内存护栏/收尾）全部在 `tools/parallel_runner.py` 里，本文件不塞逻辑。
+    if exec_mode == 'parallel':
+        import parallel_runner as _PR
+        return _PR.run(pools=pools, rounds=rounds, n=n, l2=l2, extra=extra,
+                       inject_spec=inject_spec, no_global=no_global,
+                       max_parallel=max_parallel, mem_per_engine=mem_per_engine,
+                       panel_cache=panel_cache, dry=dry)
     if dry:
         log('（--dry：只列计划，不执行）')
         return 0
@@ -467,6 +517,9 @@ def main():
             #          ⇒ 被旧正则**误认成"在跑 4 个池"**（BUG H，已在 `pools.py` 修）
             #   ⇒ 修：统一传参。`set_mine_pool('all')` 是**幂等**的（等于不动）⇒ 行为不变 ✓
             cmd.append('--mine_pool={}'.format(p))
+            # ★ 2026-09-16：面板只读缓存（默认 off ⇒ **命令行与旧版逐字相同**，旧行为零变化）
+            if panel_cache != 'off':
+                cmd.append('--panel_cache={}'.format(panel_cache))
             log('[START] pool={} gen={} seed={} -> {}'.format(
                 p, gen, seed, os.path.basename(logf)))
             t0 = time.time()
