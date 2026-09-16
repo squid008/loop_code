@@ -133,8 +133,17 @@ chk('极窄屏**优雅降级**（先省次要文字，而不是折行或横滑�
 chk('★ 相位卡**定宽 218px**（= KPI 卡常见宽度 (1136−4×12)/5 ⇒ 与下面 0/5 卡左右对齐）',
     re.search(r'\.ctrls \.phase \{ width: 218px', css) is not None,
     '用 min-width 不够 —— 内容变宽时卡片仍会变宽 ✗')
-chk('★ 内存卡**定宽 292px**（够放"运行中"最宽内容 ⇒ 开始挖掘时卡片不变宽）',
-    re.search(r'\.ctrls \.res \{ width: 292px', css) is not None)
+chk('★ 内存卡**定宽 236px**（文案简化后收窄；仍按"运行中"最宽内容定 ⇒ 开始挖掘时不变宽）',
+    re.search(r'\.ctrls \.res \{ width: 236px', css) is not None)
+# ★★ 2026-09-17 用户第二批：「`并行×1（自动） · 共享` 改成 `并行 · 共享`」
+chk('★ 内存卡模式文案**简化成"并行 · 共享"**（并行数/是否自动移出常显位）',
+    re.search(r"\(mine\.execMode === 'parallel' \? '并行' : '轮转'\)", src) is not None
+    and "' · 共享'" in src)
+# ★★ 用户之问：「挖掘中 500 gen17 是 500 池在挖的意思吗？我不是并行了吗？」
+chk('★ 并行时相位卡**不显示单个池名**（只显示 轮次；否则会被读成"只跑一个池"✗）',
+    'mine.execMode !== ' in src and 'mine?.running && mine.execMode !== ' in src)
+chk('★ 相位卡鼠标提示**逐池列出**"正在跑：<池> · gen <代数>"',
+    '正在跑：${x.pool}' in src and 'runningList' in src)
 chk('★ 内存卡的"模式"格**永远渲染**（未运行时显示占位 ⇒ 卡宽恒定且不留空白）',
     "'mode' + (mine?.running ? '' : ' off')" in src and '未运行' in src)
 chk('相位卡文案**压缩**（218px 塞得下；完整信息留在鼠标提示里）',

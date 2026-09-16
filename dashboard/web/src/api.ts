@@ -223,6 +223,8 @@ export interface MineStateDto {
   engines: { pid: number; pools: string[] | null; memMB?: number }[]
   curPool: string | null
   curGen: number | null
+  /** ★ 每个**正在跑**的池 + 它这一代的代数（来自控制文件 `active`；并行时会有多条） */
+  active?: Array<{ pool: string; gen: number | null; pid: number | null }>
   round: number | null
   rounds: number | null
   roundText: string | null

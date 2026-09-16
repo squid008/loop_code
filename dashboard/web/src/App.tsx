@@ -157,6 +157,21 @@ export default function App() {
   }, [auto, interval, loadAll])
 
   const curLib = useMemo(() => libs.find(l => l.pool === pool) ?? null, [libs, pool])
+  // ★★ 2026-09-17（用户要求相位卡的鼠标提示**逐池列出**"正在跑：300 · gen 54"）：
+  //   优先用控制文件里的 `active`（调度器每起一个引擎就写 `{pool, gen, pid}` ⇒ 最准）✓
+  //   拿不到时退化为"在跑的池名（不带代数）"，绝不编造代数 ✓
+  const runningList = useMemo(() => {
+    // ⚠ 权威是**活进程表**（`runningPools`，由进程扫描得出）；`active` 只用来补**代数** ——
+    //   实测：控制文件里的 `active` 会**残留已被停掉的池**（300 明明在 stopped 里却还列着"正在跑" ✗）
+    //   ⇒ 反过来"只信 active"就会在提示里报一个**没在跑**的池 ✗
+    const live = mine?.runningPools ?? []
+    const genOf: Record<string, number | null> = {}
+    for (const a of (mine?.active ?? [])) {
+      if (a && a.pool) genOf[String(a.pool)] = a.gen ?? null
+    }
+    if (live.length) return live.map(p => ({ pool: p, gen: p in genOf ? genOf[p] : null }))
+    return []
+  }, [mine])
   const runColor = status?.anyRunning ? 'var(--ok)' : 'var(--idle)'
 
   return (
@@ -181,13 +196,24 @@ export default function App() {
               （完整信息仍在鼠标提示里 ✓） */}
           <span className={`phase ${mine?.phase ?? 'idle'}`} title={
             `当前状态：${mine?.phaseLabel ?? '—'}\n` +
-            (mine?.curText ? `正在跑：${mine.curText}\n` : '') +
+            // ★ 逐池列出（并行时会有多个）—— 原来只显示**最后一个**启动的池 ⇒ 看着像"只跑一个"✗
+            (runningList.length
+              ? runningList.map(x => `正在跑：${x.pool}${x.gen !== null ? ` · gen ${x.gen}` : ''}`)
+                  .join('\n') + '\n'
+              : '') +
             (mine?.roundText ? `${mine.roundText}，共 ${mine?.rounds ?? '?'} 轮\n` : '') +
             `参与的池：${(mine?.enabled ?? []).join(',') || '无'}\n` +
+            ((mine?.stopped ?? []).length ? `已停的池：${(mine?.stopped ?? []).join(',')}\n` : '') +
             (mine?.updated ? `状态更新于 ${mine.updated}` : '')}>
             <i className="pdot" />
             <b>{mine?.phaseLabel ?? '—'}</b>
-            {mine?.curText && <em>{compactCur(mine.curText)}</em>}
+            {/* ★★ 2026-09-17（用户："挖掘中 500 gen17 是 500 池在挖的意思吗？我不是并行了吗？
+                300、500 并行挖的话，那它就显示 挖掘中 1/50 不就行了"）
+                ⇒ **并行模式不显示单个池名**（那只是最后启动的那个，会让人以为只跑一个 ✗）；
+                   逐池明细移到鼠标提示；**轮转模式**仍然显示当前池（那时确实只跑一个）✓
+                ⚠ 而且只在**真在跑**时才显示 —— 否则会拿 `curPool` 的**陈旧值**当现状 ✗ */}
+            {mine?.running && mine.execMode !== 'parallel' && mine.curText
+              && <em>{compactCur(mine.curText)}</em>}
             {mine?.roundText && <small>{compactRound(mine.roundText)}/{mine?.rounds ?? '?'}</small>}
           </span>
           {/* ★★ 2026-09-16（用户："顶上 19.4 GB 5 池已配置这里的鼠标提示还有引号…干脆把这里的提示
@@ -201,10 +227,12 @@ export default function App() {
             {/* ★ 当前**实际**在跑的模式（以进程命令行为准，不是 UI 上选的那个）
                 ★★ 2026-09-17：**这一格永远渲染** —— 否则"开始挖掘"时卡片会突然变宽 ✗
                 （未运行时显示"未运行"占位 ⇒ 卡宽恒定、也不留空白）✓ */}
+            {/* ★★ 2026-09-17（用户："`并行×1（自动） · 共享` 改成 `并行 · 共享`，这样卡片可以缩短点"）
+                ⇒ 只留模式名 + 共享；**并行数/是否自动**属于"配置口径"（在「配置/口径」页有），
+                  挂在常显位置纯属噪音 ⇒ 去掉，卡片宽度也随之收窄 ✓ */}
             <em className={'mode' + (mine?.running ? '' : ' off')}>
               {mine?.running
-                ? (`${mine.execMode === 'parallel'
-                    ? `并行×${mine.maxParallel}${mine.autoParallel ? '（自动）' : ''}` : '轮转'}`
+                ? ((mine.execMode === 'parallel' ? '并行' : '轮转')
                    + (mine.panelCache !== 'off' ? ' · 共享' : ''))
                 : '未运行'}
             </em>

@@ -301,6 +301,11 @@ def state():
                        'memMB': p.get('memMB')} for p in sched],
         'engines': [{'pid': p['pid'], 'pools': p.get('pools'), 'memMB': p.get('memMB')} for p in engs],
         'curPool': cur, 'curGen': c.get('curGen'),
+        # ★★ 2026-09-17（用户："300、500 池并行挖的话…鼠标放上去就显示 正在跑：300·gen54 /
+        #   正在跑：500·gen17"）⇒ 需要**每个在跑的池各自的代数** ⇒ 直接透传控制文件里的 `active`
+        #   （调度器每启动一个引擎就写一条 `{pool, gen, pid}` —— 这是**最准**的来源，只扣字段不加逻辑）✓
+        'active': [{'pool': a.get('pool'), 'gen': a.get('gen'), 'pid': a.get('pid')}
+                   for a in (c.get('active') or []) if isinstance(a, dict) and a.get('pool')],
         'round': c.get('round'), 'rounds': c.get('rounds'),
         'roundText': (('第 %s 轮' % c.get('round')) if c.get('round') else None),
         'curText': (('%s · gen %s' % (cur, c.get('curGen'))) if cur else None),

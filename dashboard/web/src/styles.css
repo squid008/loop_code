@@ -309,7 +309,7 @@ tr.outbank .fcode { color: var(--mut); }
 .ctrls .phase { width: 218px; overflow: hidden; }
 .ctrls .phase em { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctrls .phase small { margin-left: auto; }          /* 轮次靠右 ⇒ 中间内容变化时位置稳定 ✓ */
-.ctrls .res { width: 292px; justify-content: space-between; overflow: hidden; }
+.ctrls .res { width: 236px; justify-content: space-between; overflow: hidden; }
 .ctrls .res .mode { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctrls .res .mode.off { color: var(--mut); }        /* 未运行时占位（保持卡宽不变、又说明状态）✓ */
 .ctrls .btn.start { min-width: 116px; }             /* "一键启动全部" / "已在运行" 宽度不同 ⇒ 钉死 */
