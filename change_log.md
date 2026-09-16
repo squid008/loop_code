@@ -15,6 +15,35 @@
 
 ---
 
+## [1.16.1] — 2026-09-17
+
+> 主题：**两个端到端测试在"有人正在挖掘"时必须跳过**（它们会动同一个 `_control.json`）
+
+### 现场（实测踩到，而且是**在用户正在挖的时候**）
+用户此刻正在跑真实调度器（`run_tracks.py --pools=500 … --auto_parallel=1` + 两个引擎）。
+跑全量回归时：
+- `_test_parallel_runner.py` **误报失败 3 项**（`B4/B6 本次 [START] 数=1`）—— 它的 `_control.json`
+  被**线上调度器**同时读写/改掉 ⇒ 它自己那两个 `--gen_only` 池压根没起来 ✗
+- ⚠⚠ **更危险**：这个测试结束时会**还原测试前的 ctl 快照** ⇒ 会把用户**刚改的 enabled/stopped 改回去** ✗
+  （`_test_dynamic_add.py` 同理 —— 两者都读写**同一个** `ai_test/_tracks/_control.json`）
+
+### 修法
+两个测试在**动 ctl 之前**先检查 `running` / `active`：有人在挖就**跳过**（rc=0，并打印清楚原因）✓
+```python
+_c0 = json.load(io.open(CTL, encoding='utf-8'))
+if _c0.get('running') or (_c0.get('active') or []):
+    print('[SKIP] 检测到正在运行的调度器/引擎 ⇒ 本测试会动 `_control.json`，跳过 ✓'); return 0
+```
+⚠ **踩坑（第一版没生效）**：写成 `try: ctl = RT.read_ctl() except Exception: ctl = {}` —— 该文件
+**并没有导入 `run_tracks`**（它只读源码文本做静态断言）⇒ `NameError` 被 `except` **静默吞掉**
+⇒ 判定恒为"没人跑" ⇒ 跳过失效 ✗（"兜底 `except` 吞掉真错"的经典案例）⇒ 改为直接读文件 ✓
+
+### 验证
+- 有人在挖时：两个测试都打印 `[SKIP] … 跳过 ✓` 且 rc=0 ✓ · **全量回归 23/23** ✓
+- 没人在挖时行为不变（快照/还原 + 真正的并行断言）✓
+
+---
+
 ## [1.16.0] — 2026-09-17
 
 > 主题：**修"很多风格剥后是 `—`"**（真 bug：中性化样本含 NaN ⇒ 整组被污染）+ 顶栏两张卡**定宽**

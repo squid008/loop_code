@@ -117,6 +117,22 @@ def main():
     if '--quick' in sys.argv[1:]:
         print('  [SKIP] --quick')
         return _report()
+    # ★★ 2026-09-17（实测踩到）：**真有人在挖时必须跳过** ——
+    #   本测试会**快照/还原 `_control.json`**，而线上调度器读写的**就是同一个文件** ⇒
+    #   ① 会误报失败（B4/B6 "[START] 数=1"：ctl 被线上调度器改掉/抢走）
+    #   ② ⚠ **更危险**：结束时还原快照 会把用户刚改的状态（enabled/stopped）**改回去** ✗
+    #   ⚠ 别用 `try: ctl = RT.read_ctl() except: {}` —— 本文件**没有导入 run_tracks**（它只读源码文本），
+    #     `NameError` 会被 `except` 吞掉 ⇒ 判定恒为"没人跑" ⇒ 跳过失效 ✗（实测踩到）
+    try:
+        _c0 = json.load(io.open(CTL, encoding='utf-8'))
+    except Exception:
+        _c0 = {}
+    if _c0.get('running') or (_c0.get('active') or []):
+        print('  [SKIP] 检测到**正在运行的调度器/引擎**（%s）⇒ 本测试会动 `_control.json`，'
+              '为避免干扰与误报，直接跳过 ✓'
+              % ('running=true' if _c0.get('running')
+                 else 'active=%d 个引擎在跑' % len(_c0.get('active') or [])))
+        return _report()
     before = snapshot()
     # ★ driver 日志是**跨次累积**的（里面有历史 [START]/[END]）⇒ 必须先记下"本次开始前的行数"，
     #   只分析**本次新增**的片段（否则会把历史串行记录当成本次的 → 断言必然误判 ✗）

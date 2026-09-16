@@ -56,6 +56,15 @@ def rlog():
 
 
 def main():
+    # ★★ 2026-09-17：与 `_test_parallel_runner.py` 同因 —— **真有人在挖就跳过**（共用同一个 `_control.json`）✗
+    try:
+        _c0 = RT.read_ctl()
+    except Exception:
+        _c0 = {}
+    if _c0.get('running') or (_c0.get('active') or []):
+        print('  [SKIP] 检测到**正在运行的调度器/引擎** ⇒ 本测试会动 `_control.json`，跳过 ✓')
+        print('★★ 运行期加池测试跳过（有人在挖）')
+        return 0
     raw_before = open(CTL, 'rb').read() if os.path.isfile(CTL) else None
     before = sha(CTL)
     if os.path.isfile(LOG):
