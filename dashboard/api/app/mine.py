@@ -312,6 +312,7 @@ def stop(pool=None, **kw):
         if c.get('curPool') == pool:
             _seen = {x['pid'] for x in _targets}
             _targets += [x for x in engines() if x['pid'] not in _seen]
+        _was_mining = bool(_targets)          # ★ 它当时是否在跑（以“有无目标进程”为准）✓
         for p in _targets:
             r = subprocess.run(['taskkill', '/PID', str(p['pid']), '/T', '/F'],
                                capture_output=True, text=True, encoding='utf-8', errors='replace',
@@ -324,13 +325,16 @@ def stop(pool=None, **kw):
         if ctl().get('curPool') == pool:
             left += [x for x in engines() if x['pid'] not in {y['pid'] for y in left}]
         en = [x for x in (c.get('enabled') or core.POOL_KEYS) if x != pool]
+        # ★ 文案按"它当时是否在跑"区分 —— 没在跑却说"杀掉了当前那一代"会误导 ✗
+        _how = ('① 从轮转中移除 ② 结束它当前那一代（该代作废，下次重跑；state 是原子写 ⇒ 不会坏数据）'
+                if _was_mining else
+                '从轮转中移除（它当前没在跑，所以只影响后续轮次）')
         return {'ok': not left, 'scope': 'pool:%s' % pool, 'killed': killed,
                 'stillRunning': [{'pid': p['pid'], 'kind': 'engine', 'pools': p.get('pools')} for p in left],
-                'note': ('已单独停止池 **%s**：① 从轮转中移除 ② 杀掉它当前那一代（该代作废、'
-                         'state 是原子写 ⇒ 不会坏数据）⇒ **其他池不受影响** ✓'
-                         '%s' % (pool, '；⚠ 它本来是最后一个启用的池 ⇒ 调度器已无池可跑、'
-                                       '将自行退出（若还想要它，点「启动本池」会自动重启调度器）'
-                                       '✓' if not en else ''))}
+                'note': ('已停止池 %s：%s ⇒ 其他池不受影响 ✓'
+                         '%s' % (pool, _how, '；⚠ 它本来是最后一个启用的池 ⇒ 调度器已无池可跑、'
+                                              '将自行退出（若还想要它，点「启动本池」会自动重启调度器）'
+                                              '✓' if not en else ''))}
 
     # ★ 全部停：标记 stopAll + 杀所有引擎 ⇒ **确保收尾一定发生** ✓
     #   ⚠ 2026-09-16 修 BUG C/D：

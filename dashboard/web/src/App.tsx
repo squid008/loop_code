@@ -419,19 +419,22 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
       </div>
       {/* 按钮不再用 disabled 悄悄禁用 —— 点了总会给明确反馈 */}
       <div className="card-a">
-        <button className="btn start sm" disabled={busy || inRotation} onClick={onStart}
-                title={inRotation
-                  ? `${p.label} 已在轮转中，下一轮就会轮到它`
-                  : (configured
-                    ? `${p.label} 已经配置好了，但调度器当前没在运行。点一下会重新启动调度器`
-                    : `把 ${p.label} 加入轮转。如果调度器没在运行，会自动启动`)}>
-          {inRotation ? '已参与轮转'
-            : (configured ? '启动（调度器未运行）' : '启动本池')}
+        <button className="btn start sm" disabled={busy || configured} onClick={onStart}
+                title={configured
+                  ? `${p.label} 已在轮转里（下一轮就会轮到它）`
+                  : `把 ${p.label} 加入轮转。如果调度器没在运行，会自动启动`}>
+          {configured ? '已参与轮转' : '启动本池'}
         </button>
-        <button className="btn stop sm" disabled={busy || !mining} onClick={onStop}
-                title={mining
-                  ? `停用 ${p.label}：把它移出轮转，并结束它当前那一代。其他池不受影响`
-                  : `${p.label} 当前没有在跑，无需停止`}>
+        {/* ★★★★ 2026-09-16 修（用户要求）：「停止本池」= **把它从轮转里剔除**，
+            不管它此刻是否正在跑都该能做 —— 否则用户得"挨个点停止才会轮到想停的池子" ✗
+            ⇒ `disabled = busy || !configured`（只要"在轮转里"就可点）✓
+            ⇒ 它在跑 ⇒ 顺带杀掉当前那一代；没在跑 ⇒ 只从轮转移除 ✓ */}
+        <button className="btn stop sm" disabled={busy || !configured} onClick={onStop}
+                title={!configured
+                  ? `${p.label} 已经不在轮转里了`
+                  : (mining
+                    ? `停止 ${p.label}：从轮转中移除，并结束它当前那一代。其他池不受影响`
+                    : `把 ${p.label} 从轮转中移除（它当前没在跑，所以只影响后续轮次）`)}>
           停止本池
         </button>
       </div>
