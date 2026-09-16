@@ -71,20 +71,20 @@ export default function App() {
     const label = pools.length ? pools.join(' + ') : '全部池'
     if (!window.confirm(
       `确定启动挖掘？\n\n参与轮转的池：${label}\n每池轮数：${rounds}\n\n` +
-      `✓ 现在只有 **1 个调度器进程**，按**轮转**跑各池（每轮每池各 1 代）\n` +
-      `   ⇒ ★ 内存只 1 份（约 ${mine?.gbPerEngine ?? 9} GB）而不是每池一份 ✓\n` +
-      `✓ ★ **每轮结束自动收尾**（facs 落地 + 跨池审查 + 精选池），不用你点 ✓\n` +
-      `⚠ 一轮 ≈ 每池各 1 代；整轮时长取决于最慢的池。\n` +
-      `⚠ 正在跑的那一代若被停会作废（state 是原子写 ⇒ 不会坏数据），下次重跑。`
+      `会用一个调度器依次跑这些池，每轮每个池各跑 1 代。\n` +
+      `内存只占一份（约 ${mine?.gbPerEngine ?? 9} GB），不再是每个池一份。\n` +
+      `每轮结束会自动做收尾审查（因子值落地、跨池审查、精选池），不用手动点。\n\n` +
+      `一轮的时长取决于最慢的那个池。\n` +
+      `正在跑的那一代如果被停掉会作废，下次重跑（不会损坏已有数据）。`
     )) return
     setMineBusy(true)
     try {
       const r = await api.mineStart(pools, rounds)
       if (r.reused) {
-        say('ok', `调度器已在跑（PID ${(r.schedulerPids ?? []).join(',')}）⇒ 已就地更新：启用池 ${(r.enabled ?? []).join(',')} · ${r.rounds} 轮（未重复起进程）`)
+        say('ok', `调度器已在运行（PID ${(r.schedulerPids ?? []).join(',')}），已更新设置：启用池 ${(r.enabled ?? []).join(',')}，${r.rounds} 轮（没有重复启动）`)
       } else {
         const st = r.started.map(x => `PID ${x.pid}`).join(' ') || '无'
-        say('ok', `已启动**轮转调度器** ${st} ⇒ 启用池 ${(r.enabled ?? []).join(',')} · 每池 ${r.rounds} 轮`)
+        say('ok', `已启动调度器 ${st}，启用池：${(r.enabled ?? []).join(',')}，每池 ${r.rounds} 轮`)
       }
       await loadAll(true)
     } catch (e) {
@@ -94,24 +94,25 @@ export default function App() {
   }, [rounds, mine, loadAll])
 
   const doStop = useCallback(async (pool?: string) => {
-    const label = pool ? `池 ${pool}` : '**全部池**'
+    const label = pool ? `池 ${pool}` : '全部池'
     if (!window.confirm(
       `确定停止 ${label}？\n\n` +
       (pool
-        ? `✓ 只会停「${pool}」：从轮转中移除 + 杀掉它当前那一代 ⇒ **其他池不受影响** ✓\n` +
-          `⚠ 若它是最后一个参与轮转的池，调度器会自行退出（点「启动本池」会自动重启）。`
-        : `✓ 会杀掉当前代 + 让调度器 **自动收尾**（facs 落地 + 跨池审查 + 精选池）后退出 ✓\n` +
-          `⚠ 收尾期间请勿再启动（会撞车）。`) +
-      `\n\n⚠ 正在跑的那一代会作废（下次重跑）。`
+        ? `只停这一个池：把它移出轮转，并结束它当前的那一代。其他池不受影响。\n` +
+          `如果它是最后一个还在轮转的池，调度器会自己退出（之后点「启动本池」可以重新拉起）。`
+        : `会结束当前那一代，然后调度器自动做一次收尾审查\n` +
+          `（因子值落地、跨池审查、精选池）再退出。\n` +
+          `收尾期间不要再启动，否则两边会互相干扰。`) +
+      `\n\n正在跑的那一代会作废，下次重跑。`
     )) return
     setMineBusy(true)
     try {
       const r = await api.mineStop(pool)
       const k = r.killed.filter(x => x.rc === 0).map(x => `${x.kind}#${x.pid}`).join(', ')
       say(r.ok ? 'ok' : 'err',
-        r.ok ? `已停止${pool ? `池 ${pool}（其他池不受影响）` : '全部'}（杀 ${k || '无进程'}）`
-          + (r.tail ? ` · 已触发收尾审查(PID ${r.tail.pid})` : '')
-             : `部分未停：${r.stillRunning.map(s => `${s.kind}#${s.pid}`).join(', ')}`)
+        r.ok ? `已停止${pool ? `池 ${pool}（其他池不受影响）` : '全部'}，结束进程：${k || '无'}`
+          + (r.tail ? `；已开始收尾审查（PID ${r.tail.pid}）` : '')
+             : `有进程没停掉：${r.stillRunning.map(s => `${s.kind}#${s.pid}`).join(', ')}`)
       await loadAll(true)
     } catch (e) {
       say('err', `停止失败：${e instanceof Error ? e.message : String(e)}`)
@@ -119,19 +120,19 @@ export default function App() {
     } finally { setMineBusy(false) }
   }, [loadAll])
 
-  // ★ 单独"启动/恢复"某池（调度器不在时会自动重启）
+  // 单独启动 / 恢复某个池（调度器不在时会自动重启）
   const doStartPool = useCallback(async (pool: string) => {
     if (!window.confirm(
-      `确定启动/恢复池「${pool}」？\n\n` +
-      `① 若它在"已停止"里 ⇒ 移出，下一轮就会轮到它 ✓\n` +
-      `② 若调度器已不在运行 ⇒ **自动重启调度器**（沿用上次的启用集合）✓`
+      `确定启动/恢复池 ${pool}？\n\n` +
+      `如果它之前被停止，会重新加入轮转，下一轮就轮到它。\n` +
+      `如果调度器已经不在运行，会自动重新启动。`
     )) return
     setMineBusy(true)
     try {
       const r = await api.mineStartPool(pool)
       say('ok', r.restarted
-        ? `调度器原本不在运行 ⇒ 已自动重启；池 ${pool} 已加入轮转（启用：${r.enabled.join(',')}）`
-        : `池 ${pool} 已重新加入轮转（下一轮轮到它）`)
+        ? `调度器之前没在运行，已自动重启。池 ${pool} 已加入轮转（当前启用：${r.enabled.join(',')}）`
+        : `池 ${pool} 已重新加入轮转，下一轮轮到它`)
       await loadAll(true)
     } catch (e) {
       say('err', `启动本池失败：${e instanceof Error ? e.message : String(e)}`)
@@ -169,48 +170,47 @@ export default function App() {
           </div>
         </div>
         <div className="ctrls">
-          {/* ★★ 顶部状态条：一眼看出"在挖 / 在收尾 / 空闲"（用户要求 2）*/}
+          {/* 顶部状态条：空闲 / 挖掘中 / 收尾审查中 */}
           <span className={`phase ${mine?.phase ?? 'idle'}`} title={
-            `阶段：${mine?.phaseLabel ?? '—'}\n` +
-            (mine?.curText ? `当前：${mine.curText}\n` : '') +
-            (mine?.roundText ? `${mine.roundText} / 共 ${mine?.rounds ?? '?'} 轮\n` : '') +
-            `启用池：${(mine?.enabled ?? []).join(',') || '—'}\n` +
-            (mine?.updated ? `更新于 ${mine.updated}` : '')}>
+            `当前状态：${mine?.phaseLabel ?? '—'}\n` +
+            (mine?.curText ? `正在跑：${mine.curText}\n` : '') +
+            (mine?.roundText ? `${mine.roundText}，共 ${mine?.rounds ?? '?'} 轮\n` : '') +
+            `参与的池：${(mine?.enabled ?? []).join(',') || '无'}\n` +
+            (mine?.updated ? `状态更新于 ${mine.updated}` : '')}>
             <i className="pdot" />
             <b>{mine?.phaseLabel ?? '—'}</b>
             {mine?.curText && <em>{mine.curText}</em>}
             {mine?.roundText && <small>{mine.roundText}/{mine?.rounds ?? '?'}</small>}
           </span>
           <span className="res" title={
-            `★ 单调度器 + 池轮转 ⇒ 同一时刻只 1 个引擎（约 ${mine?.gbPerEngine ?? 9} GB）\n` +
-            `可用内存 ${mine?.freeGB ?? '?'} GB`}>
+            `始终只有一个引擎在跑，约占 ${mine?.gbPerEngine ?? 9} GB。\n` +
+            `当前可用内存 ${mine?.freeGB ?? '?'} GB。`}>
             <b className={mine && mine.freeGB !== null && mine.freeGB < 6 ? 'warn' : ''}>
               {mine?.freeGB !== null && mine?.freeGB !== undefined ? `${mine.freeGB} GB` : '—'}
             </b>
-            {/* ★ 区分"真的在轮转"与"只是配了但调度器没跑"，避免与顶栏"空闲"自相矛盾✗ */}
+            {/* 区分“正在轮转”与“只是配置了但调度器没跑” */}
             <small>{mine?.running
-              ? `${(mine?.enabled ?? []).length} 池参与轮转`
+              ? `${(mine?.enabled ?? []).length} 个池正在轮转`
               : ((mine?.enabled ?? []).length
-                ? `${(mine?.enabled ?? []).length} 池已配置·未运行`
+                ? `${(mine?.enabled ?? []).length} 个池已配置，未运行`
                 : '未配置')}</small>
           </span>
-          <span className="rounds" title={`每池轮数（1~${mine?.roundsRange?.[1] ?? 200}）；一轮 = 每个启用的池各跑 1 代`}>
+          <span className="rounds" title={`每个池要跑的轮数，范围 1~${mine?.roundsRange?.[1] ?? 200}。一轮 = 每个参与的池各跑 1 代`}>
             轮数
             <input type="number" min={mine?.roundsRange?.[0] ?? 1} max={mine?.roundsRange?.[1] ?? 200}
                    value={rounds} disabled={mineBusy}
                    onChange={e => setRounds(Math.max(1, Math.min(200, Number(e.target.value) || 1)))} />
           </span>
-          {/* ★ 不再用 disabled 阻断：点了就给明确反馈（"没反应"就是因为按钮被禁用）*/}
           <button className="btn start" disabled={mineBusy} onClick={() => doStart([])}
-                  title="启动轮转调度器，让**所有池**参与轮转（已在跑 ⇒ 就地更新启用集合，不重复起进程）">
+                  title="启动调度器，让所有池参与轮转。已经在跑的话就直接更新设置，不会重复启动">
             {mineBusy ? '处理中…' : '一键启动全部'}
           </button>
           <button className="btn stop" disabled={mineBusy} onClick={() => doStop()}
-                  title="全部停止：杀掉当前代 ⇒ 调度器**自动收尾**（跨池审查+精选池）后退出">
+                  title="全部停止：结束当前那一代，然后自动做收尾审查，再退出">
             全部停止
           </button>
-          {/* ⚠ 「收尾审查」按钮已按用户要求**隐藏**（功能保留在后端 `/api/mine/global`）：
-             现在**每轮结束自动收尾**，且「全部停止」后也会自动收尾 ⇒ 无需手动点 ✓ */}
+          {/* 「收尾审查」按钮已按用户要求隐藏（后端 /api/mine/global 仍在）：
+             现在每轮结束会自动收尾，「全部停止」后也会自动收尾，无需手动点 */}
           <button onClick={() => loadAll(true)} disabled={busy} className="btn">
             {busy ? '刷新中…' : '立即刷新'}
           </button>
@@ -370,21 +370,21 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
         <Field k="冻结" v={fmt(st?.frozen_n)} />
         <Field k="失败库" v={fmt(st?.fail_lib_n)} />
       </div>
-      {/* ★ 不再用 disabled 阻断 —— 点了必给反馈 */}
+      {/* 按钮不再用 disabled 悄悄禁用 —— 点了总会给明确反馈 */}
       <div className="card-a">
         <button className="btn start sm" disabled={busy || inRotation} onClick={onStart}
                 title={inRotation
-                  ? `「${p.label}」已在轮转里（下一轮就会轮到它）⇒ 无需操作`
+                  ? `${p.label} 已在轮转中，下一轮就会轮到它`
                   : (configured
-                    ? `「${p.label}」已配置参与轮转，但**调度器当前没在运行** ⇒ 点它会**自动重启调度器** ✓`
-                    : `把「${p.label}」加入轮转：若调度器不在运行会自动重启 ✓`)}>
+                    ? `${p.label} 已经配置好了，但调度器当前没在运行。点一下会重新启动调度器`
+                    : `把 ${p.label} 加入轮转。如果调度器没在运行，会自动启动`)}>
           {inRotation ? '已参与轮转'
             : (configured ? '启动（调度器未运行）' : '启动本池')}
         </button>
         <button className="btn stop sm" disabled={busy || (stopped && !mining)} onClick={onStop}
                 title={stopped && !mining
-                  ? `「${p.label}」已停止`
-                  : `停用「${p.label}」：从轮转中移除 + 杀掉它当前那一代 ⇒ **其他池不受影响** ✓`}>
+                  ? `${p.label} 已停止`
+                  : `停用 ${p.label}：把它移出轮转，并结束它当前那一代。其他池不受影响`}>
           停止本池
         </button>
       </div>
@@ -410,13 +410,13 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
   return (
     <div className="libwrap">
       <div className="caliber">
-        <b>口径说明</b>（★ 三个数字不一样，看这里）：
+        <b>口径说明</b>（这里三个数字不一样，以第一个为准）：
         <ul>
-          <li><b>当前有效库 = {fmt(lib.stateBank)}</b> —— <span>权威（引擎实际在用的对照集，来自 <code>loop_state_{lib.pool}.pkl</code>）</span></li>
-          <li>本表行数 = {fmt(lib.count)} —— <span>累计入库编号（该文件声明「只增不改」）</span></li>
-          <li>文件声明 = {fmt(lib.declaredCount)} —— <span>引擎同步快照，可能落后</span></li>
+          <li><b>当前有效库 = {fmt(lib.stateBank)}</b> —— <span>权威：引擎实际在用的对照集，来自 <code>loop_state_{lib.pool}.pkl</code></span></li>
+          <li>本表行数 = {fmt(lib.count)} —— <span>累计入库编号，该文件只增不改</span></li>
+          <li>文件声明 = {fmt(lib.declaredCount)} —— <span>引擎同步的快照，可能落后</span></li>
         </ul>
-        <div className="note">⚠ 别把「累计编号」当「当前库」—— 前端一律以 <b>当前有效库</b> 为准。</div>
+        <div className="note">注意：不要把「累计编号」当成「当前库」，页面一律以<b>当前有效库</b>为准。</div>
       </div>
       <table className="tbl">
         <thead><tr><th>编号</th><th>入库代数</th><th>家族</th><th>一句话</th><th>状态</th></tr></thead>
