@@ -114,14 +114,21 @@ def pool_status(pool, procs):
         passed = sum(1 for r in rows if len(r) > i and str(r[i]).strip().lower() in ('1', 'true', 'yes'))
     gen_col = head.index('gen') if 'gen' in head else None
 
-    # 在跑判定：① 有 engine 进程且池匹配；② driver 在跑的池集合
+    # ★★★★★ 2026-09-16 修 BUG J（用户报："我点了停止全A池，怎么顶上在跑的池还是 5/5"）：
+    #   **"在跑的池" 必须只认「该池真的有 engine 在跑」** ✓
+    #
+    #   原实现有两处错 ✗：
+    #     ① `not pr['pools']` 兜底 ⇒ "解析不到池 ⇒ 就当它跑遍所有池"
+    #        ⇒ 旧引擎（命令行没 `--mine_pool`）会让**5 个池全部显示在跑** ✗
+    #     ② `driver`（调度器）也算 ⇒ 它的命令行是 `--pools=all,300,500,1000,50`
+    #        ⇒ **5 个池全部命中** ✗ —— 但它只是"**管这 5 个池**"，**不代表此刻都在跑** ✗
+    #   ⇒ 修：**只按 engine 的 `--mine_pool` 归属**（归属由 v1.3.6 保证准确）✓
+    #     · 调度器"正在跑哪个池"由控制文件 `curPool` 表达 ⇒ 那是 `mine.py` 的职责 ✓
     running_by = []
     for pr in procs:
         if pr.get('err'):
             continue
-        if pr['kind'] == 'engine' and (not pr['pools'] or pool in pr['pools']):
-            running_by.append(pr['pid'])
-        elif pr['kind'] == 'driver' and (not pr['pools'] or pool in pr['pools']):
+        if pr['kind'] == 'engine' and pool in (pr.get('pools') or []):
             running_by.append(pr['pid'])
 
     return {

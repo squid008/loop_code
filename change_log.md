@@ -15,6 +15,48 @@
 
 ---
 
+## [1.3.7] — 2026-09-16
+
+> 主题：★★★ 修「点了停止全A池，顶上『在跑的池』还是 5/5」
+
+### 用户报
+「我点了停止全A池，怎么顶上在跑的池还是5/5」
+
+### ★★★★★ 真凶（`dashboard/api/app/sources/pools.py` 的 `pool_status`）
+```python
+if pr['kind'] == 'engine' and (not pr['pools'] or pool in pr['pools']):
+                              # not pr['pools'] = "解析不到池 ⇒ 就当它跑遍所有池"
+elif pr['kind'] == 'driver' and (not pr['pools'] or pool in pr['pools']):
+                              # 同样
+```
+**两处错**：
+1. ★ **`not pr['pools']` 兜底** ⇒ 归属解析不到的进程（旧引擎）⇒ **5 个池全算在跑** ✗
+2. ★★ **`driver`（调度器）也算** ⇒ 它的命令行是 `--pools=all,300,500,1000,50`
+   ⇒ **5 个池全部命中** ✗ —— 但它只是"**管这 5 个池**"，**不代表此刻都在跑** ✗
+
+⇒ 两者叠加 ⇒ **永远 5/5** ✗（用户实测）
+
+### 修法：**"在跑的池" = 该池真的有 engine 在跑**
+```python
+if pr['kind'] == 'engine' and pool in (pr.get('pools') or []):
+    running_by.append(pr['pid'])
+```
+- ★ 去掉 `not pr['pools']` 的宽兜底 ✓
+- ★ 去掉 `driver` 的参与（"调度器正在跑哪个池"由控制文件 `curPool` 表达，那是 `mine.py` 的职责）✓
+- ★ 配合 v1.3.6 的归属修复（引擎只认 `--mine_pool`）⇒ 结果准确 ✓
+
+### 验证（实测）
+```
+修复前: 在跑的池 = 5 / 5        ✗
+修复后: 在跑的池 = 1 / 5        ✓
+  全A       running=False                 ← 用户停掉它 ⇒ 正确显示"没在跑" ✓
+  沪深300    running=True  pids=[36308]    ← 真的只有它在跑 ✓
+  其余       False
+```
+引擎命令行 `--mine_pool=300` ⇒ 新代码归属准确 ✓
+
+---
+
 ## [1.3.6] — 2026-09-16
 
 > 主题：★★★ 修「停了全A却还在跑 / 显示 5 池 / 两个按钮都能按 / 下一个池不开始」——
