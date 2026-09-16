@@ -92,6 +92,13 @@ def library_one(pool: str):
     return factors.library(pool)
 
 
+@app.get('/api/curves/{pool}/{name}', summary='★ 因子曲线（离线预算，详情页图表用）')
+def factor_curves(pool: str, name: str, max_pts: int = Query(700, ge=50, le=3000)):
+    if '/' in name or '..' in name:
+        raise HTTPException(400, '非法因子名')
+    return factors.curves(name, max_pts=max_pts)
+
+
 @app.get('/api/selected', summary='★ 精选池（L3 双闸门）')
 def selected():
     return factors.selected()

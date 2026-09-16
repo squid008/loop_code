@@ -275,6 +275,83 @@ def all_libraries():
     return [library(k) for k in core.POOL_KEYS]
 
 
+# ================================================================ 因子曲线
+# ★★ 2026-09-16（用户要求：指标下面加曲线图）：
+#   曲线**离线**由 `tools/factor_curves.py` 预算好（现算一次 = 一次完整回测 ≈ 10s ⇒ 点一下卡十秒 ✗），
+#   这里只**读文件 + 下采样**（保两端等步长）⇒ 响应体小、前端画得快 ✓
+CURVE_DIR = 'factor_curves'
+
+
+def _down(seq, k):
+    """等步长抽点（**保两端**）⇒ 返回 `(新序列, 索引表)`；长度 ≤ k 时原样返回。"""
+    n = len(seq or [])
+    if n == 0:
+        return [], []
+    if n <= k:
+        return list(seq), list(range(n))
+    idx = sorted({int(round(i * (n - 1) / float(k - 1))) for i in range(k)})
+    out = []
+    for i in idx:
+        v = seq[i]
+        out.append(round(float(v), 6) if isinstance(v, (int, float)) and v is not None else None)
+    return out, idx
+
+
+def curves(name, max_pts=700):
+    """读 `docs/factor_curves/<name>.json` ⇒ 下采样后的曲线数据（前端直接画）。"""
+    rel = os.path.join(CURVE_DIR, '%s.json' % name)
+    p = core.docs_path(rel)
+    txt = core.read_text(p)
+    if not txt:
+        return {'found': False, 'name': name, 'path': rel.replace('\\', '/'),
+                'hint': '跑一次 python tools/factor_curves.py 生成（离线算，不影响看板性能）'}
+    try:
+        import json as _json
+        d = _json.loads(txt)
+    except Exception as e:
+        return {'found': False, 'name': name, 'err': repr(e)}
+
+    def _nums(seq):
+        return [None if v is None else float(v) for v in (seq or [])]
+
+    d_dates, _ = _down(d.get('d_dates') or [], max_pts)
+    # ★ 净值曲线用**对数感**更好的方式？—— 不：直接给净值，前端按需切换线性/对数
+    daily = {
+        'dates': d_dates,
+        'navT': _down(_nums(d.get('nav_t')), max_pts)[0],
+        'navM': _down(_nums(d.get('nav_m')), max_pts)[0],
+        'navE': _down(_nums(d.get('nav_e')), max_pts)[0],
+        'ddE': _down(_nums(d.get('dd_e')), max_pts)[0],
+        'ddT': _down(_nums(d.get('dd_t')), max_pts)[0],
+    }
+    r_dates, _ = _down(d.get('r_dates') or [], max_pts)
+    period = {
+        'dates': r_dates,
+        'ic': _down(_nums(d.get('ic')), max_pts)[0],
+        'rankIc': _down(_nums(d.get('rank_ic')), max_pts)[0],
+        'decile': [_down(_nums(x), max_pts)[0] for x in (d.get('decile') or [])],
+        'ls': _down(_nums(d.get('ls')), max_pts)[0],
+        'turn': _down(_nums(d.get('turn_series')), max_pts)[0],
+    }
+    st = d.get('strip') or None
+    strip = None
+    if st:
+        sd, _ = _down(st.get('dates') or [], max_pts)
+        strip = {'dates': sd,
+                 'navs': {k: _down(_nums(v), max_pts)[0] for k, v in (st.get('navs') or {}).items()},
+                 'calmars': st.get('calmars') or {},
+                 'caliber': st.get('caliber')}
+    return {
+        'found': True, 'name': d.get('name') or name, 'pool': d.get('pool'),
+        'expr': d.get('expr'), 'sign': d.get('sign'), 'gen': d.get('gen'),
+        'start': d.get('start'), 'end': d.get('end'), 'n_rebal': d.get('n_rebal'),
+        'cost': d.get('cost'), 'window': d.get('window'),
+        'caliber': d.get('caliber'), 'path': rel.replace('\\', '/'),
+        'mtime': core.mtime_iso(p),
+        'daily': daily, 'period': period, 'strip': strip,
+    }
+
+
 # ---------------------------------------------------------------- 精选池
 def selected():
     """精选池（L3）：`factor_pool_selected.md` 清单 + `loop_strip_style_bank.csv` 的剥风格档。"""

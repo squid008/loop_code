@@ -253,6 +253,10 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
     #     ⇒ 两者本来就不可比（`dd_d ≤ dd` 才是恒等式）。这里把**组合自身**的日频也补上，
     #     让「期频 vs 日频」在同一口径内可比 ⇒ 用户想问的那个数（组合日频回撤）终于有地方看 ✓
     tr_d_parts = []
+    # ★ 2026-09-16：日频序列的**日期轴**（看板画曲线要用真日期；否则只能给"第 N 天"）。
+    #   与 `ex_d_parts`/`tr_d_parts` **同一循环里一起 extend** ⇒ 长度天然对齐 ✓
+    #   ⚠ 只在 `with_daily=True` 时填；**纯新增返回值**，不改任何既有字段 ✓
+    d_dates = []
     prev_top = None
     for d in idx[::FWD][:-1]:
         u = U.loc[d]
@@ -321,6 +325,7 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
                     _adjt = (_tt / _gt) ** (1.0 / len(seg_t))
                     seg_t = [((1.0 + _s) * _adjt - 1.0) for _s in seg_t]
                 tr_d_parts.extend(seg_t)
+                d_dates.extend(int(x) for x in dates_all[i1:i2])   # ★ 与上面两段同顺序、同长度
         if mc_ is not None:
             # 市值加权基准(≈真实指数): 同一批 keep_all, 按市值加权平均。
             # ⚠ 分子分母**必须用同一组有限值掩码** —— 否则 NaN 收益/NaN 市值两者口径不一致:
@@ -421,6 +426,8 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
         #   恒等式是 `dd_d <= dd` 与 `dd_top_d <= dd_top`，**不是** `dd_d <= dd_top` ✗
         if with_ex:
             res['ex_d'] = ex_d
+        # ★ 日频日期轴（与 ex_d / tr_d 逐点对齐）—— 看板画曲线用；纯新增字段 ✓
+        res['d_dates'] = d_dates
     # ★★ 组合自身的**日频**风险（2026-09-16 新增；口径与 `dd_top/calmar_top/sharpe_top` 配对）：
     #   恒等式 `dd_top_d <= dd_top`（日频是期频的子采样 ⇒ 只能看到更深的回撤）⇒ 可被测试钉死 ✓
     if with_daily and tr_d_parts:

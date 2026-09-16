@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
-  type LibraryDto, type LibraryFactor, type MetaDto, type MineStateDto, type PoolStatus,
-  type SelectedDto, type SelectedFactor, type StatusDto,
+  type CurvesDto, type LibraryDto, type LibraryFactor, type MetaDto, type MineStateDto,
+  type PoolStatus, type SelectedDto, type SelectedFactor, type StatusDto,
 } from './api'
 
 type TabKey = 'pools' | 'library' | 'selected' | 'process' | 'meta'
@@ -503,16 +503,18 @@ const METRIC_GROUPS: Array<[string, Array<[string, string, 'pct' | 'num' | 'int'
     ['calmar', '超额卡玛', 'num'], ['sharpe', '超额夏普', 'num'],
   ]],
   ['超额口径 · 日频打点（同一策略逐日 mark）', [
-    ['dd_d', '超额最大回撤', 'pct'], ['calmar_d', '超额卡玛', 'num'],
-    ['sharpe_d', '超额夏普', 'num'],
+    // ★ 2026-09-16（用户要求）：日频也补上**年化** —— 它与期频**同值**（锚定后终值/年数一致，
+    //   引擎里就是这么定义的：`calmar_d = ann_ex/|dd_d|`）⇒ 复制过来让**四格都能上下对齐** ✓
+    ['ann_ex', '超额年化（同期频）', 'pct'], ['dd_d', '超额最大回撤', 'pct'],
+    ['calmar_d', '超额卡玛', 'num'], ['sharpe_d', '超额夏普', 'num'],
   ]],
   ['组合自身口径 · 期频打点（Top10% 等权）', [
     ['ann_top', '年化', 'pct'], ['dd_top', '最大回撤', 'pct'],
     ['calmar_top', '卡玛', 'num'], ['sharpe_top', '夏普', 'num'],
   ]],
   ['组合自身口径 · 日频打点（同一策略逐日 mark）', [
-    ['dd_top_d', '最大回撤', 'pct'], ['calmar_top_d', '卡玛', 'num'],
-    ['sharpe_top_d', '夏普', 'num'],
+    ['ann_top', '年化（同期频）', 'pct'], ['dd_top_d', '最大回撤', 'pct'],
+    ['calmar_top_d', '卡玛', 'num'], ['sharpe_top_d', '夏普', 'num'],
   ]],
   ['其他', [
     ['last_yr', '最近一年超额', 'pct'], ['turn', '单期换手', 'pct'],
@@ -531,8 +533,195 @@ const fmtM = (v: number | null | undefined, kind: 'pct' | 'num' | 'int') => {
 type FactorLike = Pick<LibraryFactor, 'code' | 'expr' | 'detail' | 'metrics'> & {
   family?: string
   summary?: string
+  pool?: string
   /** ★ 三态：true 在库 / false 已移出 / null|undefined 未知（指标表不完整） */
   inBank?: boolean | null
+}
+
+const fmtD8 = (d: number) => `${String(d).slice(0, 4)}-${String(d).slice(4, 6)}-${String(d).slice(6, 8)}`
+
+// ================================================================ 曲线（SVG，零依赖）
+// ★ 2026-09-16（用户要求：指标下面加曲线图）：数据**离线预算**（`tools/factor_curves.py`），
+//   这里只负责画 ⇒ 打开详情 = 读一个几十 KB 的 JSON + 画 SVG，**对性能没有影响** ✓
+//   ★ 用**手写 SVG** 而不是引图表库：本项目前端零依赖（只有 react/react-dom），
+//     引库要多几十万字节 + 多一个升级面；这些图（折线/面积）手写 60 行足够 ✓
+const CPAL = ['#6366f1', '#22d3ee', '#f59e0b', '#34d399', '#f472b6',
+              '#a78bfa', '#facc15', '#38bdf8', '#fb7185', '#4ade80']
+const dLab = (d: number) => `${String(d).slice(2, 4)}-${String(d).slice(4, 6)}`
+
+type ChSeries = { label: string; color: string; data: (number | null)[]; dashed?: boolean }
+
+function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false }:
+  { series: ChSeries[]; dates: number[]; height?: number
+    kind?: 'line' | 'area'; yFmt?: (v: number) => string; zero?: boolean }) {
+  const W = 720, H = height, PL = 48, PR = 10, PT = 8, PB = 16
+  const vals: number[] = []
+  series.forEach(s => s.data.forEach(v => { if (v !== null && Number.isFinite(v)) vals.push(v) }))
+  if (!vals.length || !dates.length) return <div className="ch-note">（无数据）</div>
+  let lo = Math.min(...vals), hi = Math.max(...vals)
+  if (zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0) }
+  const span = (hi - lo) || Math.abs(hi || 1) * 0.2
+  lo -= span * 0.06; hi += span * 0.06
+  const n = dates.length
+  const X = (i: number) => PL + (W - PL - PR) * (n <= 1 ? 0.5 : i / (n - 1))
+  const Y = (v: number) => PT + (H - PT - PB) * (1 - (v - lo) / (hi - lo || 1))
+  const fmt = yFmt ?? ((v: number) => v.toFixed(2))
+  const yticks = [0, 0.25, 0.5, 0.75, 1].map(t => lo + (hi - lo) * t)
+  const xi = [0, Math.floor((n - 1) / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i)
+  return (
+    <div className="ch">
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img">
+        {yticks.map((tv, i) => (
+          <g key={`y${i}`}>
+            <line x1={PL} y1={Y(tv)} x2={W - PR} y2={Y(tv)} stroke="#1e2846" strokeWidth="1" />
+            <text x={PL - 6} y={Y(tv) + 3.5} fontSize="10" fill="#8b9ac0" textAnchor="end">{fmt(tv)}</text>
+          </g>
+        ))}
+        {zero && lo < 0 && hi > 0 && (
+          <line x1={PL} y1={Y(0)} x2={W - PR} y2={Y(0)} stroke="#4b5b83" strokeDasharray="3 3" />
+        )}
+        {series.map((s, k) => {
+          let d = '', pen = false
+          s.data.forEach((v, i) => {
+            if (v === null || !Number.isFinite(v)) { pen = false; return }
+            d += `${pen ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)}`
+            pen = true
+          })
+          if (!d) return null
+          if (kind === 'area' && k === 0) {
+            return <path key={`s${k}`} d={`${d}L${X(n - 1).toFixed(1)},${Y(0).toFixed(1)}` +
+                                       `L${X(0).toFixed(1)},${Y(0).toFixed(1)}Z`}
+                         fill={s.color + '2e'} stroke={s.color} strokeWidth="1.2" />
+          }
+          return <path key={`s${k}`} d={d} fill="none" stroke={s.color} strokeWidth="1.6"
+                       strokeDasharray={s.dashed ? '4 3' : undefined} />
+        })}
+        {xi.map(i => (
+          <text key={`x${i}`} x={X(i)} y={H - 4} fontSize="10" fill="#8b9ac0"
+                textAnchor={i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle')}>
+            {dLab(dates[i])}
+          </text>
+        ))}
+      </svg>
+      <div className="ch-lg">
+        {series.map((s, i) => (
+          <span key={i}><i style={{ background: s.color }} />{s.label}</span>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+const fmtN3 = (v: number | null | undefined) =>
+  v === null || v === undefined || Number.isNaN(v) ? '—' : v.toFixed(3)
+
+/** 累计和（跳过 null；前端现算，不需要后端多存一列） */
+const cumsum = (a: (number | null)[]): (number | null)[] => {
+  let s = 0
+  return a.map(v => {
+    if (v === null || !Number.isFinite(v)) return null
+    s += v
+    return s
+  })
+}
+
+// ⚠ 类型断言（`as Record<string,string>`）**不能写在 JSX 属性里的内联对象中** ——
+//   TSX 解析器会把 `<string, string>` 当 JSX 标签 ⇒ 一堆莫名其妙的语法错 ✗
+//   ⇒ 提到模块级常量（2026-09-16 实测踩到）
+const STRIP_LABEL: Record<string, string> =
+  { raw: '原', lncap: '剥市值', lnamt: '剥成交额', both: '剥两者' }
+
+/** 详情页图表区：打开时**才**拉曲线（离线预算好的），拉到前显示占位 ✓ */
+function FactorCharts({ name, pool }: { name: string; pool?: string }) {
+  const [c, setC] = useState<CurvesDto | null>(null)
+  const [err, setErr] = useState<string | null>(null)
+  useEffect(() => {
+    let dead = false
+    setC(null); setErr(null)
+    api.curves(pool || 'all', name)
+      .then(d => { if (!dead) setC(d) })
+      .catch(e => { if (!dead) setErr(e instanceof Error ? e.message : String(e)) })
+    return () => { dead = true }
+  }, [name, pool])
+  if (err) return <div className="ch-note">曲线读取失败：{err}</div>
+  if (!c) return <div className="ch-note">曲线加载中…</div>
+  if (!c.found) return <div className="ch-note">暂无曲线数据。{c.hint}</div>
+  const dl = c.daily, pd = c.period, st = c.strip
+  const pctf = (v: number) => `${(v * 100).toFixed(0)}%`
+  return (
+    <div className="chwrap">
+      <div className="dt-sec">
+        <span>曲线</span>
+        <em className="mut">
+          离线预算（{c.n_rebal} 期 · {c.cost} 往返）
+          {c.start ? ` · 区间 ${c.start}~${c.end}` : ''}
+          {c.mtime ? ` · 生成于 ${c.mtime}` : ''}
+        </em>
+      </div>
+      {dl && (
+        <>
+          <div className="ch-t">净值（日频，起点 = 1）—— 组合 / 基准 / 超额</div>
+          <Chart dates={dl.dates} yFmt={v => v.toFixed(1)} series={[
+            { label: '组合（Top10% 等权）', color: CPAL[0], data: dl.navT },
+            { label: '基准（池内等权）', color: CPAL[1], data: dl.navM },
+            { label: '超额', color: CPAL[2], data: dl.navE },
+          ]} />
+          <div className="ch-t">回撤（日频）—— 超额（面积）/ 组合（虚线）</div>
+          <Chart dates={dl.dates} kind="area" zero yFmt={pctf} series={[
+            { label: '超额回撤', color: CPAL[2], data: dl.ddE },
+            { label: '组合回撤', color: CPAL[0], data: dl.ddT, dashed: true },
+          ]} />
+        </>
+      )}
+      {pd && (
+        <>
+          <div className="ch-t">IC / RankIC（期频）</div>
+          <Chart dates={pd.dates} zero yFmt={v => v.toFixed(2)} series={[
+            { label: 'RankIC（Spearman，引擎口径）', color: CPAL[0], data: pd.rankIc },
+            { label: 'IC（Pearson）', color: CPAL[3], data: pd.ic },
+          ]} />
+          <div className="ch-t">十分位分组累计净值（费前；第 10 档 = 因子值最高）</div>
+          <Chart dates={pd.dates} yFmt={v => v.toFixed(1)}
+                 series={pd.decile.map((d, i) => ({
+                   label: `第 ${i + 1} 档`, color: CPAL[i % CPAL.length], data: d,
+                 }))} />
+          <div className="ch-t">多空（第 10 档 − 第 1 档，费前）</div>
+          <Chart dates={pd.dates} yFmt={v => v.toFixed(1)}
+                 series={[{ label: '多空', color: CPAL[4], data: pd.ls }]} />
+          <div className="ch-t">RankIC 累计（看信息是否稳定累积；斜率变平 = 近期失效）</div>
+          <Chart dates={pd.dates} zero yFmt={v => v.toFixed(1)}
+                 series={[{ label: 'RankIC 累计和', color: CPAL[5], data: cumsum(pd.rankIc) }]} />
+          {(pd.turn ?? []).some(v => v !== null) && (
+            <>
+              <div className="ch-t">单期换手（每期换掉的 Top 组比例）</div>
+              <Chart dates={pd.dates} zero yFmt={v => `${(v * 100).toFixed(0)}%`}
+                     series={[{ label: '单期换手', color: CPAL[6], data: pd.turn ?? [] }]} />
+            </>
+          )}
+        </>
+      )}
+      {st ? (
+        <>
+          <div className="ch-t">剥风格对比（期频超额净值）—— 原 / 剥市值 / 剥成交额 / 剥两者</div>
+          <Chart dates={st.dates} yFmt={v => v.toFixed(1)}
+                 series={['raw', 'lncap', 'lnamt', 'both']
+                   .filter(k => (st.navs[k] ?? []).length > 0)
+                   .map((k, i) => ({
+                     label: STRIP_LABEL[k] ?? k,
+                     color: CPAL[i], data: st.navs[k],
+                   }))} />
+          <div className="ch-lg2">
+            剥风格 Calmar：原 {fmtN3(st.calmars.raw)} · 剥市值 {fmtN3(st.calmars.lncap)} ·
+            剥成交额 {fmtN3(st.calmars.lnamt)} · 剥两者 {fmtN3(st.calmars.both)}
+          </div>
+        </>
+      ) : (
+        <div className="ch-note">
+          剥风格曲线还没生成 —— 跑 python tools/factor_curves.py --stage=strip
+        </div>
+      )}
+    </div>
+  )
 }
 
 /** 因子详情：完整公式（可复制）+ 池标签 + 各项费后指标 */
@@ -605,7 +794,10 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
             <em className="mut">
               {metricsInfo && !metricsInfo.found
                 ? '指标表未生成：先跑 python tools/factor_metrics.py'
-                : `统一口径重算（成本 0.004 往返 · 5 日调仓 · 全A 面板）${metricsMtime ? ` · 更新于 ${metricsMtime}` : ''}`}
+                : `统一口径重算（成本 ${m.cost ?? 0.004} 往返 · 5 日调仓 · 全A 面板`
+                  + (m.bt_start && m.bt_end
+                     ? ` · 回测区间 ${fmtD8(m.bt_start)}~${fmtD8(m.bt_end)}` : ' · 回测区间未记录')
+                  + `）${metricsMtime ? ` · 更新于 ${metricsMtime}` : ''}`}
             </em>
           </div>
           <div className="dt-note">
@@ -626,6 +818,7 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
               </div>
             </div>
           ))}
+          <FactorCharts name={f.code} pool={f.pool} />
           {m.ic_doc !== undefined && m.ic_doc !== null && m.ic !== null && m.ic !== undefined &&
             Math.abs(m.ic - m.ic_doc) > 0.002 && (
               <div className="dt-warn">
@@ -674,7 +867,7 @@ function SelectedPanel({ s }: { s: SelectedDto }) {
       )}
       {sel && (
         <FactorDetail f={{ code: sel.code, expr: sel.expr, detail: sel.detail,
-                           metrics: sel.metrics, inBank: sel.inBank }}
+                           metrics: sel.metrics, inBank: sel.inBank, pool: sel.pool }}
                       onClose={() => setSel(null)} />
       )}
     </section>

@@ -56,7 +56,11 @@ COLS = ['name', 'pool', 'gen', 'expr', 'sign', 'ic', 'ic_doc', 'ic_ir', 'ic_win'
         'dd_d', 'calmar_d', 'sharpe_d',
         'dd_top_d', 'calmar_top_d', 'sharpe_top_d',
         # —— 其他 ——
-        'last_yr', 'turn', 'neg_yr', 'n_rebal']
+        'last_yr', 'turn', 'neg_yr', 'n_rebal',
+        # ★★ 2026-09-16（用户要求「统一口径要加上**回测区间**，不然不同区间口径不可比」）：
+        #   每行记录自己的**回测首/末交易日**（int YYYYMMDD）—— 将来换数据版本/改 START 时，
+        #   一眼能看出哪些行是老区间算的 ⇒ 不可比的行不会被误当可比 ✗
+        'bt_start', 'bt_end']
 
 
 def main():
@@ -133,7 +137,9 @@ def main():
         try:
             v = LE.eval_expr(nd, B, {})
             fac = cs_rank(pd.DataFrame(v, index=dates, columns=cols).astype('float64'))
-            rr = evaluate_real(fac, close, expr, cost=a.cost, window=a.window, with_daily=True)
+            # ★ `with_ex=True` ⇒ 额外拿到期频序列 `ex`（用于记录**回测区间** 首/末交易日）
+            rr = evaluate_real(fac, close, expr, cost=a.cost, window=a.window,
+                               with_daily=True, with_ex=True)
         except Exception as e:
             print('  [{}] **求值/回测失败** {}: {}'.format(nm, type(e).__name__, e))
             continue
@@ -145,8 +151,8 @@ def main():
         ref = it['ic_ref'] if it['ic_ref'] not in (None, 0) else it['ae_lib']
         if ref not in (None, 0) and np.sign(rr['ic']) != np.sign(ref):
             sign = -1
-            rr = (evaluate_real(-fac, close, expr, cost=a.cost, window=a.window, with_daily=True)
-                  or rr)
+            rr = (evaluate_real(-fac, close, expr, cost=a.cost, window=a.window,
+                                with_daily=True, with_ex=True) or rr)
         elif ref in (None, 0):
             warn.append(nm)
         yr = rr.get('yr') or {}
@@ -160,14 +166,16 @@ def main():
             dd_top_d=rr.get('dd_top_d'), calmar_top_d=rr.get('calmar_top_d'),
             sharpe_top_d=rr.get('sharpe_top_d'),
             last_yr=rr.get('last_yr'), turn=rr.get('turn'),
-            neg_yr=sum(1 for x in yr.values() if x <= 0), n_rebal=rr.get('n_rebal')))
+            neg_yr=sum(1 for x in yr.values() if x <= 0), n_rebal=rr.get('n_rebal'),
+            bt_start=int(rr['ex'].index[0]), bt_end=int(rr['ex'].index[-1])))
         print('  [{:<10s}] {:.0f}s  超额 {:+6.2f}%/Cal {:.3f}/夏普 {:.2f}  自身 {:+6.2f}%/Cal {:.3f}'
               '  日频Cal {}  最近年 {:+.1f}% 换手 {:.1f}% 负年 {}'.format(
                   nm, time.time() - t1, rr['ann_ex'] * 100, rr['calmar'] or 0, rr['sharpe'],
                   (rr.get('ann_top') or 0) * 100, rr.get('calmar_top') or 0,
                   ('{:.3f}'.format(rr['calmar_d']) if rr.get('calmar_d') is not None else '—'),
                   (rr.get('last_yr') or 0) * 100, (rr.get('turn') or 0) * 100,
-                  rows[-1]['neg_yr']))
+                  rows[-1]['neg_yr'])
+              + '  区间 %d~%d' % (rows[-1]['bt_start'], rows[-1]['bt_end']))
 
     if rows:
         n = BF._merge_csv(a.out, rows, COLS)

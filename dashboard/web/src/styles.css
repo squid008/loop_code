@@ -277,3 +277,16 @@ tr.outbank .fcode { color: var(--mut); }
            line-height: 1.75; color: var(--mut); background: #0b1020; border: 1px dashed var(--bd); }
 .dt-note b { color: var(--fg); }
 .sel-h .det { margin-left: auto; }
+
+/* ---------------- 详情页曲线（手写 SVG，零依赖） ---------------- */
+.chwrap { margin-top: 6px; }
+.ch-t { margin: 14px 0 4px; font-size: 12.5px; color: var(--mut); }
+.ch { background: #0b1020; border: 1px solid var(--bd); border-radius: 10px;
+      padding: 6px 8px 2px; margin-bottom: 4px; }
+.ch-note { padding: 10px 12px; border: 1px dashed var(--bd); border-radius: 9px;
+           color: var(--mut); font-size: 12.5px; }
+.ch-lg { display: flex; flex-wrap: wrap; gap: 10px; padding: 2px 4px 6px;
+         font-size: 11.5px; color: var(--mut); }
+.ch-lg span { display: inline-flex; align-items: center; gap: 5px; }
+.ch-lg i { width: 10px; height: 3px; border-radius: 2px; display: inline-block; }
+.ch-lg2 { margin-top: 2px; font-size: 12px; color: var(--mut); }

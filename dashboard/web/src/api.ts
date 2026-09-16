@@ -129,6 +129,40 @@ export interface SelectedDto {
   count?: number; factors: SelectedFactor[]; gates: string[]; notes: string[]
 }
 
+/** ★ 2026-09-16：因子曲线（离线预算，详情页图表用；已下采样 ≤700 点） */
+export interface CurvesDto {
+  found: boolean
+  name?: string
+  pool?: string
+  expr?: string
+  sign?: number
+  start?: number
+  end?: number
+  n_rebal?: number
+  cost?: number
+  window?: number
+  caliber?: string
+  path?: string
+  mtime?: string | null
+  hint?: string
+  err?: string
+  daily?: {
+    dates: number[]; navT: (number | null)[]; navM: (number | null)[]
+    navE: (number | null)[]; ddE: (number | null)[]; ddT: (number | null)[]
+  }
+  period?: {
+    dates: number[]; ic: (number | null)[]; rankIc: (number | null)[]
+    decile: (number | null)[][]; ls: (number | null)[]
+    turn?: (number | null)[]
+  }
+  strip?: {
+    dates: number[]
+    navs: Record<string, (number | null)[]>
+    calmars: Record<string, number | null>
+    caliber?: string
+  } | null
+}
+
 export interface MetaDto {
   app: string; version: string
   settings: {
@@ -217,6 +251,9 @@ export const api = {
   libraries: () => get<{ libraries: LibraryDto[]; totalFactors: number }>('/library'),
   library: (pool: string) => get<LibraryDto>(`/library/${pool}`),
   selected: () => get<SelectedDto>('/selected'),
+  // ★ 因子曲线（离线预算好，读文件 + 下采样 ⇒ 打开详情几乎零开销）
+  curves: (pool: string, name: string, maxPts = 700) =>
+    get<CurvesDto>(`/curves/${pool}/${encodeURIComponent(name)}?max_pts=${maxPts}`, 60000),
   stripBank: () => get<{ found: boolean; count: number; rows: Record<string, string>[] }>('/strip-bank'),
   poolObs: (pool: string, limit = 200) =>
     get<{ found: boolean; columns: string[]; rows: Record<string, string>[] }>(`/pool-obs/${pool}?limit=${limit}`),
