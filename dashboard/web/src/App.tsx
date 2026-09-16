@@ -428,10 +428,10 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
           {inRotation ? '已参与轮转'
             : (configured ? '启动（调度器未运行）' : '启动本池')}
         </button>
-        <button className="btn stop sm" disabled={busy || (stopped && !mining)} onClick={onStop}
-                title={stopped && !mining
-                  ? `${p.label} 已停止`
-                  : `停用 ${p.label}：把它移出轮转，并结束它当前那一代。其他池不受影响`}>
+        <button className="btn stop sm" disabled={busy || !mining} onClick={onStop}
+                title={mining
+                  ? `停用 ${p.label}：把它移出轮转，并结束它当前那一代。其他池不受影响`
+                  : `${p.label} 当前没有在跑，无需停止`}>
           停止本池
         </button>
       </div>
