@@ -554,10 +554,37 @@ type ChSeries = { label: string; color: string; data: (number | null)[]; dashed?
 function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false }:
   { series: ChSeries[]; dates: number[]; height?: number
     kind?: 'line' | 'area'; yFmt?: (v: number) => string; zero?: boolean }) {
+  // ★★ 2026-09-16（用户要求）：「所有的图，点图例要能**显隐曲线**」
+  //   ⇒ 图例项变成可点按钮；隐藏的曲线**同时退出 Y 轴取值范围**（否则坐标轴被藏着的那条撑住，
+  //     等于"藏了也没用" ✗）· 换因子（图例变了）时**自动重置**显隐状态 ✓
+  const [off, setOff] = useState<Record<number, boolean>>({})
+  const sig = series.map(s => s.label).join('|')
+  useEffect(() => { setOff({}) }, [sig])
+  const vis = series.map((s, i) => ({ s, i })).filter(x => !off[x.i])
+
   const W = 720, H = height, PL = 48, PR = 10, PT = 8, PB = 16
   const vals: number[] = []
-  series.forEach(s => s.data.forEach(v => { if (v !== null && Number.isFinite(v)) vals.push(v) }))
-  if (!vals.length || !dates.length) return <div className="ch-note">（无数据）</div>
+  vis.forEach(x => x.s.data.forEach(v => { if (v !== null && Number.isFinite(v)) vals.push(v) }))
+  if (!vals.length || !dates.length) {
+    return (
+      <div className="ch">
+        <div className="ch-empty">
+          {series.length && !vis.length ? '（曲线已全部隐藏 —— 点下方图例恢复）' : '（无数据）'}
+        </div>
+        {series.length > 0 && (
+          <div className="ch-lg">
+            {series.map((s, i) => (
+              <button key={i} className={`ch-lgbtn${off[i] ? ' off' : ''}`}
+                      onClick={() => setOff(o => ({ ...o, [i]: !o[i] }))}
+                      title="点击显示 / 隐藏这条曲线">
+                <i style={{ background: s.color }} />{s.label}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    )
+  }
   let lo = Math.min(...vals), hi = Math.max(...vals)
   if (zero) { lo = Math.min(lo, 0); hi = Math.max(hi, 0) }
   const span = (hi - lo) || Math.abs(hi || 1) * 0.2
@@ -580,7 +607,7 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false 
         {zero && lo < 0 && hi > 0 && (
           <line x1={PL} y1={Y(0)} x2={W - PR} y2={Y(0)} stroke="#4b5b83" strokeDasharray="3 3" />
         )}
-        {series.map((s, k) => {
+        {vis.map(({ s, i: oi }) => {
           let d = '', pen = false
           s.data.forEach((v, i) => {
             if (v === null || !Number.isFinite(v)) { pen = false; return }
@@ -588,12 +615,13 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false 
             pen = true
           })
           if (!d) return null
-          if (kind === 'area' && k === 0) {
-            return <path key={`s${k}`} d={`${d}L${X(n - 1).toFixed(1)},${Y(0).toFixed(1)}` +
-                                       `L${X(0).toFixed(1)},${Y(0).toFixed(1)}Z`}
+          // 面积图固定在**第一条**（原始序号 0）那条上；它被隐藏时其余只画线 ✓
+          if (kind === 'area' && oi === 0) {
+            return <path key={`s${oi}`} d={`${d}L${X(n - 1).toFixed(1)},${Y(0).toFixed(1)}` +
+                                         `L${X(0).toFixed(1)},${Y(0).toFixed(1)}Z`}
                          fill={s.color + '2e'} stroke={s.color} strokeWidth="1.2" />
           }
-          return <path key={`s${k}`} d={d} fill="none" stroke={s.color} strokeWidth="1.6"
+          return <path key={`s${oi}`} d={d} fill="none" stroke={s.color} strokeWidth="1.6"
                        strokeDasharray={s.dashed ? '4 3' : undefined} />
         })}
         {xi.map(i => (
@@ -605,7 +633,11 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false 
       </svg>
       <div className="ch-lg">
         {series.map((s, i) => (
-          <span key={i}><i style={{ background: s.color }} />{s.label}</span>
+          <button key={i} className={`ch-lgbtn${off[i] ? ' off' : ''}`}
+                  onClick={() => setOff(o => ({ ...o, [i]: !o[i] }))}
+                  title={off[i] ? '点击显示这条曲线' : '点击隐藏这条曲线'}>
+            <i style={{ background: s.color }} />{s.label}
+          </button>
         ))}
       </div>
     </div>

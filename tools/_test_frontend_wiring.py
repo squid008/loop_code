@@ -71,6 +71,25 @@ chk('页面里用到的 api.mine* 都已定义%s' % ('：缺 ' + ','.join(unknow
     not unknown)
 
 print()
+print('【5】★ 因子曲线：图例必须能**点选显隐**（2026-09-16 用户要求「所有的图，点图例要能显隐曲线」）')
+chk('图例是**按钮**而非纯文本（可点）',
+    re.search(r'className=\{`ch-lgbtn\$\{off\[i\] \? \' off\' : \'\'\}`\}', src) is not None,
+    '图例若仍是 <span> ⇒ 点了没反应 ✗')
+chk('图例按钮绑定了 onClick 切换隐藏态',
+    re.search(r'onClick=\{\(\) => setOff\(o => \(\{ \.\.\.o, \[i\]: !o\[i\] \}\)\)\}', src) is not None,
+    '这是"能显隐"的本体')
+chk('隐藏的曲线**退出 Y 轴取值范围**（否则坐标轴仍被撑住 ⇒ 藏了也白藏）',
+    re.search(r'vis\.forEach\(x => x\.s\.data\.forEach', src) is not None,
+    'Y 轴取值必须基于 vis 而不是 series ✗')
+chk('换因子时**重置**显隐状态（否则换到别的因子会莫名少几条线）',
+    re.search(r'useEffect\(\(\) => \{ setOff\(\{\}\) \}, \[sig\]\)', src) is not None)
+chk('全部隐藏时有提示 + 图例仍可点回来',
+    '（曲线已全部隐藏' in src)
+# ⚠ 别写成 "`'/curves/`" —— api.ts 里是**模板字符串**（反引号），不是单引号 ✗（2026-09-16 自己踩到）
+chk('曲线接口 api.curves -> /curves/ 已定义且被页面调用',
+    ('curves:' in api and '/curves/' in api and 'api.curves(' in src))
+
+print()
 if FAIL:
     print('★★ 接线检查失败 %d 项：' % len(FAIL))
     for f in FAIL:
