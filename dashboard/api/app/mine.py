@@ -234,8 +234,17 @@ def state():
 
 
 # ---------------------------------------------------------------- 启动
-def start(pool_list, rounds=DEFAULT_ROUNDS, no_global=False):
-    """启动（或调整）轮转调度器。**已在跑 ⇒ 只更新启用集合/轮数**，不重复起进程 ✓"""
+def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True):
+    """启动（或调整）轮转调度器。**已在跑 ⇒ 只更新启用集合/轮数**，不重复起进程 ✓
+
+    :param reset_stopped: ★★★ 2026-09-16 新增（修用户报的"启动一个池，**其它池的剔除全被取消**"）：
+        · `True`（默认，**"一键启动全部"用**）⇒ **清空 `stopped`** ✓
+          —— 用户的意图是"**让这些池全部参与**"，所以清掉剔除是**对的** ✓
+        · `False`（**`start_pool()` 内部重启时用**）⇒ **保留 `stopped`** ✓
+          —— 否则"启动 500"会把用户刚停掉的 all/1000 **又拉回来** ✗✗
+        ⚠ 原实现**无条件 `stopped=[]`** ⇒ 所以 `start_pool` 里"先 start() 再写 stopped"
+          会被 start() 覆盖**一半**，且**清掉了其它池的剔除** ✗
+    """
     rounds = int(rounds)
     if not (ROUNDS_MIN <= rounds <= ROUNDS_MAX):
         raise MineError('轮数必须在 %d~%d 之间（收到 %s）' % (ROUNDS_MIN, ROUNDS_MAX, rounds))
@@ -247,20 +256,21 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, no_global=False):
         raise MineError('未知池名: %s（可选 %s）' % (bad, list(core.POOL_KEYS)))
     if not os.path.exists(RUN_TRACKS):
         raise MineError('找不到 %s' % os.path.relpath(RUN_TRACKS, settings.PROJECT_ROOT), 500)
-    if no_global:
-        raise MineError('v1.3.0 起为"单调度器轮转"，不再需要 `--no_global` '
-                        '（收尾由调度器自动承担）⇒ 请勿指定 ✗', 400)
 
     sched = scheduler()
     if sched:
-        # ★ 已在跑 ⇒ 只更新控制文件（启用集合、轮数、清掉 stopAll/stopped）
-        _write_ctl(enabled=pool_list, stopped=[], stopAll=False, rounds=rounds, running=True)
+        # ★ 已在跑 ⇒ 只更新控制文件（启用集合、轮数、清 stopAll；stopped 视 reset_stopped 而定）
+        kw = dict(enabled=pool_list, stopAll=False, rounds=rounds, running=True)
+        if reset_stopped:
+            kw['stopped'] = []
+        _write_ctl(**kw)
         return {'ok': True, 'started': [], 'reused': True,
                 'schedulerPids': [p['pid'] for p in sched],
                 'enabled': pool_list, 'rounds': rounds,
-                'note': ('调度器已在运行（PID %s）⇒ 已**就地更新**：启用池=%s、轮数=%d、'
-                         '并清除「停止」标记 ✓（未重复起进程）'
-                         % ([p['pid'] for p in sched], pool_list, rounds))}
+                'resetStopped': reset_stopped,
+                'note': ('调度器已在运行（PID %s）⇒ 已就地更新：启用池=%s、轮数=%d%s（未重复起进程）'
+                         % ([p['pid'] for p in sched], pool_list, rounds,
+                            '、并清除「停止」标记' if reset_stopped else '、**保留**已有的「停止」标记'))}
 
     free = avail_gb()
     if free is not None and free < GB_PER_ENGINE + MIN_FREE_GB:
@@ -268,8 +278,11 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, no_global=False):
                         % (free, GB_PER_ENGINE, MIN_FREE_GB), 409)
 
     os.makedirs(LOGD, exist_ok=True)
-    _write_ctl(running=True, enabled=pool_list, stopped=[], stopAll=False, rounds=rounds,
-               round=0, curPool=None, curGen=None, phase='mine', tailAt=None)
+    kw = dict(running=True, enabled=pool_list, stopAll=False, rounds=rounds,
+              round=0, curPool=None, curGen=None, phase='mine', tailAt=None)
+    if reset_stopped:
+        kw['stopped'] = []
+    _write_ctl(**kw)
     env = dict(os.environ)
     env['PYTHONIOENCODING'] = 'utf-8'
     flags = _NO_WIN
@@ -283,9 +296,10 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, no_global=False):
     return {'ok': True, 'started': [{'pool': ','.join(pool_list), 'pid': proc.pid,
                                      'alive': _alive(proc.pid), 'cmd': ' '.join(args[1:]),
                                      'log': os.path.relpath(log, settings.PROJECT_ROOT)}],
-            'enabled': pool_list, 'rounds': rounds, 'freeGB': (round(free, 1) if free is not None else None),
-            'note': ('已启动**轮转调度器**（PID %d）：启用池=%s、每池 %d 轮 ⇒ '
-                     '同一时刻只 1 个引擎（内存 1 份）✓ **每轮结束自动收尾** ✓'
+            'enabled': pool_list, 'rounds': rounds, 'resetStopped': reset_stopped,
+            'freeGB': (round(free, 1) if free is not None else None),
+            'note': ('已启动轮转调度器（PID %d）：启用池=%s、每池 %d 轮 ⇒ '
+                     '同一时刻只 1 个引擎（内存 1 份）✓ 每轮结束自动收尾 ✓'
                      % (proc.pid, pool_list, rounds))}
 
 
@@ -341,7 +355,9 @@ def stop(pool=None, **kw):
     #     · C：`stopAll` 写完**必须清掉**，否则会残留并**阻塞下次启动** ✗
     #     · D：若调度器**已不在**（例如它刚跑完最后一个池自己退了）⇒ 没人读 `stopAll`
     #          ⇒ "一键全部停 ⇒ 自动收尾"就**落空**了 ✗ ⇒ **后端兜底直接触发收尾** ✓
-    _write_ctl(stopAll=True, stopped=[])
+    # ★★ 只设 `stopAll`，**不动 `stopped`** —— 否则"全部停止 → 再启动"会**丢掉用户的剔除配置** ✗
+    #   （"一键启动全部"时若想重置，由 `start(reset_stopped=True)` 显式做 ✓）
+    _write_ctl(stopAll=True)
     killed = []
     for p in engines():
         r = subprocess.run(['taskkill', '/PID', str(p['pid']), '/T', '/F'],
@@ -380,19 +396,23 @@ def start_pool(pool):
     if pool not in core.POOL_KEYS:
         raise MineError('未知池名: %s' % pool)
     c = ctl()
+    # ★★★ 只动**这一个池**：把它从 `stopped` 移除、加入 `enabled`；
+    #     ⚠ **绝不碰其它池的 `stopped`**（否则"启动 500"会把刚停的 all/1000 又拉回来 ✗）
     st = [p for p in (c.get('stopped') or []) if p != pool]
     en = sorted(set(list(c.get('enabled') or core.POOL_KEYS) + [pool]))
     if scheduler():
         _write_ctl(stopped=st, enabled=en, stopAll=False)
         return {'ok': True, 'pool': pool, 'enabled': en, 'stopped': st, 'restarted': False,
-                'note': '已把池 **%s** 重新加入轮转（下一轮就会轮到它）✓' % pool}
-    # ★ 调度器不在 ⇒ 自动重启（轮数沿用上次，默认 50）
-    r = start(en, int(c.get('rounds') or DEFAULT_ROUNDS))
-    _write_ctl(stopped=st)
+                'note': '已把池 %s 加入轮转（下一轮就轮到它）；其它池的「停止」状态保持不变 ✓' % pool}
+    # ★ 调度器不在 ⇒ 自动重启。⚠ **必须 `reset_stopped=False`** ——
+    #   否则 `start()` 默认会 `stopped=[]`，把用户的剔除**全清掉** ✗（用户实测的 BUG）
+    rounds = int(c.get('rounds') or DEFAULT_ROUNDS)
+    r = start(en, rounds, reset_stopped=False)
+    _write_ctl(stopped=st, enabled=en)      # ★ 重启后把“只移除该池”的 stopped 写回 ✓
     return {'ok': True, 'pool': pool, 'enabled': en, 'stopped': st, 'restarted': True,
             'started': r.get('started'), 'note':
-            ('调度器原本不在运行 ⇒ 已**自动重启**（启用池=%s，来源：上次的启用集合 + %s）✓'
-             % (en, pool))}
+            ('调度器原本不在运行 ⇒ 已自动重启（轮数沿用 %d）：启用池=%s；'
+             '池 %s 已加入轮转，其它池的「停止」状态保持不变 ✓' % (rounds, en, pool))}
 
 
 # ---------------------------------------------------------------- 全局收尾（保留，前端已隐藏按钮）

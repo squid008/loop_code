@@ -390,11 +390,14 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
   //   ⇒ 语义拆分：`configured` = "已配置参与轮转"（意图）；`inRotation` = "此刻真的在轮转"（在跑）✓
   const schedRunning = !!mine?.running
   const configured = !!slot?.enabled && !slot?.stopped
+  // ★ `inRotation` = **此刻真的在轮转**（调度器在跑 + 该池在启用集合且未被剔除）
   const inRotation = schedRunning && configured
+  // ★★ `mining && !inRotation` = **在跑但已移出轮转**（它那一代还没结束，跑完就会停）
+  const leaving = mining && !inRotation
   const stopped = !!slot?.stopped || (slot != null && !slot.enabled)
   const isRunning = mining || p.running
   const cls = mining ? 'card run' : (inRotation ? 'card armed' : 'card')
-  const badge = mining ? '挖掘中'
+  const badge = mining ? (leaving ? '运行中·已移出' : '挖掘中')
     : (inRotation ? '轮转中'
       : (configured ? '待启动' : (stopped ? '已停止' : '空闲')))
   const dotColor = mining ? 'var(--ok)'
@@ -417,23 +420,29 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
         <Field k="冻结" v={fmt(st?.frozen_n)} />
         <Field k="失败库" v={fmt(st?.fail_lib_n)} />
       </div>
-      {/* 按钮不再用 disabled 悄悄禁用 —— 点了总会给明确反馈 */}
+      {/* ★★★★ 2026-09-16 按钮规则定稿（**两按钮完全互补、无重叠**）：
+          · 启动本池 ⇒ 可点条件 = **"不在轮转里"**（`!inRotation`）——
+            已经在轮转里就无需启动 ✓；★ "在跑但已移出轮转"（`leaving`）**可点** ⇒
+            点它 = 把该池**重新加入**轮转，让它继续跑 ✓（合理的救回操作）
+          · 停止本池 ⇒ 可点条件 = **"在轮转里 或 正在跑"**（`inRotation || mining`）——
+            两者都没有 ⇒ 才灰 ✓（"剔除"是状态变更、**随时可做**；正在跑的顺带结束当前代）✓
+      */}
       <div className="card-a">
-        <button className="btn start sm" disabled={busy || configured} onClick={onStart}
-                title={configured
+        <button className="btn start sm" disabled={busy || inRotation} onClick={onStart}
+                title={inRotation
                   ? `${p.label} 已在轮转里（下一轮就会轮到它）`
-                  : `把 ${p.label} 加入轮转。如果调度器没在运行，会自动启动`}>
-          {configured ? '已参与轮转' : '启动本池'}
+                  : (leaving
+                    ? `${p.label} 正在跑但已移出轮转。点它 = 重新加入轮转，让它继续参与`
+                    : `把 ${p.label} 加入轮转。如果调度器没在运行，会自动启动`)}>
+          {inRotation ? '已参与轮转' : (leaving ? '重新加入轮转' : '启动本池')}
         </button>
-        {/* ★★★★ 2026-09-16 修（用户要求）：「停止本池」= **把它从轮转里剔除**，
-            不管它此刻是否正在跑都该能做 —— 否则用户得"挨个点停止才会轮到想停的池子" ✗
-            ⇒ `disabled = busy || !configured`（只要"在轮转里"就可点）✓
-            ⇒ 它在跑 ⇒ 顺带杀掉当前那一代；没在跑 ⇒ 只从轮转移除 ✓ */}
-        <button className="btn stop sm" disabled={busy || !configured} onClick={onStop}
-                title={!configured
-                  ? `${p.label} 已经不在轮转里了`
+        <button className="btn stop sm" disabled={busy || (!inRotation && !mining)} onClick={onStop}
+                title={(!inRotation && !mining)
+                  ? `${p.label} 既不在轮转也没在跑`
                   : (mining
-                    ? `停止 ${p.label}：从轮转中移除，并结束它当前那一代。其他池不受影响`
+                    ? (leaving
+                      ? `${p.label} 已移出轮转，正在跑完当前这一代（跑完就会停）。点它可立即结束`
+                      : `停止 ${p.label}：从轮转中移除，并结束它当前那一代。其他池不受影响`)
                     : `把 ${p.label} 从轮转中移除（它当前没在跑，所以只影响后续轮次）`)}>
           停止本池
         </button>

@@ -542,8 +542,12 @@ def main():
     # ★★ 退出前**清掉 `stopAll`**（2026-09-16 修 BUG C）：
     #   残留的 `stopAll=true` 会让**下一次启动立刻又退出**（读到"全部停"）✗
     #   ⇒ 必须由"读到它的人"（本调度器）负责清掉 ✓
+    # ⚠⚠ 但**绝不清 `stopped`**（2026-09-16 修）：
+    #   `stopped` 是**用户的配置**（"我暂时不要跑这几个池"），**不是运行时状态** ✗
+    #   本函数在"全部停止/跑完"退出时都会走到这里 ⇒ 若清 `stopped`，
+    #   用户"全停 → 再启动"就会发现**自己的剔除配置丢了** ✗（实测到）
     write_ctl(running=False, phase='idle', curPool=None, curGen=None,
-              stopAll=False, stopped=[], tailAt=None)
+              stopAll=False, tailAt=None)
     log('  [CTL] 调度器退出（已复位控制文件）✓')
     # ★★★ 收尾：**跨池审查 + 精选池**（2026-09-14 用户批准；见 `tools/cross_pool_review.py`）
     #   为什么必须放在这里：**跨池去重无法放进引擎** —— 三个池是独立进程、互不知道；
