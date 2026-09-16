@@ -25,6 +25,112 @@ FACTOR_FIELDS = [
 _MD_ROW = re.compile(r'^\|(.+)\|\s*$')
 _SEP = re.compile(r'^\|[\s:|-]+\|\s*$')
 
+# ================================================================ 因子明细
+# ★★ 2026-09-16 新增（用户之问）：
+#   总览表里的"一句话"列是**截断的表达式**（例：`sub(ts_min20(barra_beta), ts_mean60(barra…`），
+#   而用户点开一个因子时要看：**完整公式（可复制）· 池标签 · 各项费后指标** ——
+#   这些只存在于**明细段**（`### F01 · gen1 入库` 那一段）⇒ 必须解析明细段 ✓
+_METRICS_CSV = 'factor_metrics.csv'
+
+
+def _detail_blocks(txt):
+    """解析 `factor_library*.md` 的明细段 ⇒ `{编号: {expr, sign, family, leaves, skeleton,
+    poolTag, poolTagNote, strip, metricsDocText}}`。
+
+    ⚠⚠ 2026-09-16 实测踩坑（**静默失配**）：`core.read_text()` 是「**二进制读 + decode**」⇒
+      **保留 `\\r\\n`**；而本函数原来用 `\\n` 写正则 ⇒ 在 Windows 检出的文件上
+      **代码块（```）这两条正则直接匹配不到** ⇒ `expr`/`skeleton` 全为空，
+      而 `poolTag`/`sign` 那几条（不依赖换行）却正常 ⇒ **界面看着"有信息"，公式却是空的** ✗
+      ⇒ 所以：**解析 md 前先统一换行**（并且正则写成 `\\r?\\n` 兜底）✓
+    """
+    txt = str(txt or '').replace('\r\n', '\n').replace('\r', '\n')
+    out = {}
+    parts = re.split(r'\n###\s+(F\d+)\s*·\s*', txt)
+    for k in range(1, len(parts) - 1, 2):
+        code, body = parts[k].strip(), parts[k + 1]
+        d = {}
+        m = re.search(r'```\r?\n([^\r\n]+)', body)
+        d['expr'] = m.group(1).strip() if m else ''
+        m = re.search(r'符号\s*`?sign`?[^：:]*[：:]\s*`?(-?\d+)', body)
+        d['sign'] = m.group(1) if m else ''
+        for key, pat in (
+                ('family', r'-\s*家族[：:]\s*([^\n]+)'),
+                ('leaves', r'-\s*叶子[：:]\s*([^\n]*)'),
+                ('skeleton', r'-\s*骨架[：:]\s*`([^`]+)`'),
+        ):
+            m = re.search(pat, body)
+            d[key] = m.group(1).strip() if m else ''
+        m = re.search(r'-\s*池标签[：:]\s*([^\n]+)', body)
+        if m:
+            raw = m.group(1)
+            mt = re.search(r'`([^`]+)`', raw)
+            d['poolTag'] = mt.group(1) if mt else ''
+            d['poolTagNote'] = re.sub(r'^[^—]*—\s*', '', re.sub(r'[`*]', '', raw)).strip()
+        else:
+            d['poolTag'], d['poolTagNote'] = '', ''
+        m = re.search(r'-\s*剥风格[：:]\s*([^\n]+)', body)
+        d['strip'] = m.group(1).strip() if m else ''
+        # 归档的费后指标行（可能是老口径 ⇒ 只作参考，面板以"统一重算"表为准）
+        m = re.search(r'费后指标[^：]*：([^\n]+)', body)
+        d['metricsDocText'] = m.group(1).strip() if m else ''
+        out[code] = d
+    return out
+
+
+# ⚠ 只处理"**机器味**"的符号：★/⚠（删除）与 ⇒（换成逗号）。
+#   **不要动 `——`** —— 它是**规范的中文破折号**，不是 AI 味 ✗（2026-09-16 实测：曾把它换成 `：`
+#   反而把「生成 —— 可随时重建」读成「生成 ： 可随时重建」）
+_SYM = (('★', ''), ('⚠', ''), ('⇒', '，'), ('・', '·'))
+
+
+def _plain(s):
+    """把「给人看」的文本洗成**纯文本**。
+
+    ★★ 2026-09-16（用户反馈「下游使用须知里面也是各种引号处理一下」）：
+      `docs/*.md` 是**技术文档**（Markdown 合理），但它**同时被看板展示**，而浏览器
+      **不渲染 Markdown** ⇒ `` `sign` `` 会原样显示成带反引号、`**加粗**` 显示成星号 ✗
+      ⇒ 在**后端出口处**统一清洗：去 `**` 与反引号、把 `★ ⚠ ⇒ ——` 换成人话标点 ✓
+    （md 文件本身保持技术风格，不动 —— 两边各司其职）
+    """
+    s = str(s or '').replace('**', '')
+    s = re.sub(r'`([^`]*)`', r'\1', s)
+    for a, b in _SYM:
+        s = s.replace(a, b)
+    s = re.sub(r'，+', '，', s)
+    s = re.sub(r'\s+', ' ', s)
+    return s.strip(' ，：')
+
+
+def _num(x):
+    try:
+        v = float(str(x).strip())
+        return v
+    except Exception:
+        return None
+
+
+def _metrics_table():
+    """读 `docs/factor_metrics.csv`（`tools/factor_metrics.py` 生成的**统一口径**指标表）。
+
+    ★ 为什么要有这张表：引擎在**入库当期**只把"超额"那几项写进 md 明细行，
+      **"组合自身"口径（年化/卡玛/夏普/最大回撤）从来没落盘** ⇒ 明细里查不到。
+      该表由 `state.bank`（权威）+ 离线重算生成 ⇒ 顺带回答"**哪些编号还在当前库里**" ✓
+    """
+    p = core.docs_path(_METRICS_CSV)
+    head, rows = core.read_csv_rows(p)
+    if not head:
+        return {}, None, {'found': False}
+    out = {}
+    for r in rows:
+        d = dict(zip(head, r))
+        nm = (d.get('name') or '').strip()
+        if not nm:
+            continue
+        d['_num'] = {k: _num(v) for k, v in d.items()}
+        out[nm] = d
+    return out, core.mtime_iso(p), {'found': True, 'path': os.path.relpath(p, core.ROOT),
+                                    'rows': len(out)}
+
 
 def _md_table(lines, header_hint, max_rows=400):
     """从 markdown 行里找表头命中 `header_hint`（任一关键词）的表格 ⇒ `(header, rows)`。
@@ -104,6 +210,21 @@ def library(pool):
     #   · `stateBank`    = `engine/loop_state[_<池>].pkl` 的 `bank` 长度 ⇒ ★ **当前有效库（权威）**
     #   实测（2026-09-15）: 300 → 3 / 2 / 2 · 500 → 5 / 3 / 3 · 1000 → 10 / 4 / 5
     #   ⇒ ★ 前端展示**以 `stateBank` 为准**，并把另两个作为"口径说明"一并给出 ✓
+    # ★★ 2026-09-16：把**明细段**（完整公式/池标签/符号/骨架）与**统一口径指标表**接到每个因子上
+    det = _detail_blocks(txt)
+    mtab, mt_mtime, mt_info = _metrics_table()
+    for f in factors:
+        code = f['code']
+        nm = code if pool == 'all' else '%s_%s' % (code, pool)
+        d = det.get(code) or {}
+        f['expr'] = d.get('expr') or f['expr']          # ★ 完整公式（总览列是被截断的）
+        f['detail'] = {k: d.get(k, '') for k in
+                       ('sign', 'family', 'leaves', 'skeleton', 'poolTag')}
+        for k in ('poolTagNote', 'strip', 'metricsDocText'):     # 散文类 ⇒ 出口处清洗
+            f['detail'][k] = _plain(d.get(k, ''))
+        f['metrics'] = (mtab.get(nm) or {}).get('_num') or {}
+        # ★ `inBank`：指标表是**按 state.bank 生成**的 ⇒ 不在表里 = 已移出当前库（仅剩历史编号）
+        f['inBank'] = nm in mtab
     st = core.load_state(pool)
     return {
         'pool': pool, 'label': core.pool_label(pool), 'found': True,
@@ -112,6 +233,10 @@ def library(pool):
         'stateBank': (st or {}).get('bank_n'),             # ★ 权威：当前有效库
         'stateTested': (st or {}).get('n_tested'),
         'stateFrozen': (st or {}).get('frozen_n'),
+        'metricsFound': mt_info.get('found'),
+        'metricsInfo': mt_info,
+        'metricsMtime': mt_mtime,
+        'metricsMeasured': sum(1 for f in factors if f.get('inBank')),
         'caliber': {
             'authoritative': 'stateBank',
             'mdTableRows': len(factors),
@@ -140,17 +265,26 @@ def selected():
         return {'found': False, 'factors': [], 'gates': [], 'notes': []}
     lines = txt.splitlines()
 
-    # 上方的"须知"要点（> 开头）
-    notes = [l.lstrip('> ').strip() for l in lines[:40]
+    # 上方的"须知"要点（> 开头）—— ★ 出口处清洗成纯文本（浏览器不渲染 Markdown）
+    notes = [_plain(l.lstrip('> ').strip()) for l in lines[:40]
              if l.strip().startswith('>') and len(l.strip()) > 6][:8]
 
-    # 双闸门说明
+    # 双闸门说明（★ 连**缩进的子条目**一起收 —— 否则只剩标题、解释全丢 ✗）
     gates = []
     for i, l in enumerate(lines):
         if '双闸门' in l and l.startswith('##'):
-            for l2 in lines[i + 1:i + 12]:
-                if re.match(r'^\d+\.', l2.strip()):
-                    gates.append(re.sub(r'^\d+\.\s*', '', l2.strip()))
+            for l2 in lines[i + 1:i + 30]:
+                s2 = l2.strip()
+                if not s2:
+                    continue
+                if s2.startswith('##'):                 # 下一节 ⇒ 停
+                    break
+                m_num = re.match(r'^\d+\.\s*(.+)', s2)
+                m_sub = re.match(r'^[-–*]\s+(.+)', s2)
+                if m_num:
+                    gates.append(_plain(m_num.group(1)))
+                elif m_sub and gates:                   # 子条目接着上一条
+                    gates.append('· ' + _plain(m_sub.group(1)))
 
     head, rows = _md_table(lines, ['剥风格档'])
     i_no, i_code = (0 if head and '#' in head[0] else None), None

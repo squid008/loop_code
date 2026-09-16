@@ -209,3 +209,47 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 /* ---------------- footer ---------------- */
 .foot { margin-top: 22px; color: var(--mut); font-size: 12px; display: flex; gap: 8px;
         justify-content: center; flex-wrap: wrap; }
+
+/* ---------------- 因子库：编号按钮 / 出库行 / 详情面板（2026-09-16） ---------------- */
+.fcode { background: none; border: 0; padding: 0; cursor: pointer; color: var(--fg);
+         font-family: var(--mono); font-size: 12.5px; font-weight: 700; text-align: left; }
+.fcode:hover { color: #a5b4fc; text-decoration: underline; }
+tr.outbank td { opacity: .62; }
+tr.outbank .fcode { color: var(--mut); }
+
+.dt-mask { position: fixed; inset: 0; z-index: 999; padding: 24px;
+           background: rgba(4, 8, 20, .62); backdrop-filter: blur(2px);
+           display: flex; align-items: center; justify-content: center; }
+.dt { width: 100%; max-width: 880px; max-height: 88vh; overflow: auto;
+      background: var(--card); border: 1px solid var(--bd); border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, .55); }
+.dt-h { display: flex; align-items: center; gap: 10px; padding: 14px 18px;
+        border-bottom: 1px solid var(--bd); position: sticky; top: 0; background: var(--card); }
+.dt-h b { font-size: 15px; }
+.dt-h .out { background: #f59e0b22; color: var(--amber); border: 1px solid #f59e0b55;
+             border-radius: 8px; padding: 2px 8px; font-size: 11.5px; }
+.dt-h .mut { color: var(--mut); font-size: 12.5px; }
+.dt-h .x { margin-left: auto; background: none; border: 0; color: var(--mut);
+           font-size: 20px; cursor: pointer; line-height: 1; }
+.dt-b { padding: 14px 18px 20px; }
+.dt-row { display: flex; gap: 10px; padding: 5px 0; font-size: 13px; }
+.dt-row .k { flex: none; width: 76px; color: var(--mut); }
+.dt-row .v { flex: 1; }
+.dt-row .v em { margin-left: 8px; color: var(--mut); font-style: normal; font-size: 12px; }
+.dt-sec { display: flex; align-items: baseline; gap: 10px; margin: 16px 0 8px;
+          padding-top: 12px; border-top: 1px solid var(--bd); }
+.dt-sec > span { font-weight: 700; font-size: 13px; }
+.dt-sec > em { color: var(--mut); font-size: 12px; font-style: normal; margin-left: auto; }
+.dt-expr { margin: 0; padding: 12px 14px; background: var(--card2); border: 1px solid var(--bd);
+           border-radius: 10px; font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
+           color: #c7d2fe; white-space: pre-wrap; word-break: break-all; }
+.dt-grp { margin: 10px 0 4px; }
+.dt-grp-h { color: var(--mut); font-size: 12px; margin-bottom: 6px; }
+.dt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
+.dt-cell { display: flex; flex-direction: column; gap: 2px; padding: 8px 10px;
+           background: var(--card2); border: 1px solid var(--bd); border-radius: 9px; }
+.dt-cell .dk { color: var(--mut); font-size: 11.5px; }
+.dt-cell .dv { font-family: var(--mono); font-size: 13.5px; color: var(--fg); }
+.dt-warn { margin-top: 12px; padding: 9px 12px; border-radius: 9px; font-size: 12.5px;
+           background: #f59e0b1a; border: 1px solid #f59e0b44; color: #fcd34d; }
+.dt-doc { margin-top: 10px; color: var(--mut); font-size: 12px; line-height: 1.7; }

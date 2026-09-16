@@ -76,9 +76,20 @@ export interface StatusDto {
   }
 }
 
+/** ★ 2026-09-16：明细段 + 统一口径指标（点开"详情"用） */
 export interface LibraryFactor {
   code: string; pool: string; gen: string; family: string
-  summary: string; status: string; expr: string
+  summary: string; status: string
+  /** ★ **完整公式**（来自明细段）；注意总览表那一列是被截断的 */
+  expr: string
+  /** 该编号是否**仍在当前有效库**（`state.bank`）里；`false` = 只剩历史编号 */
+  inBank?: boolean
+  detail?: {
+    sign: string; family: string; leaves: string; skeleton: string
+    poolTag: string; poolTagNote: string; strip: string; metricsDocText: string
+  }
+  /** 统一口径的费后指标（`tools/factor_metrics.py` 重算；缺失项为 null） */
+  metrics?: Record<string, number | null>
 }
 
 export interface LibraryDto {
@@ -88,6 +99,11 @@ export interface LibraryDto {
   stateBank: number | null
   stateTested: number | null
   stateFrozen: number | null
+  /** 指标表（`docs/factor_metrics.csv`）是否可用 + 其中属于本池的条数 */
+  metricsFound?: boolean
+  metricsInfo?: { found: boolean; path?: string; rows?: number }
+  metricsMtime?: string | null
+  metricsMeasured?: number
   caliber?: {
     authoritative: string; mdTableRows: number; mdTableMeans: string
     mdDeclared: number | null; mdDeclaredMeans: string

@@ -334,6 +334,16 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
     sharpe = ex.mean() / ex.std() * np.sqrt(243 / FWD) if ex.std() > 0 else np.nan
     ann_t = nav_t.iloc[-1] ** (1 / yrs) - 1
     ann_m = nav_m.iloc[-1] ** (1 / yrs) - 1
+    # ★ 2026-09-16 新增「**组合自身（非超额）**」的风险三件套（用户要"本身的年化/卡玛/夏普/最大回撤"）：
+    #   原来只返回 `ann_top`（组合年化），而下游（因子明细/看板）拿不到组合自己的回撤/卡玛/夏普
+    #   ⇒ 口径与 `dd`/`calmar`/`sharpe`（**超额**口径）**严格对应**，只是换成 `tr` 那条腿：
+    #     dd_top      = 组合净值 `nav_t` 的最大回撤
+    #     calmar_top  = ann_top / |dd_top|
+    #     sharpe_top  = tr.mean()/tr.std() × sqrt(243/FWD)（与超额夏普同式）
+    #   ⇒ **纯新增字段，不改任何既有返回值**（旧调用方行为逐位不变）✓
+    dd_t = (nav_t / nav_t.cummax() - 1).min()
+    calmar_t = ann_t / abs(dd_t) if dd_t < 0 else np.nan
+    sharpe_t = (tr.mean() / tr.std() * np.sqrt(243 / FWD)) if tr.std() > 0 else np.nan
     yr_ex = {}
     for y, g in ex.groupby(ex.index // 10000):
         yr_ex[y] = (1 + g).prod() - 1
@@ -342,6 +352,8 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
     res = {
         'name': name, 'window': window, 'ic': ic_mean, 'ic_ir': ic_ir,
         'ic_win': ic_win, 'ic_series': ic, 'ann_top': ann_t, 'ann_mkt': ann_m,
+        # ★ 2026-09-16：组合自身口径的风险三件套（新增字段，旧调用方不受影响）
+        'dd_top': dd_t, 'calmar_top': calmar_t, 'sharpe_top': sharpe_t,
         'ann_ex': ann_e, 'dd': dd_e, 'sharpe': sharpe, 'calmar': calmar,
         'yr': yr_ex, 'last_yr': yr_ex.get(recent, np.nan),
         'last2_yr': yr_ex.get(recent_2, np.nan), 'n_rebal': len(tr),

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
-  type LibraryDto, type MetaDto, type MineStateDto, type PoolStatus,
+  type LibraryDto, type LibraryFactor, type MetaDto, type MineStateDto, type PoolStatus,
   type SelectedDto, type StatusDto,
 } from './api'
 
@@ -417,32 +417,176 @@ function Field({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
 
 function LibraryTable({ lib }: { lib: LibraryDto }) {
   const c = lib.caliber
+  const [sel, setSel] = useState<LibraryFactor | null>(null)
+  const nIn = lib.factors.filter(f => f.inBank).length
   return (
     <div className="libwrap">
       <div className="caliber">
         <b>口径说明</b>（这里三个数字不一样，以第一个为准）：
         <ul>
           <li><b>当前有效库 = {fmt(lib.stateBank)}</b> —— <span>权威：引擎实际在用的对照集，来自 <code>loop_state_{lib.pool}.pkl</code></span></li>
-          <li>本表行数 = {fmt(lib.count)} —— <span>累计入库编号，该文件只增不改</span></li>
+          <li>本表行数 = {fmt(lib.count)} —— <span>累计入库编号，该文件只增不改（<b>其中 {nIn} 个仍在当前库</b>）</span></li>
           <li>文件声明 = {fmt(lib.declaredCount)} —— <span>引擎同步的快照，可能落后</span></li>
         </ul>
-        <div className="note">注意：不要把「累计编号」当成「当前库」，页面一律以<b>当前有效库</b>为准。</div>
+        <div className="note">
+          行数比「当前有效库」多的原因：编号是累计的，而因子会被移出库（比如剥风格后发现它只是纯风格因子）。
+          带「历史」标记的行就是已不在当前库的编号；点编号可以看完整公式和各项指标。
+        </div>
       </div>
       <table className="tbl">
-        <thead><tr><th>编号</th><th>入库代数</th><th>家族</th><th>一句话</th><th>状态</th></tr></thead>
+        <thead><tr><th>编号</th><th>入库代数</th><th>家族</th><th>一句话（公式可能被截断）</th><th>状态</th><th>详情</th></tr></thead>
         <tbody>
           {lib.factors.map((f, i) => (
-            <tr key={`${f.code}-${i}`}>
-              <td className="mono strong">{f.code}</td>
+            <tr key={`${f.code}-${i}`} className={f.inBank ? '' : 'outbank'}>
+              <td className="mono strong">
+                <button className="fcode" onClick={() => setSel(f)}
+                        title={f.inBank
+                          ? '点开看完整公式（可复制）、池标签与各项费后指标'
+                          : '该编号已不在当前有效库，只剩历史编号（文件只增不改）。点开仍能看到公式与指标'}>
+                  {f.code}{f.inBank ? '' : ' · 历史'}
+                </button>
+              </td>
               <td className="mono">{f.gen}</td>
               <td>{f.family}</td>
               <td className="sum">{f.summary}</td>
               <td><span className="status">{f.status}</span></td>
+              <td><button className="btn sm" onClick={() => setSel(f)}>详情</button></td>
             </tr>
           ))}
         </tbody>
       </table>
       {!lib.factors.length && <div className="empty">（本池无表格数据）</div>}
+      {sel && <FactorDetail f={sel} metricsInfo={lib.metricsInfo} metricsMtime={lib.metricsMtime}
+                            onClose={() => setSel(null)} />}
+    </div>
+  )
+}
+
+/** 指标定义：`[字段, 名称, 类型, 说明]` —— 分「超额口径 / 组合自身口径 / 日频 / 其他」四组展示 */
+const METRIC_GROUPS: Array<[string, Array<[string, string, 'pct' | 'num' | 'int']>]> = [
+  ['超额口径（组合 − 池内等权基准）', [
+    ['ann_ex', '超额年化', 'pct'], ['calmar', '超额卡玛', 'num'],
+    ['sharpe', '超额夏普', 'num'], ['dd', '超额最大回撤', 'pct'],
+  ]],
+  ['组合自身口径（Top10% 等权那一腿）', [
+    ['ann_top', '年化', 'pct'], ['calmar_top', '卡玛', 'num'],
+    ['sharpe_top', '夏普', 'num'], ['dd_top', '最大回撤', 'pct'],
+  ]],
+  ['日频打点（同一策略，风险不被低估）', [
+    ['calmar_d', '卡玛（日频）', 'num'], ['dd_d', '最大回撤（日频）', 'pct'],
+    ['sharpe_d', '夏普（日频）', 'num'],
+  ]],
+  ['其他', [
+    ['last_yr', '最近一年超额', 'pct'], ['turn', '单期换手', 'pct'],
+    ['neg_yr', '负年个数（年度超额 ≤0）', 'int'], ['ic', 'IC', 'num'], ['ic_ir', 'IC_IR', 'num'],
+  ]],
+]
+
+const fmtM = (v: number | null | undefined, kind: 'pct' | 'num' | 'int') => {
+  if (v === null || v === undefined || Number.isNaN(v)) return '—'
+  if (kind === 'pct') return `${(v * 100).toFixed(2)}%`
+  if (kind === 'int') return String(v)
+  return v.toFixed(3)
+}
+
+/** 因子详情：完整公式（可复制）+ 池标签 + 各项费后指标 */
+function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
+  { f: LibraryFactor; metricsInfo?: LibraryDto['metricsInfo']
+    metricsMtime?: string | null; onClose: () => void }) {
+  const [copied, setCopied] = useState(false)
+  const m = f.metrics ?? {}
+  const d = f.detail ?? ({} as NonNullable<LibraryFactor['detail']>)
+  const expr = f.expr || f.summary
+  const doCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(expr)
+    } catch {
+      const ta = document.createElement('textarea')
+      ta.value = expr
+      ta.style.position = 'fixed'
+      ta.style.opacity = '0'
+      document.body.appendChild(ta)
+      ta.select()
+      document.execCommand('copy')
+      document.body.removeChild(ta)
+    }
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 2500)
+  }
+  return (
+    <div className="dt-mask" onClick={onClose}>
+      <div className="dt" onClick={e => e.stopPropagation()}>
+        <div className="dt-h">
+          <b className="mono">{f.code}</b>
+          {!f.inBank && <span className="out">已不在当前有效库（历史编号）</span>}
+          <span className="mut">{f.family}</span>
+          <button className="x" onClick={onClose}>×</button>
+        </div>
+        <div className="dt-b">
+          <div className="dt-row">
+            <span className="k">池标签</span>
+            <span className="v">
+              {d.poolTag ? <b className="mono">{d.poolTag}</b> : '—'}
+              {d.poolTagNote ? <em>{d.poolTagNote}</em> : null}
+            </span>
+          </div>
+          <div className="dt-row">
+            <span className="k">方向 sign</span>
+            <span className="v">
+              {d.sign
+                ? <><b className="mono">{d.sign}</b><em>因子值须乘它才是"越大越好"；不乘会反向选股</em></>
+                : '—'}
+            </span>
+          </div>
+          {d.strip && (
+            <div className="dt-row"><span className="k">剥风格</span><span className="v">{d.strip}</span></div>
+          )}
+          {d.leaves && (
+            <div className="dt-row"><span className="k">叶子</span><span className="v mono">{d.leaves}</span></div>
+          )}
+          {d.skeleton && (
+            <div className="dt-row"><span className="k">骨架</span><span className="v mono">{d.skeleton}</span></div>
+          )}
+
+          <div className="dt-sec">
+            <span>完整公式</span>
+            <button className="btn sm" onClick={doCopy}>{copied ? '已复制' : '复制公式'}</button>
+          </div>
+          <pre className="dt-expr">{expr}</pre>
+
+          <div className="dt-sec">
+            <span>费后指标</span>
+            <em className="mut">
+              {metricsInfo?.found
+                ? `统一口径重算（成本 0.004 往返 · 5 日调仓 · 全A 面板）${metricsMtime ? ` · 更新于 ${metricsMtime}` : ''}`
+                : '指标表未生成：先跑 python tools/factor_metrics.py'}
+            </em>
+          </div>
+          {METRIC_GROUPS.map(([title, defs]) => (
+            <div key={title} className="dt-grp">
+              <div className="dt-grp-h">{title}</div>
+              <div className="dt-grid">
+                {defs.map(([key, label, kind]) => (
+                  <div key={key} className="dt-cell">
+                    <span className="dk">{label}</span>
+                    <span className="dv">{metricsInfo?.found ? fmtM(m[key], kind) : '—'}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          {m.ic_doc !== undefined && m.ic_doc !== null && m.ic !== null && m.ic !== undefined &&
+            Math.abs(m.ic - m.ic_doc) > 0.002 && (
+              <div className="dt-warn">
+                归档时记录的 IC 是 {m.ic_doc.toFixed(4)}，这里重算是 {m.ic.toFixed(4)}（口径可能不同：
+                早期条目的成本档/窗口未必与现在一致）。本面板一律用上面这套统一口径。
+              </div>
+            )}
+          {d.metricsDocText && (
+            <div className="dt-doc">归档时的指标行：{d.metricsDocText}</div>
+          )}
+        </div>
+      </div>
     </div>
   )
 }

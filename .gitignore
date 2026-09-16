@@ -46,6 +46,8 @@ docs/loop_strip_style*.csv
 docs/loop_pool_obs*.csv
 # 池标签导出（pool_tags.py 从上面两个文件派生, 可随时重算 -> 喂 PG 用）
 docs/pool_tags*.csv
+# ★ 因子费后指标表（2026-09-16, tools/factor_metrics.py 按 state.bank 离线重算 -> 可随时重建）
+docs/factor_metrics.csv
 # gen16 前旧快照已归 history/（停更，已 git 跟踪为归档，此处不再 ignore）
 
 # IDE / 系统
