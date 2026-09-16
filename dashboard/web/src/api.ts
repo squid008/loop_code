@@ -161,6 +161,31 @@ export interface CurvesDto {
     calmars: Record<string, number | null>
     caliber?: string
   } | null
+  /** ★ 风格相关性画像（逐期截面 Spearman；raw=原始 / neut=剥总市值+行业） */
+  style?: StyleProfileDto | null
+}
+
+export interface StyleSummDto {
+  mean: number | null
+  meanAbs: number | null
+  ir: number | null
+  /** 朴素 t = IR·√T（⚠ 相关序列自相关高时会被放大，别直接看） */
+  t: number | null
+  /** ★ AR(1) 校正后的 t（T_eff = T·(1−ac1)/(1+ac1)）—— 该看这个 */
+  tAdj: number | null
+  win: number | null
+  ac1: number | null
+}
+
+export interface StyleProfileDto {
+  n_periods: number
+  styles: string[]
+  ind_names: string[]
+  caliber: string
+  raw: Record<string, StyleSummDto>
+  neut: Record<string, StyleSummDto>
+  ind: { raw: StyleSummDto[]; neut: StyleSummDto[] }
+  r2: { raw: number | null; neut: number | null }
 }
 
 export interface MetaDto {

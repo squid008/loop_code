@@ -90,6 +90,27 @@ chk('曲线接口 api.curves -> /curves/ 已定义且被页面调用',
     ('curves:' in api and '/curves/' in api and 'api.curves(' in src))
 
 print()
+print('【6】★ 风格相关性画像：横向条形图 + 图例显隐 + 数据来源（2026-09-16 用户要求）')
+chk('风格画像走**同一个 /curves 接口**的 style 字段（不另开接口）',
+    'StyleProfileDto' in api and "'style': d.get('style')" in io.open(
+        r'D:\loop_code\dashboard\api\app\sources\factors.py', encoding='utf-8').read(),
+    '另开接口要多一次请求、多一份缓存 ✗')
+chk('横向条形图组件已实现', 'function BarChart' in src)
+chk('条形图图例同样**可点显隐**（与折线图同约定）',
+    'ch-lgbtn' in src and re.search(r'点击隐藏 / 显示「原始」这一根', src) is not None)
+chk('风格图固定值域 ±1 ⇒ **跨因子可比**', 'domain={1}' in src,
+    '自适应值域会让"0.05 看着和 0.5 一样长" ✗')
+chk('行业条用自适应值域（相关性本身很小，固定 ±1 会看不见）',
+    re.search(r'<BarChart rows=\{indRows\} />', src) is not None)
+chk('统计表含 IR / t / 胜率 / 自相关（不是只给一个相关系数）',
+    all(k in src for k in ('|均值|', '>IR<', '>t<', '胜率', '自相关')))
+# ★ 2026-09-16 实测教训：相关序列 ac1≈0.93~0.97 ⇒ 朴素 t=IR·√T 会被放大数倍 ⇒ 必须显示**校正后**的 t
+chk('表里同时有 **校正 t 与朴素 t**，且用 tAdj', '>t朴素<' in src and 'tAdj' in src)
+chk('未生成时给可执行提示（不是空白）', '--stage=style+strip2' in src)
+chk('新增两个剥法（剥流通市值 / 剥总市值+限售）已接进图例',
+    all(k in src for k in ('floatcap', 'caplimit')))
+
+print()
 if FAIL:
     print('★★ 接线检查失败 %d 项：' % len(FAIL))
     for f in FAIL:

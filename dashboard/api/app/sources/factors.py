@@ -347,6 +347,8 @@ def curves(name, max_pts=700):
         'start': d.get('start'), 'end': d.get('end'), 'n_rebal': d.get('n_rebal'),
         'cost': d.get('cost'), 'window': d.get('window'),
         'caliber': d.get('caliber'), 'path': rel.replace('\\', '/'),
+        # ★ 风格相关性画像（2026-09-16）：逐期截面 Spearman 的统计量，量小（几百个数）⇒ 原样透传
+        'style': d.get('style'),
         'mtime': core.mtime_iso(p),
         'daily': daily, 'period': period, 'strip': strip,
     }

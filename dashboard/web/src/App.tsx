@@ -647,6 +647,83 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false 
 const fmtN3 = (v: number | null | undefined) =>
   v === null || v === undefined || Number.isNaN(v) ? '—' : v.toFixed(3)
 
+/** ★★ 横向条形图（风格相关性用）—— 2026-09-16
+ *  · 每行两根：上=**原始**、下=**剥离后**（剥总市值+行业）；0 在中间，左负右正
+ *  · `domain` 给了就固定值域（风格相关性固定 ±1 ⇒ **跨因子可比** ✓）；不给则按数据自适应（行业用）
+ *  · 图例可点（与折线图同约定） */
+type BarRow = { label: string; v1: number | null; v2?: number | null }
+
+function BarChart({ rows, rowH = 15, domain, fmt, tag2 = '剥后' }:
+  { rows: BarRow[]; rowH?: number; domain?: number; fmt?: (v: number) => string; tag2?: string }) {
+  const [hide, setHide] = useState<{ a: boolean; b: boolean }>({ a: false, b: false })
+  const sig = rows.map(r => r.label).join('|')
+  useEffect(() => { setHide({ a: false, b: false }) }, [sig])
+  const W = 720, LX = 112, RX = 104, gap = 5
+  const vs: number[] = []
+  rows.forEach(r => {
+    if (!hide.a && r.v1 !== null && Number.isFinite(r.v1)) vs.push(r.v1)
+    if (!hide.b && r.v2 !== undefined && r.v2 !== null && Number.isFinite(r.v2)) vs.push(r.v2)
+  })
+  if (!rows.length || !vs.length) return <div className="ch-note">（无数据）</div>
+  const mx = domain ?? Math.max(0.05, Math.max(...vs.map(Math.abs)) * 1.15)
+  const H = rows.length * (rowH + gap) + 10
+  const X = (v: number) => LX + (W - LX - RX) * (v + mx) / (2 * mx)
+  const fv = fmt ?? ((v: number) => v.toFixed(2))
+  const bar = (v: number | null | undefined, y: number, h: number, color: string) => {
+    if (v === null || v === undefined || !Number.isFinite(v)) return null
+    const x0 = X(0), x1 = X(v)
+    return <rect x={Math.min(x0, x1)} y={y} width={Math.max(1, Math.abs(x1 - x0))}
+                 height={h} fill={color} rx="1.5" />
+  }
+  return (
+    <div className="ch">
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img">
+        <line x1={X(0)} y1={2} x2={X(0)} y2={H - 6} stroke="#4b5b83" strokeWidth="1" />
+        <line x1={X(-mx)} y1={2} x2={X(-mx)} y2={H - 6} stroke="#1e2846" />
+        <line x1={X(mx)} y1={2} x2={X(mx)} y2={H - 6} stroke="#1e2846" />
+        {rows.map((r, i) => {
+          const y = i * (rowH + gap) + 2
+          const hh = Math.max(3, (rowH - 2) / 2)
+          return (
+            <g key={i}>
+              <text x={LX - 6} y={y + rowH / 2 + 3} fontSize="10.5" fill="#c8d3ee"
+                    textAnchor="end">{r.label}</text>
+              {!hide.a && bar(r.v1, y - 0.5, hh, CPAL[0])}
+              {!hide.b && bar(r.v2, y + hh + 0.5, hh, CPAL[2])}
+              <text x={W - RX + 6} y={y + rowH / 2 + 3} fontSize="9.5" fill="#8b9ac0">
+                {fv(r.v1 ?? NaN)}{r.v2 !== undefined && r.v2 !== null ? ` / ${fv(r.v2)}` : ''}
+              </text>
+            </g>
+          )
+        })}
+      </svg>
+      <div className="ch-lg">
+        <button className={`ch-lgbtn${hide.a ? ' off' : ''}`}
+                onClick={() => setHide(o => ({ ...o, a: !o.a }))}
+                title="点击隐藏 / 显示「原始」这一根">
+          <i style={{ background: CPAL[0] }} />原始
+        </button>
+        <button className={`ch-lgbtn${hide.b ? ' off' : ''}`}
+                onClick={() => setHide(o => ({ ...o, b: !o.b }))}
+                title="点击隐藏 / 显示「剥离后」这一根">
+          <i style={{ background: CPAL[2] }} />{tag2}（剥总市值+行业）
+        </button>
+        <span className="ch-lg-hint">右侧数字：原始 / 剥后</span>
+      </div>
+    </div>
+  )
+}
+
+/** 风格名 → 中文（Barra 11 + 自有 4） */
+const STYLE_LABEL: Record<string, string> = {
+  lncap: '对数总市值', lnamt: '对数成交额', lntr: '对数换手率', lnpx: '对数股价',
+  barra_size: '规模 size', barra_non_linear_size: '非线性规模', barra_momentum: '动量',
+  barra_liquidity: '流动性', barra_book_to_price: '账面市值比', barra_leverage: '杠杆',
+  barra_growth: '成长 growth', barra_earnings_yield: '盈利收益率', barra_beta: 'Beta',
+  barra_residual_volatility: '残差波动率', barra_comovement: '共动性',
+}
+const styleName = (s: string) => STYLE_LABEL[s] ?? s.replace('barra_', '')
+
 /** 累计和（跳过 null；前端现算，不需要后端多存一列） */
 const cumsum = (a: (number | null)[]): (number | null)[] => {
   let s = 0
@@ -661,7 +738,8 @@ const cumsum = (a: (number | null)[]): (number | null)[] => {
 //   TSX 解析器会把 `<string, string>` 当 JSX 标签 ⇒ 一堆莫名其妙的语法错 ✗
 //   ⇒ 提到模块级常量（2026-09-16 实测踩到）
 const STRIP_LABEL: Record<string, string> =
-  { raw: '原', lncap: '剥市值', lnamt: '剥成交额', both: '剥两者' }
+  { raw: '原', lncap: '剥市值', lnamt: '剥成交额', both: '剥两者',
+    floatcap: '剥流通市值', caplimit: '剥总市值+限售' }
 
 /** 详情页图表区：打开时**才**拉曲线（离线预算好的），拉到前显示占位 ✓ */
 function FactorCharts({ name, pool }: { name: string; pool?: string }) {
@@ -678,8 +756,20 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
   if (err) return <div className="ch-note">曲线读取失败：{err}</div>
   if (!c) return <div className="ch-note">曲线加载中…</div>
   if (!c.found) return <div className="ch-note">暂无曲线数据。{c.hint}</div>
-  const dl = c.daily, pd = c.period, st = c.strip
+  const dl = c.daily, pd = c.period, st = c.strip, sp = c.style
   const pctf = (v: number) => `${(v * 100).toFixed(0)}%`
+  // 风格相关性：按 |原始 mean| 排序（一眼看出"最像哪个风格"）
+  const styleRows: BarRow[] = sp
+    ? sp.styles.map(s => ({ label: styleName(s),
+                            v1: sp.raw[s]?.mean ?? null, v2: sp.neut?.[s]?.mean ?? null }))
+        .sort((a, b) => Math.abs(b.v1 ?? 0) - Math.abs(a.v1 ?? 0))
+    : []
+  const indRows: BarRow[] = sp
+    ? sp.ind_names.map((nm, j) => ({ label: nm,
+        v1: sp.ind.raw[j]?.mean ?? null, v2: sp.ind.neut?.[j]?.mean ?? null }))
+        .sort((a, b) => Math.abs(b.v1 ?? 0) - Math.abs(a.v1 ?? 0)).slice(0, 15)
+    : []
+  const topStat = sp ? styleRows.slice(0, 6) : []
   return (
     <div className="chwrap">
       <div className="dt-sec">
@@ -736,7 +826,7 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
         <>
           <div className="ch-t">剥风格对比（期频超额净值）—— 原 / 剥市值 / 剥成交额 / 剥两者</div>
           <Chart dates={st.dates} yFmt={v => v.toFixed(1)}
-                 series={['raw', 'lncap', 'lnamt', 'both']
+                 series={['raw', 'lncap', 'lnamt', 'both', 'floatcap', 'caplimit']
                    .filter(k => (st.navs[k] ?? []).length > 0)
                    .map((k, i) => ({
                      label: STRIP_LABEL[k] ?? k,
@@ -745,11 +835,66 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
           <div className="ch-lg2">
             剥风格 Calmar：原 {fmtN3(st.calmars.raw)} · 剥市值 {fmtN3(st.calmars.lncap)} ·
             剥成交额 {fmtN3(st.calmars.lnamt)} · 剥两者 {fmtN3(st.calmars.both)}
+            {st.calmars.floatcap !== undefined &&
+              <> · 剥流通市值 {fmtN3(st.calmars.floatcap)} · 剥总市值+限售 {fmtN3(st.calmars.caplimit)}</>}
           </div>
         </>
       ) : (
         <div className="ch-note">
           剥风格曲线还没生成 —— 跑 python tools/factor_curves.py --stage=strip
+        </div>
+      )}
+      {sp && sp.n_periods > 0 && (
+        <>
+          <div className="ch-t">
+            风格相关性（逐期截面 Spearman · {sp.n_periods} 期换仓日）—— 条长 = 相关系数均值，
+            0 在中间、右正左负；上根 = 原始，下根 = 剥总市值 + 行业
+          </div>
+          <BarChart rows={styleRows} domain={1} />
+          <table className="st-tab">
+            <thead>
+              <tr>
+                <th>风格</th><th>均值</th><th>|均值|</th><th>IR</th><th>t</th><th>t朴素</th>
+                <th>胜率</th><th>自相关</th><th>剥后均值</th><th>剥后 IR</th>
+              </tr>
+            </thead>
+            <tbody>
+              {topStat.map(r => {
+                const s = sp.styles.find(x => styleName(x) === r.label) ?? ''
+                return (
+                  <tr key={r.label}>
+                    <td>{r.label}</td>
+                    <td>{fmtN3(r.v1)}</td>
+                    <td>{fmtN3(sp.raw[s]?.meanAbs)}</td>
+                    <td>{fmtN3(sp.raw[s]?.ir)}</td>
+                    <td>{fmtN3(sp.raw[s]?.tAdj)}</td>
+                    <td>{fmtN3(sp.raw[s]?.t)}</td>
+                    <td>{sp.raw[s]?.win === null || sp.raw[s]?.win === undefined
+                         ? '—' : `${(sp.raw[s].win! * 100).toFixed(0)}%`}</td>
+                    <td>{fmtN3(sp.raw[s]?.ac1)}</td>
+                    <td>{fmtN3(r.v2)}</td>
+                    <td>{fmtN3(sp.neut?.[s]?.ir)}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+          <div className="ch-t">
+            行业暴露 —— 行业 R²（因子对 31 个申万一级哑变量的解释力）：
+            原始 {fmtN3(sp.r2.raw)} → 剥后 {fmtN3(sp.r2.neut)}；下面是 |相关| 前 15 个行业
+          </div>
+          <BarChart rows={indRows} />
+          <div className="ch-lg2">
+            口径：{sp.caliber}
+            <br />
+            t = 按 AR(1) 有效样本量校正（右列「自相关」是 ac1）—— 实测相关序列 ac1≈0.93~0.97，
+            所以「t朴素」= IR·√T 会放大数倍，别直接看它。
+          </div>
+        </>
+      )}
+      {!sp && (
+        <div className="ch-note">
+          风格相关性还没算 —— 跑 python tools/factor_curves.py --stage=style+strip2
         </div>
       )}
     </div>
