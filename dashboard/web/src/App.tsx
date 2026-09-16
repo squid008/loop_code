@@ -232,10 +232,11 @@ export default function App() {
               </span>
             </>
           )}
+          {/* ★ 2026-09-16（用户要求）：提示里**删掉最后那行**"缓存过期/缺失会报错 + 重建命令"
+              —— 那行是运维细节，放在鼠标提示里太长 ✓（`panelCacheInfo.hint` 仍留在接口里，需要时可查）*/}
           <label className="chk" title={'面板共享（--panel_cache=use）：把 4.42 GB 面板落成只读 memmap ⇒ ' +
             '多进程共享同一批物理页。\n· 单进程：载入 28.6s → 1.8s、内存更低\n' +
-            '· 并行：N 个引擎只占 1 份面板内存（不开就是 N 份）\n' +
-            '⚠ 缓存过期/缺失时引擎会**直接报错**（绝不偷偷重建）；重建：python tools/build_panel_cache.py'}>
+            '· 并行：N 个引擎只占 1 份面板内存（不开就是 N 份）'}>
             <input type="checkbox" checked={panelCache} disabled={mineBusy || !!mine?.running}
                    onChange={e => setPanelCache(e.target.checked)} />
             面板共享
