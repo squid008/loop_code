@@ -279,10 +279,10 @@ def state():
         _mnote = ('★ **并行模式**：同时最多 %d 个引擎%s（跑完一个立刻补一个，其余排队）· 面板共享=%s ⇒ %s'
                   '；可用 %.1f GB ✓' % (
                       _mp, '（**自动**：按可用内存与启用池数动态定，'
-                           '你随时点「启动本池」加池都会立刻开起来）' if _auto else '', _pc,
+                           '你随时点启动本池加池都会立刻开起来）' if _auto else '', _pc,
                       ('4.6 GB 面板只占**一份物理页**，每进程私有 ≈ %.1f GB ✓' % _mpe)
                       if _pc != 'off' else
-                      '⚠ 面板缓存**关着** ⇒ 每个引擎各建一份 4.42 GB 面板（N 份！）✗ 强烈建议开「面板共享」',
+                      '⚠ 面板缓存**关着** ⇒ 每个引擎各建一份 4.42 GB 面板（N 份！）✗ 强烈建议开面板共享',
                       free))
     else:
         _mnote = ('★ 单调度器 + **池轮转** ⇒ 同一时刻只有 1 个引擎（约 %.0f GB）%s；可用 %.1f GB ✓' % (
@@ -324,7 +324,7 @@ def state():
         'script': os.path.relpath(RUN_TRACKS, settings.PROJECT_ROOT),
         'note': ('1 个调度器按轮转跑各池（每轮每池 1 代）⇒ 内存只 1 份、'
                  '★ **每轮结束自动收尾**；单独停某池只影响该池；'
-                 '「一键全部停止」⇒ 自动进入收尾阶段后退出 ✓'),
+                 '一键全部停止 ⇒ 自动进入收尾阶段后退出 ✓'),
     }
 
 
@@ -424,7 +424,7 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
         if _d:
             raise MineError(
                 '调度器已在运行（当前 %s）；而 %s 是**启动参数、不能热改** ✗\n'
-                '  ⇒ 想换：先点「全部停止」，再用新设置启动 ✓'
+                '  ⇒ 想换：先点全部停止，再用新设置启动 ✓'
                 % (' '.join('%s=%s' % (k, _cur[k]) for k in _want),
                    ' / '.join('%s=%s' % (k, _want[k]) for k in _d)), 409)
         # 一致 ⇒ 只更新控制文件（启用集合、轮数、清 stopAll；stopped 视 reset_stopped 而定）✓
@@ -442,7 +442,7 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
                 'memPerEngine': mem_per_engine, 'panelCache': panel_cache,
                 'note': ('调度器已在运行（PID %s）⇒ 已就地更新：启用池=%s、轮数=%d%s（未重复起进程）'
                          % ([p['pid'] for p in sched], pool_list, rounds,
-                            '、并清除「停止」标记' if reset_stopped else '、**保留**已有的「停止」标记'))}
+                            '、并清除停止标记' if reset_stopped else '、**保留**已有的停止标记'))}
 
     # ---- 内存护栏（**按模式 + 面板共享**算）----
     # ★ 面板共享开着时，4.42 GB 面板**只占一份物理页**，每进程私有只剩 L1 子面板+缓存 ≈ 3 GB
@@ -500,7 +500,7 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
                       % (max_parallel, free or 0,
                          GB_PER_ENGINE_SHARED if panel_cache != 'off' else GB_PER_ENGINE))
     if _pc_degraded:
-        _extra.append('⚠ 面板缓存不可用（%s）⇒ **本次自动关掉「面板共享」**（载入慢 ~27s、结果不变）'
+        _extra.append('⚠ 面板缓存不可用（%s）⇒ **本次自动关掉面板共享**（载入慢 ~27s、结果不变）'
                       % ((_pcinfo.get('hint') or _pcinfo.get('err') or '未知原因')[:70]))
     return {'ok': True, 'started': [{'pool': ','.join(pool_list), 'pid': proc.pid,
                                      'alive': _alive(proc.pid), 'cmd': ' '.join(args[1:]),
@@ -562,7 +562,7 @@ def stop(pool=None, **kw):
                 'stillRunning': [{'pid': p['pid'], 'kind': 'engine', 'pools': p.get('pools')} for p in left],
                 'note': ('已停止池 %s：%s ⇒ 其他池不受影响 ✓'
                          '%s' % (pool, _how, '；⚠ 它本来是最后一个启用的池 ⇒ 调度器已无池可跑、'
-                                              '将自行退出（若还想要它，点「启动本池」会自动重启调度器）'
+                                              '将自行退出（若还想要它，点启动本池会自动重启调度器）'
                                               '✓' if not en else ''))}
 
     # ★ 全部停：标记 stopAll + 杀所有引擎 ⇒ **确保收尾一定发生** ✓
@@ -619,7 +619,7 @@ def start_pool(pool):
         _write_ctl(stopped=st, enabled=en, stopAll=False)
         return {'ok': True, 'pool': pool, 'enabled': en, 'stopped': st, 'restarted': False,
                 # ★ 2026-09-16：并行模式下**运行期动态加入** ⇒ 提示要分模式（别让人以为要等下一轮 ✗）
-                'note': ('已把池 %s 加入%s（%s）；其它池的「停止」状态保持不变 ✓'
+                'note': ('已把池 %s 加入%s（%s）；其它池的停止状态保持不变 ✓'
                          % (pool, '并行' if (c.get('execMode') == 'parallel') else '轮转',
                             '**马上**会起一个引擎，不用等下一轮' if (c.get('execMode') == 'parallel')
                             else '下一轮就轮到它')),
@@ -637,7 +637,7 @@ def start_pool(pool):
     return {'ok': True, 'pool': pool, 'enabled': en, 'stopped': st, 'restarted': True,
             'started': r.get('started'), 'note':
             ('调度器原本不在运行 ⇒ 已自动重启（轮数沿用 %d）：启用池=%s；'
-             '池 %s 已加入轮转，其它池的「停止」状态保持不变 ✓' % (rounds, en, pool))}
+             '池 %s 已加入轮转，其它池的停止状态保持不变 ✓' % (rounds, en, pool))}
 
 
 # ---------------------------------------------------------------- 全局收尾（保留，前端已隐藏按钮）

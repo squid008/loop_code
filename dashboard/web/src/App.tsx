@@ -136,7 +136,7 @@ export default function App() {
       say('ok', r.restarted
         ? `调度器之前没在运行，已自动重启。池 ${pool} 已加入${_par ? '并行' : '轮转'}（当前启用：${r.enabled.join(',')}）`
         : (r.merged
-          ? `池 ${pool} 已重新加入${_par ? '并行' : '轮转'}：${_par ? '**马上**就会起一个引擎（不用等下一轮）' : '下一轮轮到它'}`
+          ? `池 ${pool} 已重新加入${_par ? '并行' : '轮转'}：${_par ? '马上就会起一个引擎（不用等下一轮）' : '下一轮轮到它'}`
           : `池 ${pool} 已重新加入${_par ? '并行' : '轮转'}`))
       await loadAll(true)
     } catch (e) {
@@ -219,8 +219,8 @@ export default function App() {
           <button className="btn start" disabled={mineBusy || !!mine?.running} onClick={() => doStart([])}
                   title={mine?.running
                     ? `调度器已经在运行了（${mine.execMode === 'parallel' ? `并行×${mine.maxParallel} · 共享` : '轮转 · 共享'}）。` +
-                      '要改**模式/并行设置**的话，先「全部停止」再启动（那些是启动参数、不能热改）'
-                    : '启动**并行**调度器（并行数按可用内存自动定 · 面板共享），让所有池参与。' +
+                      '要改模式或并行设置的话，先点全部停止再启动（那些是启动参数，不能热改）'
+                    : '启动并行调度器（并行数按可用内存自动定 · 面板共享），让所有池参与。' +
                       '之前单独停止过的池也会重新加入；已经在跑的话就地更新设置'}>
             {mine?.running ? '已在运行' : (mineBusy ? '处理中…' : '一键启动全部')}
           </button>
@@ -422,7 +422,7 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
                   : (leaving
                     ? `${p.label} 正在跑但已移出${qword}。点它 = 重新加入，让它继续参与`
                     : (qword === '并行'
-                      ? `把 ${p.label} 加入并行：★ **马上**就会起一个引擎（不用等下一轮）。如果调度器没在运行，会自动启动`
+                      ? `把 ${p.label} 加入并行：马上就会起一个引擎（不用等下一轮）。如果调度器没在运行，会自动启动`
                       : `把 ${p.label} 加入轮转。如果调度器没在运行，会自动启动`))}>
           {inRotation ? `已参与${qword}` : (leaving ? `重新加入${qword}` : '启动本池')}
         </button>
@@ -470,8 +470,8 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
           <li>文件声明 = {fmt(lib.declaredCount)} —— <span>引擎同步的快照，可能落后</span></li>
         </ul>
         <div className="note">
-          行数比「当前有效库」多的原因：编号是累计的，而因子会被移出库（比如剥风格后发现它只是纯风格因子）。
-          带「历史」标记的行就是已不在当前库的编号；点编号可以看完整公式和各项指标。
+          行数比当前有效库多的原因：编号是累计的，而因子会被移出库（比如剥风格后发现它只是纯风格因子）。
+          带历史标记的行就是已不在当前库的编号；点编号可以看完整公式和各项指标。
         </div>
         {(lib.orphans ?? []).length > 0 && (
           <div className="note">
@@ -484,18 +484,18 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
                 </li>
               ))}
             </ul>
-            所以「有效库」比「本表里在库的行数」多 {lib.orphans?.length} 个。
+            所以有效库比本表里在库的行数多 {lib.orphans?.length} 个。
           </div>
         )}
         {stale && (
           <div className="note">
             指标表还没跑完（本池 {lib.metricsMeasured} / 有效库 {fmt(lib.stateBank)} 条），
-            所以暂时不标「历史」。跑完 python tools/factor_metrics.py 即可对齐。
+            所以暂时不标历史。跑完 python tools/factor_metrics.py 即可对齐。
           </div>
         )}
         {!known && !stale && (
           <div className="note">
-            还没有指标表，所以暂不知道哪些编号仍在当前库（也不会标「历史」）。
+            还没有指标表，所以暂不知道哪些编号仍在当前库（也不会标历史）。
             跑一次 python tools/factor_metrics.py 生成后即可。
           </div>
         )}
@@ -739,12 +739,12 @@ function BarChart({ rows, rowH = 15, domain, fmt, tag2 = '剥后' }:
       <div className="ch-lg">
         <button className={`ch-lgbtn${hide.a ? ' off' : ''}`}
                 onClick={() => setHide(o => ({ ...o, a: !o.a }))}
-                title="点击隐藏 / 显示「原始」这一根">
+                title="点击隐藏或显示原始这一根">
           <i style={{ background: CPAL[0] }} />原始
         </button>
         <button className={`ch-lgbtn${hide.b ? ' off' : ''}`}
                 onClick={() => setHide(o => ({ ...o, b: !o.b }))}
-                title="点击隐藏 / 显示「剥离后」这一根">
+                title="点击隐藏或显示剥离后这一根">
           <i style={{ background: CPAL[2] }} />{tag2}（剥总市值+行业）
         </button>
         <span className="ch-lg-hint">右侧数字：原始 / 剥后</span>
@@ -926,8 +926,8 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
           <div className="ch-lg2">
             口径：{sp.caliber}
             <br />
-            t = 按 AR(1) 有效样本量校正（右列「自相关」是 ac1）—— 实测相关序列 ac1≈0.93~0.97，
-            所以「t朴素」= IR·√T 会放大数倍，别直接看它。
+            t = 按 AR(1) 有效样本量校正（右列自相关是 ac1）—— 实测相关序列 ac1≈0.93~0.97，
+            所以朴素 t（IR 乘根号 T）会放大数倍，别直接看它。
           </div>
         </>
       )}
@@ -1017,7 +1017,7 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
             </em>
           </div>
           <div className="dt-note">
-            「日频打点」= 同一策略在持有期内<b>逐日</b>记净值（所以回撤不会被低估，只会更深）。
+            日频打点 = 同一策略在持有期内<b>逐日</b>记净值（所以回撤不会被低估，只会更深）。
             同口径内可比（超额日频 vs 超额期频、组合日频 vs 组合期频）；
             <b>超额口径与组合自身口径不能互相比较</b>（前者要减掉基准腿）。
           </div>

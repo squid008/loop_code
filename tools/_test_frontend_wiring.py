@@ -97,8 +97,10 @@ chk('风格画像走**同一个 /curves 接口**的 style 字段（不另开接�
         r'D:\loop_code\dashboard\api\app\sources\factors.py', encoding='utf-8').read(),
     '另开接口要多一次请求、多一份缓存 ✗')
 chk('横向条形图组件已实现', 'function BarChart' in src)
+# ⚠ 文案断言别绑**具体措辞里的引号**：用户 2026-09-16 要求"文案去掉引号" ⇒ 原来断言
+#   `点击隐藏 / 显示「原始」这一根` 立刻失效 ✗ ⇒ 只断言"图例是按钮 + 提示里有隐藏/显示" ✓
 chk('条形图图例同样**可点显隐**（与折线图同约定）',
-    'ch-lgbtn' in src and re.search(r'点击隐藏 / 显示「原始」这一根', src) is not None)
+    'ch-lgbtn' in src and re.search(r'title="点击隐藏或显示原始这一根"', src) is not None)
 chk('风格图固定值域 ±1 ⇒ **跨因子可比**', 'domain={1}' in src,
     '自适应值域会让"0.05 看着和 0.5 一样长" ✗')
 chk('行业条用自适应值域（相关性本身很小，固定 ±1 会看不见）',
