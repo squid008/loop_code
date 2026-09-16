@@ -60,7 +60,8 @@ def meta():
             '/api/health', '/api/meta', '/api/status', '/api/pools',
             '/api/library', '/api/library/{pool}', '/api/selected',
             '/api/strip-bank', '/api/pool-obs/{pool}', '/api/factors/flat',
-            '/api/mine/state', '/api/mine/start', '/api/mine/stop', '/api/mine/global',
+            '/api/mine/state', '/api/mine/start', '/api/mine/stop',
+            '/api/mine/start_pool', '/api/mine/global',
         ],
     }
 
@@ -118,7 +119,6 @@ def flat():
 class StartBody(BaseModel):
     pools: list[str] = []
     rounds: int = 50
-    noGlobal: bool = True       # ★ 池驱动默认跳过全局收尾（并行安全）
 
 
 class StopBody(BaseModel):
@@ -126,20 +126,20 @@ class StopBody(BaseModel):
     pool: str | None = None
 
 
-@app.get('/api/mine/state', summary='★ 挖掘控制状态（每池能否启停 / 资源）')
+@app.get('/api/mine/state', summary='★ 挖掘状态（调度器 / 当前池·代数 / 阶段 / 各池启停）')
 def mine_state():
     return mine.state()
 
 
-@app.post('/api/mine/start', summary='★ 启动挖掘 —— **每池一个独立进程**（可单独启停、互不干扰）')
+@app.post('/api/mine/start', summary='★ 启动**轮转调度器**（已在跑 ⇒ 就地更新启用集合与轮数）')
 def mine_start(body: StartBody):
     try:
-        return mine.start(body.pools, body.rounds, no_global=body.noGlobal)
+        return mine.start(body.pools, body.rounds)
     except mine.MineError as e:
         raise HTTPException(e.code, e.msg)
 
 
-@app.post('/api/mine/stop', summary='★ 停止挖掘 —— 指定池则**只停该池**；不指定则停全部')
+@app.post('/api/mine/stop', summary='★ 停止 —— 指定池则**只停该池**；不指定则**全部停（随后自动收尾）**')
 def mine_stop(body: StopBody):
     try:
         pool = body.pool if (body.scope == 'pool' and body.pool) else None
@@ -148,7 +148,19 @@ def mine_stop(body: StopBody):
         raise HTTPException(e.code, e.msg)
 
 
-@app.post('/api/mine/global', summary='★ 全局收尾（facs 落地 + 跨池审查 + 精选池）—— 要求无池在跑')
+class PoolBody(BaseModel):
+    pool: str
+
+
+@app.post('/api/mine/start_pool', summary='★ 单独**恢复**某池（从停止集合移除，下一轮即轮到它）')
+def mine_start_pool(body: PoolBody):
+    try:
+        return mine.start_pool(body.pool)
+    except mine.MineError as e:
+        raise HTTPException(e.code, e.msg)
+
+
+@app.post('/api/mine/global', summary='（兼容保留）一次性全局收尾 —— 正常已由调度器每轮自动执行')
 def mine_global():
     try:
         return mine.run_global()

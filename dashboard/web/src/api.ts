@@ -118,21 +118,39 @@ export interface MetaDto {
   endpoints: string[]
 }
 
-// ---------------------------------------------------------------- 挖掘控制
-export interface PoolProcs { driver: number[]; engine: number[]; running: boolean }
+// ---------------------------------------------------------------- 挖掘控制（v1.3.0：单调度器 + 池轮转）
+export interface PoolSlot {
+  enabled: boolean      // 是否参与轮转
+  stopped: boolean      // 是否被单独停掉
+  mining: boolean       // 是否正在跑它这一代
+  engine: number[]      // 该池当前引擎 PID
+}
 
 export interface MineStateDto {
-  mode: string                    // 'per-pool'
+  mode: string                    // 'scheduler'
+  phase: string                   // idle | mine | tail
+  phaseLabel: string              // 空闲 / 挖掘中 / 收尾审查中
+  running: boolean
+  stopAll: boolean
+  schedulerPids: number[]
+  scheduler: { pid: number; cmd: string; memMB?: number }[]
+  engines: { pid: number; pools: string[] | null; memMB?: number }[]
+  curPool: string | null
+  curGen: number | null
+  round: number | null
+  rounds: number | null
+  roundText: string | null
+  curText: string | null
+  tailAt: string | null
+  updated: string | null
   knownPools: string[]
+  enabled: string[]
+  stopped: string[]
+  byPool: Record<string, PoolSlot>
   runningPools: string[]
-  byPool: Record<string, PoolProcs>
-  drivers: ProcessInfo[]
-  engines: ProcessInfo[]
-  anyRunning: boolean
   freeGB: number | null
   gbPerEngine: number
-  canStartMore: number | null
-  maxParallel: number | null
+  memNote: string
   defaultRounds: number
   roundsRange: [number, number]
   script: string
@@ -142,8 +160,10 @@ export interface MineStateDto {
 export interface MineStartResp {
   ok: boolean
   started: { pool: string; pid: number; alive: boolean | null; cmd: string; log: string }[]
-  skipped: { pool: string; why: string; pids: number[] }[]
-  noGlobal?: boolean
+  reused?: boolean
+  schedulerPids?: number[]
+  enabled?: string[]
+  rounds?: number
   freeGB?: number | null
   note: string
 }
@@ -153,6 +173,16 @@ export interface MineStopResp {
   scope: string
   killed: { pid: number; kind: string; pools: string[] | null; rc: number; out: string }[]
   stillRunning: { pid: number; kind: string; pools: string[] | null }[]
+  tail?: { pid: number; note: string } | null
+  note: string
+}
+
+export interface MinePoolResp {
+  ok: boolean
+  pool: string
+  enabled: string[]
+  stopped: string[]
+  restarted?: boolean
   note: string
 }
 
@@ -166,12 +196,14 @@ export const api = {
   stripBank: () => get<{ found: boolean; count: number; rows: Record<string, string>[] }>('/strip-bank'),
   poolObs: (pool: string, limit = 200) =>
     get<{ found: boolean; columns: string[]; rows: Record<string, string>[] }>(`/pool-obs/${pool}?limit=${limit}`),
-  // ★ 挖掘控制（每池独立进程）
+  // ★ 挖掘控制（单调度器 + 池轮转）
   mineState: () => get<MineStateDto>('/mine/state', 40000),
   mineStart: (pools: string[], rounds: number) =>
-    post<MineStartResp>('/mine/start', { pools, rounds, noGlobal: true }),
+    post<MineStartResp>('/mine/start', { pools, rounds }),
   mineStop: (pool?: string) =>
     post<MineStopResp>('/mine/stop', pool ? { scope: 'pool', pool } : { scope: 'all' }),
+  mineStartPool: (pool: string) =>
+    post<MinePoolResp>('/mine/start_pool', { pool }),
   mineGlobal: () => post<{ ok: boolean; pid: number; alive: boolean | null; log: string; note: string }>(
     '/mine/global', {}, 60000),
 }

@@ -68,20 +68,24 @@ export default function App() {
   }
 
   const doStart = useCallback(async (pools: string[]) => {
-    const label = pools.length ? pools.join(' + ') : '全部池（各一个独立进程）'
+    const label = pools.length ? pools.join(' + ') : '全部池'
     if (!window.confirm(
-      `确定启动挖掘？\n\n池：${label}\n每池轮数：${rounds}\n\n` +
-      `✓ 每池一个**独立进程** ⇒ 可单独启停、互不干扰。\n` +
-      `⚠ 一轮 ≈ 每池各跑 1 代（单池单代约 25 分钟）。\n` +
-      `⚠ 单引擎约需 ${mine?.gbPerEngine ?? 9} GB；本机可用 ${mine?.freeGB ?? '?'} GB（最多并行 ${mine?.maxParallel ?? '?'} 个）。\n` +
-      `⚠ 正在跑的那一代若被停会作废（state 不写入），下次从该代重跑。`
+      `确定启动挖掘？\n\n参与轮转的池：${label}\n每池轮数：${rounds}\n\n` +
+      `✓ 现在只有 **1 个调度器进程**，按**轮转**跑各池（每轮每池各 1 代）\n` +
+      `   ⇒ ★ 内存只 1 份（约 ${mine?.gbPerEngine ?? 9} GB）而不是每池一份 ✓\n` +
+      `✓ ★ **每轮结束自动收尾**（facs 落地 + 跨池审查 + 精选池），不用你点 ✓\n` +
+      `⚠ 一轮 ≈ 每池各 1 代；整轮时长取决于最慢的池。\n` +
+      `⚠ 正在跑的那一代若被停会作废（state 是原子写 ⇒ 不会坏数据），下次重跑。`
     )) return
     setMineBusy(true)
     try {
       const r = await api.mineStart(pools, rounds)
-      const st = r.started.map(x => `${x.pool}(PID ${x.pid})`).join(' ') || '无'
-      const sk = r.skipped.length ? ` · 跳过已在跑：${r.skipped.map(x => x.pool).join(',')}` : ''
-      say('ok', `已启动：${st}${sk} ⇒ 看到「代数/已测」开始涨即正常`)
+      if (r.reused) {
+        say('ok', `调度器已在跑（PID ${(r.schedulerPids ?? []).join(',')}）⇒ 已就地更新：启用池 ${(r.enabled ?? []).join(',')} · ${r.rounds} 轮（未重复起进程）`)
+      } else {
+        const st = r.started.map(x => `PID ${x.pid}`).join(' ') || '无'
+        say('ok', `已启动**轮转调度器** ${st} ⇒ 启用池 ${(r.enabled ?? []).join(',')} · 每池 ${r.rounds} 轮`)
+      }
       await loadAll(true)
     } catch (e) {
       say('err', `启动失败：${e instanceof Error ? e.message : String(e)}`)
@@ -93,15 +97,20 @@ export default function App() {
     const label = pool ? `池 ${pool}` : '**全部池**'
     if (!window.confirm(
       `确定停止 ${label}？\n\n` +
-      `✓ 现在每池是独立进程 ⇒ ${pool ? `只会停「${pool}」，**其它池不受影响**` : '会停掉所有池的进程'}。\n` +
-      `⚠ 正在跑的那一代**会作废**（state 不写入），下次从该代重跑。`
+      (pool
+        ? `✓ 只会停「${pool}」：从轮转中移除 + 杀掉它当前那一代 ⇒ **其他池不受影响** ✓\n` +
+          `⚠ 若它是最后一个参与轮转的池，调度器会自行退出（点「启动本池」会自动重启）。`
+        : `✓ 会杀掉当前代 + 让调度器 **自动收尾**（facs 落地 + 跨池审查 + 精选池）后退出 ✓\n` +
+          `⚠ 收尾期间请勿再启动（会撞车）。`) +
+      `\n\n⚠ 正在跑的那一代会作废（下次重跑）。`
     )) return
     setMineBusy(true)
     try {
       const r = await api.mineStop(pool)
       const k = r.killed.filter(x => x.rc === 0).map(x => `${x.kind}#${x.pid}`).join(', ')
       say(r.ok ? 'ok' : 'err',
-        r.ok ? `已停止${pool ? `池 ${pool}` : '全部'}（杀 ${k || '无进程'}）${pool ? ' · 其它池未受影响' : ''}`
+        r.ok ? `已停止${pool ? `池 ${pool}（其他池不受影响）` : '全部'}（杀 ${k || '无进程'}）`
+          + (r.tail ? ` · 已触发收尾审查(PID ${r.tail.pid})` : '')
              : `部分未停：${r.stillRunning.map(s => `${s.kind}#${s.pid}`).join(', ')}`)
       await loadAll(true)
     } catch (e) {
@@ -110,20 +119,22 @@ export default function App() {
     } finally { setMineBusy(false) }
   }, [loadAll])
 
-  // ★ 全局收尾（跨池审查 + 精选池）—— 要求"无池在跑"
-  const doGlobal = useCallback(async () => {
+  // ★ 单独"启动/恢复"某池（调度器不在时会自动重启）
+  const doStartPool = useCallback(async (pool: string) => {
     if (!window.confirm(
-      `确定跑「收尾审查」？\n\n` +
-      `它会做：① 新入库因子值落地 \`facs/\` ② **跨池审查（L2 去重 + L3 精选池）**\n\n` +
-      `⚠ 必须在**所有池都停止**时跑（跨池审查要看全所有池，且会写同一份产出）。`
+      `确定启动/恢复池「${pool}」？\n\n` +
+      `① 若它在"已停止"里 ⇒ 移出，下一轮就会轮到它 ✓\n` +
+      `② 若调度器已不在运行 ⇒ **自动重启调度器**（沿用上次的启用集合）✓`
     )) return
     setMineBusy(true)
     try {
-      const r = await api.mineGlobal()
-      say('ok', `收尾审查已启动（PID ${r.pid}）⇒ 日志 ai_test/_tracks/_ui_global.log；跑完刷新看精选池`)
+      const r = await api.mineStartPool(pool)
+      say('ok', r.restarted
+        ? `调度器原本不在运行 ⇒ 已自动重启；池 ${pool} 已加入轮转（启用：${r.enabled.join(',')}）`
+        : `池 ${pool} 已重新加入轮转（下一轮轮到它）`)
       await loadAll(true)
     } catch (e) {
-      say('err', `收尾审查失败：${e instanceof Error ? e.message : String(e)}`)
+      say('err', `启动本池失败：${e instanceof Error ? e.message : String(e)}`)
       await loadAll(true)
     } finally { setMineBusy(false) }
   }, [loadAll])
@@ -158,15 +169,27 @@ export default function App() {
           </div>
         </div>
         <div className="ctrls">
+          {/* ★★ 顶部状态条：一眼看出"在挖 / 在收尾 / 空闲"（用户要求 2）*/}
+          <span className={`phase ${mine?.phase ?? 'idle'}`} title={
+            `阶段：${mine?.phaseLabel ?? '—'}\n` +
+            (mine?.curText ? `当前：${mine.curText}\n` : '') +
+            (mine?.roundText ? `${mine.roundText} / 共 ${mine?.rounds ?? '?'} 轮\n` : '') +
+            `启用池：${(mine?.enabled ?? []).join(',') || '—'}\n` +
+            (mine?.updated ? `更新于 ${mine.updated}` : '')}>
+            <i className="pdot" />
+            <b>{mine?.phaseLabel ?? '—'}</b>
+            {mine?.curText && <em>{mine.curText}</em>}
+            {mine?.roundText && <small>{mine.roundText}/{mine?.rounds ?? '?'}</small>}
+          </span>
           <span className="res" title={
-            `每池一个独立进程；单引擎约需 ${mine?.gbPerEngine ?? 9} GB\n` +
-            `可用内存 ${mine?.freeGB ?? '?'} GB ⇒ 最多并行约 ${mine?.maxParallel ?? '?'} 个`}>
+            `★ 单调度器 + 池轮转 ⇒ 同一时刻只 1 个引擎（约 ${mine?.gbPerEngine ?? 9} GB）\n` +
+            `可用内存 ${mine?.freeGB ?? '?'} GB`}>
             <b className={mine && mine.freeGB !== null && mine.freeGB < 6 ? 'warn' : ''}>
               {mine?.freeGB !== null && mine?.freeGB !== undefined ? `${mine.freeGB} GB` : '—'}
             </b>
-            <small>可再启 {mine?.canStartMore ?? '?'}</small>
+            <small>{(mine?.enabled ?? []).length} 池参与</small>
           </span>
-          <span className="rounds" title={`每池轮数（1~${mine?.roundsRange?.[1] ?? 200}）；一轮 ≈ 每池跑 1 代（单代约 25 分钟）`}>
+          <span className="rounds" title={`每池轮数（1~${mine?.roundsRange?.[1] ?? 200}）；一轮 = 每个启用的池各跑 1 代`}>
             轮数
             <input type="number" min={mine?.roundsRange?.[0] ?? 1} max={mine?.roundsRange?.[1] ?? 200}
                    value={rounds} disabled={mineBusy}
@@ -174,17 +197,15 @@ export default function App() {
           </span>
           {/* ★ 不再用 disabled 阻断：点了就给明确反馈（"没反应"就是因为按钮被禁用）*/}
           <button className="btn start" disabled={mineBusy} onClick={() => doStart([])}
-                  title="为**所有池**各起一个独立进程（已在跑的会被自动跳过）">
+                  title="启动轮转调度器，让**所有池**参与轮转（已在跑 ⇒ 就地更新启用集合，不重复起进程）">
             {mineBusy ? '处理中…' : '一键启动全部'}
           </button>
           <button className="btn stop" disabled={mineBusy} onClick={() => doStop()}
-                  title="停止**所有池**的挖掘进程（每池独立 ⇒ 也可用池卡片上的「停止」只停某一个）">
+                  title="全部停止：杀掉当前代 ⇒ 调度器**自动收尾**（跨池审查+精选池）后退出">
             全部停止
           </button>
-          <button className="btn" disabled={mineBusy} onClick={doGlobal}
-                  title="全局收尾：新因子值落地 facs/ + 跨池审查(L2去重/L3精选池)。⚠ 需先停掉所有池（有池在跑会被拒绝）">
-            收尾审查
-          </button>
+          {/* ⚠ 「收尾审查」按钮已按用户要求**隐藏**（功能保留在后端 `/api/mine/global`）：
+             现在**每轮结束自动收尾**，且「全部停止」后也会自动收尾 ⇒ 无需手动点 ✓ */}
           <button onClick={() => loadAll(true)} disabled={busy} className="btn">
             {busy ? '刷新中…' : '立即刷新'}
           </button>
@@ -309,18 +330,22 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
   { p: PoolStatus; nowMs: number; mine: MineStateDto | null; busy: boolean;
     onStart: () => void; onStop: () => void }) {
   const st = p.state
-  // ★★ 归属以 `/api/mine/state` 的 `byPool` 为准（直接来自进程命令行 `--pools=<池>`）
   const slot = mine?.byPool?.[p.key]
-  const isRunning = !!slot?.running || p.running
-  const free = mine?.freeGB ?? null
-  const memWarn = free !== null && free < (mine?.gbPerEngine ?? 9)
+  const mining = !!slot?.mining                     // ★ 正在跑它这一代
+  const inRotation = !!slot?.enabled && !slot?.stopped   // ★ 参与轮转（下一轮会轮到）
+  const stopped = !!slot?.stopped || (slot != null && !slot.enabled)
+  const isRunning = mining || p.running
+  const cls = mining ? 'card run' : (inRotation ? 'card armed' : 'card')
+  const badge = mining ? '挖掘中' : (inRotation ? '轮转中' : (stopped ? '已停止' : '空闲'))
   return (
-    <div className={isRunning ? 'card run' : 'card'}>
+    <div className={cls}>
       <div className="card-h">
-        <span className="dot" style={{ background: isRunning ? 'var(--ok)' : 'var(--idle)' }} />
+        <span className="dot" style={{
+          background: mining ? 'var(--ok)' : (inRotation ? 'var(--sky)' : 'var(--idle)'),
+        }} />
         <b>{p.label}</b>
         <span className="pid">{p.key === 'all' ? '全A' : p.key}</span>
-        <span className="state">{isRunning ? '挖掘中' : '空闲'}</span>
+        <span className="state">{badge}</span>
       </div>
       <div className="grid">
         <Field k="当前库（权威）" v={fmt(p.librarySize)} strong />
@@ -332,24 +357,24 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
         <Field k="冻结" v={fmt(st?.frozen_n)} />
         <Field k="失败库" v={fmt(st?.fail_lib_n)} />
       </div>
-      {/* ★ 不再用 disabled 阻断 —— 点了必给反馈（"没反应"就是按钮被禁用了）*/}
+      {/* ★ 不再用 disabled 阻断 —— 点了必给反馈 */}
       <div className="card-a">
-        <button className="btn start sm" disabled={busy} onClick={onStart}
-                title={isRunning
-                  ? `「${p.label}」已在跑 ⇒ 自动跳过（不会重复起进程）`
-                  : `只启动「${p.label}」一个独立进程${memWarn ? `\n⚠ 可用内存仅 ${free} GB，可能不足（需约 ${mine?.gbPerEngine} GB）` : ''}`}>
-          {isRunning ? '已在跑' : '启动本池'}
+        <button className="btn start sm" disabled={busy || inRotation} onClick={onStart}
+                title={inRotation
+                  ? `「${p.label}」已在轮转里（下一轮就会轮到它）⇒ 无需操作`
+                  : `把「${p.label}」加入轮转：若调度器不在运行会自动重启 ✓`}>
+          {inRotation ? '已参与轮转' : '启动本池'}
         </button>
-        <button className="btn stop sm" disabled={busy} onClick={onStop}
-                title={isRunning
-                  ? `停止「${p.label}」的进程 —— ★ 每池独立，**其它池不受影响**`
-                  : `「${p.label}」当前未在跑`}>
+        <button className="btn stop sm" disabled={busy || (stopped && !mining)} onClick={onStop}
+                title={stopped && !mining
+                  ? `「${p.label}」已停止`
+                  : `停用「${p.label}」：从轮转中移除 + 杀掉它当前那一代 ⇒ **其他池不受影响** ✓`}>
           停止本池
         </button>
       </div>
       <div className="card-f">
         <span>journal {ago(p.journal.mtime, nowMs)}</span>
-        {slot && <span className="mono">D{slot.driver.join(',')} E{slot.engine.join(',')}</span>}
+        {slot && slot.engine.length > 0 && <span className="mono">engine {slot.engine.join(',')}</span>}
       </div>
     </div>
   )

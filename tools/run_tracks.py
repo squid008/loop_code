@@ -45,6 +45,7 @@
     # ⚠ 换策略 = **换搜索行为** ⇒ A/B 对比时同池同轮数、只有这一个参数不同。
    """
 import io
+import json
 import os
 import re
 import subprocess
@@ -138,6 +139,120 @@ def inject_for(pool, pools, spec):
     if pool != 'all':
         return []
     return [x for x in pools if x != 'all']
+
+
+def _ltime():
+    return datetime.now().strftime('%m-%d %H:%M:%S')
+
+
+# ============================================================================================
+# ★★★★★ 2026-09-16 v1.3.0：**单调度器 + 池轮转**（用户拍板）
+#
+# 用户决策（原话）：「1、走 2；2、立即停不影响其他池挖掘审查吧？ 3、每轮结束自动收尾。
+#   4、有个问题，如果一轮中间我停了一个池子，它是不是就不能收尾了？我觉得应该也要能收尾。
+#   启停任意池子都不能影响收尾这个不冲突吧？然后一键全部停掉后，它就自动进入收尾阶段」
+#
+# ## 为什么改（**内存**，用户质疑"四个池四份内存不科学"—— 实测他是对的）
+#   · 只读大对象 `B`（49 个 float32 字段，3309×5384）≈ **3.25 GB** ⇒ 每个池进程**各一份** ✗
+#   · 单引擎峰值 ≈ 6 GB ⇒ 5 个池 = **30 GB** > 可用 **27 GB** ⇒ **根本跑不起来** ✗
+#   · ★★ 但**每个池只是它列子集**（`set_mine_pool` 原话「L1 子面板列 = 该池并集」）
+#     ⇒ **同一时刻只跑 1 个引擎** ⇒ 内存 **~6 GB**（省 5 倍）✓
+#   · CPU 只有 6 核/12 线程而单引擎已吃满多核 ⇒ **并行本来就会被互相拖慢 ⇒ 损失≈0** ✓
+#
+# ## 新调度（**交换两层循环** —— 原来是"每池连跑 N 代"，现在是"每轮每池各 1 代"）
+#     for r in 1..N:                     # ← 外：轮次
+#         for pool in 启用池:            # ← 内：池轮转（★ 可单独跳过/停止）
+#             跑该池 1 代                 #     spawn 引擎，跑完退出（一代一进程，原本如此）
+#         ★ 一轮结束 ⇒ **自动收尾**       # ← 用户要求 3
+#     ★ 收到"全部停" ⇒ 跳出 ⇒ **自动收尾** # ← 用户要求 4
+#
+# ## 为什么"停一个池"不会让收尾落空（用户问的第 4 点）
+#   收尾的触发条件是「**没有任何池在跑**」+「**本轮有过真实进展**」，
+#   而**不是**「所有池都跑完 N 轮」✗ ⇒ 被停的池只是"不参与轮转"，**绝不会阻塞收尾** ✓
+#
+# ## "立即停"为什么安全（已核实，不是想当然）
+#   · 池间**文件隔离**（`set_mine_pool` 把 7 个路径全按池派生）⇒ **不会影响别的池** ✓
+#   · 引擎落盘是「**原子写 + 代末**」——
+#     `loop_engine.py:1709` 注释明写：`open(STATE,'wb')` 被改成了 `.tmp` + `os.replace`，
+#     「一旦 dump 中途异常（**或进程被杀**）就得到 0 字节坏状态」⇒ 已加固 ✓
+#     ⇒ 所以杀掉"当前那一代"= 该代整体作废、旧状态完好、下次重跑 ✓
+# ============================================================================================
+CTL_FILE = os.path.join(LOGD, '_control.json')
+
+CTL_DEFAULT = {'running': False, 'enabled': [], 'stopped': [], 'stopAll': False,
+               'rounds': 0, 'round': 0, 'curPool': None, 'curGen': None,
+               'phase': 'idle', 'tailAt': None, 'updated': None}
+
+
+def read_ctl():
+    """读控制文件。缺失/损坏 ⇒ 返回安全默认（**全启用、不停止**）。"""
+    d = dict(CTL_DEFAULT)
+    try:
+        with io.open(CTL_FILE, encoding='utf-8') as f:
+            d.update(json.load(f) or {})
+    except Exception:
+        pass
+    return d
+
+
+def write_ctl(**kw):
+    """★ 合并式更新控制文件（其他键保持不动）—— 前端/调度器**并发读写**时更安全。"""
+    d = read_ctl()
+    d.update(kw)
+    d['updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    try:
+        os.makedirs(LOGD, exist_ok=True)
+        tmp = CTL_FILE + '.tmp'
+        with io.open(tmp, 'w', encoding='utf-8') as f:
+            json.dump(d, f, ensure_ascii=False, indent=1)
+        os.replace(tmp, CTL_FILE)          # ★ 原子替换：前端读到的永远是完整 JSON ✓
+    except Exception as e:
+        log('[CTL] 写控制文件失败: {!r}'.format(e))
+    return d
+
+
+def do_global_tail(tag=''):
+    """★ **全局收尾**：facs 落地 + 跨池审查 + 精选池。
+
+    ⚠ 为什么必须"单独一次、无人并行"：跨池审查要做**跨池去重**，必须"看全所有池"才能做
+      （见 `main()` 里原有注释）⇒ 5 个池各跑一次会重复 5 倍且并发写同一份产出 ✗
+      ⇒ 在**轮转调度器**下天然满足（同一时刻只有 1 个引擎在跑）✓
+    """
+    log('')
+    log('=' * 76)
+    log('[收尾] ★ {}（facs 落地 → 跨池审查 → 精选池）'.format(tag or '全局收尾'))
+    log('=' * 76)
+    write_ctl(phase='tail', tailAt=_ltime())
+    log('  [收尾 ①] 因子值落地到 facs/（新入库的必须落，否则审查看不到）')
+    try:
+        # ★ `--only-new`（增量落地）：52 个全就绪 ⇒ **4.0s**（全量 ~21min）✓
+        r = subprocess.run([PY, '-u', 'tools/build_facs.py', '--only-new'],
+                           cwd=ROOT, capture_output=True, text=True,
+                           encoding='utf-8', errors='replace', timeout=7200)
+        for ln in (r.stdout or '').splitlines()[-4:]:
+            log('      ' + ln[:150])
+        if r.returncode != 0:
+            log('      [!] 落地非零退出={} -> 仍继续审查（用已有 facs/）'.format(r.returncode))
+    except Exception as e:
+        log('      [!] 落地失败({}) -> 仍继续审查'.format(type(e).__name__))
+    log('  [收尾 ②] L2 跨池审查 + L3 精选池')
+    try:
+        r = subprocess.run([PY, '-u', 'tools/cross_pool_review.py'],
+                           cwd=ROOT, capture_output=True, text=True,
+                           encoding='utf-8', errors='replace', timeout=3600)
+        for ln in (r.stdout or '').splitlines()[-10:]:
+            log('      ' + ln[:150])
+        if r.stderr and r.stderr.strip():
+            log('      [stderr] ' + r.stderr.strip()[:300])
+    except Exception as e:
+        log('      [!] 审查失败({}: {})'.format(type(e).__name__, e))
+    log('  ⇒ 精选池见 docs/factor_pool_selected.md（比"入库数"更接近"能用几个"）')
+    log('=' * 76)
+    # ★★ 2026-09-16 修 BUG E：收尾结束后**必须自己复位 phase** ——
+    #   调用方（`main()`）的复位写在 `do_global_tail()` **之前** ⇒ 这里若不复位，
+    #   控制文件就**永久停在 `phase='tail'`**（实测：收尾早已结束，看板仍显示"收尾审查中"）✗
+    #   ⇒ 由**本函数**负责状态一致性更稳妥（谁设谁清）✓
+    write_ctl(phase='idle', tailAt=None)
 
 
 def main():
@@ -280,13 +395,49 @@ def main():
         log('（--dry：只列计划，不执行）')
         return 0
 
-    for p, g0, done in plan:
-        sfx = '' if p == 'all' else '_' + p
-        for i in range(rounds):
-            gen = g0 + i
+    # ★★★ v1.3.0：改为**池轮转**（外循环轮次、内循环池）。原来"每池连跑 N 代"会让
+    #   先跑的池吃掉全部时间（实测 9.3 小时里 300 独占、500/1000/50 一代没跑 ✗）。
+    #   ★ 代数**每代现取**（`next_gen(p)` 读 journal）—— journal 是**唯一事实源**，
+    #     比维护内存字典更健壮（进程重启/被杀后自动续上）✓
+    write_ctl(running=True, round=0, rounds=rounds, phase='mine',
+              enabled=[p for p, _, _ in plan] or pools, curPool=None, curGen=None)
+    dirty = False                # ★ 有没有“未被收尾覆盖过的新进展”
+    stopped_by_user = False
+    for rnd in range(1, rounds + 1):
+        ctl = read_ctl()
+        if ctl.get('stopAll'):
+            log('[CTL] ★ 收到「全部停止」⇒ 结束轮转（随后自动收尾）')
+            stopped_by_user = True
+            break
+        en = set(ctl.get('enabled') or [p for p, _, _ in plan])
+        st = set(ctl.get('stopped') or [])
+        if not en:
+            log('[CTL] 启用池为空 ⇒ 无池可跑，结束轮转')
+            break
+        log('')
+        log('#' * 76)
+        log('## 第 {} / {} 轮   启用池={}   本轮停={}'.format(rnd, rounds, sorted(en), sorted(st) or '无'))
+        log('#' * 76)
+        ran_round = False
+        for p, g0, done in plan:
+            ctl2 = read_ctl()
+            if ctl2.get('stopAll'):
+                log('[CTL] ★ 收到「全部停止」⇒ 中断本轮（随后自动收尾）')
+                stopped_by_user = True
+                break
+            if p not in en:
+                log('[SKIP] pool={:<5s} 不在启用集合 ⇒ 本轮跳过'.format(p))
+                continue
+            if p in set(ctl2.get('stopped') or []):
+                log('[SKIP] pool={:<5s} 已被单独停止 ⇒ 本轮跳过（不影响其他池）'.format(p))
+                continue
+            g0, done = next_gen(p)             # ★ 每代现取（journal 为唯一事实源）
+            gen = g0
+            sfx = '' if p == 'all' else '_' + p
             seed = gen * 10 + 7
             logf = os.path.join(LOGD, 'pool{}_gen{}.log'.format(sfx, gen))
             errf = os.path.join(LOGD, 'pool{}_gen{}_err.log'.format(sfx, gen))
+            write_ctl(round=rnd, curPool=p, curGen=gen, phase='mine')
             cmd = [PY, '-u', 'engine/loop_engine.py', '--gen={}'.format(gen),
                    '--n={}'.format(n), '--l2={}'.format(l2), '--seed={}'.format(seed)] + extra
             # ★ 2026-09-14（loop_todo §1.8）：给 `all` 轨道注入池库作对照集（避免重挖）。
@@ -346,59 +497,56 @@ def main():
             except Exception:
                 pass
             if pr.returncode != 0 or errsz > 0:
-                log('[!] 本池非正常结束 -> **停止本池**（继续下一池）。'
-                    '人工看 {}'.format(os.path.basename(errf)))
-                break
+                _c3 = read_ctl()
+                _killed = bool(_c3.get('stopAll')) or (p in set(_c3.get('stopped') or []))
+                log('[!] pool={} 本代非正常结束{} -> **只跳过本池本轮**（不影响其他池）。人工看 {}'.format(
+                    p, '（★ 被用户停止，该代作废下次重跑）' if _killed else '（疑似崩溃）',
+                    os.path.basename(errf)))
+                continue                      # ★★ 原为 `break`（会中断整个池循环）⇒ 改 `continue` ✓
+            ran_round = True
+            dirty = True
+        # ★★ 一轮结束 ⇒ **自动收尾**（用户要求 3：「每轮结束自动收尾」）
+        if stopped_by_user:
+            break
+        if ran_round and not dry and not no_global:
+            do_global_tail('第 {} / {} 轮结束'.format(rnd, rounds))
+            dirty = False
     log('===== 全部轨道结束 =====')
+    # ★★ 因"全部停"退出、且还有未被收尾覆盖的进展 ⇒ **自动收尾**
+    #    （用户要求 4：「一键全部停掉后，它就自动进入收尾阶段」）
+    if stopped_by_user and dirty and not dry and not no_global:
+        do_global_tail('★ 全部停止后')
+        dirty = False
+    # ★★ 退出前**清掉 `stopAll`**（2026-09-16 修 BUG C）：
+    #   残留的 `stopAll=true` 会让**下一次启动立刻又退出**（读到"全部停"）✗
+    #   ⇒ 必须由"读到它的人"（本调度器）负责清掉 ✓
+    write_ctl(running=False, phase='idle', curPool=None, curGen=None,
+              stopAll=False, stopped=[], tailAt=None)
+    log('  [CTL] 调度器退出（已复位控制文件）✓')
     # ★★★ 收尾：**跨池审查 + 精选池**（2026-09-14 用户批准；见 `tools/cross_pool_review.py`）
     #   为什么必须放在这里：**跨池去重无法放进引擎** —— 三个池是独立进程、互不知道；
     #   若让后跑的池读先跑的池的 bank ⇒ **跑序一变结果就变、不可复现**。
     #   ⇒ 正确地做成"**一轮轨道跑完后的一次性审查**"。
     #   ⚠ 前置：先把新入库因子的值落地到 `facs/`（否则审查看不到新因子）。
+    # ==================== 收尾（v1.3.0 起由 `do_global_tail()` 统一承担）====================
+    # ★ 为什么原实现必须放在这里（2026-09-14 的注释，仍然成立）：
+    #   **跨池去重无法放进引擎** —— 各池是独立轨迹、互不知道；若让后跑的池读先跑的池的 bank
+    #   ⇒ **跑序一变结果就变、不可复现** ⇒ 正确地做成"**一轮跑完后的一次性审查**" ✓
+    #   ⚠ 前置：先把新入库因子的值落地到 `facs/`（否则审查看不到新因子）。
+    #
+    # ★★ v1.3.0 变化：
+    #   · **每轮结束** ⇒ 自动收尾（在轮转循环里，见上）
+    #   · **收到「全部停」** ⇒ 自动收尾（见上）
+    #   · 这里**只兜住 `--rounds=0`**（= "纯收尾"调用，看板旧接口/CLI 仍可用）✓
+    #   · `--no_global` 仍保留：**给"每池一进程"的旧并行模式**兜底（默认已不需要）✓
+    if rounds == 0 and not dry and not no_global:
+        do_global_tail('--rounds=0（仅收尾）')
     if no_global and not dry:
         log('')
         log('=' * 76)
-        log('[收尾] ⏭ **已跳过**（`--no_global`）—— 全局收尾（facs 落地 + 跨池审查）')
-        log('       必须由**单独一次**调用完成（池驱动并行时会重复 5 倍且并发写同一份产出 ✗）')
-        log('       ⇒ 用 `run_tracks.py --rounds=0`（或看板的「收尾审查」）✓')
+        log('[收尾] ⏭ **已跳过**（`--no_global`）')
+        log('       ⇒ 用 `run_tracks.py --rounds=0` 单独收尾，或直接跑轮转调度器 ✓')
         log('=' * 76)
-    if not dry and not no_global:
-        log('')
-        log('=' * 76)
-        log('[收尾 ①] 因子值落地到 facs/（新入库的必须落，否则审查看不到）')
-        log('=' * 76)
-        try:
-            # ★ `--only-new`（2026-09-14 优化）：**增量落地** —— 已落地的跳过、只缺
-            #   `values_q.h5` 的只补副本、都不缺时**连面板都不载**。
-            #   实测：52 个全就绪 ⇒ **4.0s**（全量要 ~21min）；缺 3 个副本 ⇒ 5.9s。
-            #   ⚠ 增量模式下 CSV 走「读-合并-写」（`_merge_csv`）⇒ 不会清空已有的
-            #     52 条剥风格记录（那是精选池 L3 的闸门依据）。回归测试：
-            #     `python tools/_test_build_facs_merge.py`（11 项）。
-            r = subprocess.run([PY, '-u', 'tools/build_facs.py', '--only-new'],
-                               cwd=ROOT, capture_output=True, text=True,
-                               encoding='utf-8', errors='replace', timeout=7200)
-            for ln in (r.stdout or '').splitlines()[-6:]:
-                log('    ' + ln[:150])
-            if r.returncode != 0:
-                log('    [!] 落地非零退出={} -> 仍继续审查（用已有 facs/）'.format(r.returncode))
-        except Exception as e:
-            log('    [!] 落地失败({}) -> 仍继续审查'.format(type(e).__name__))
-        log('')
-        log('=' * 76)
-        log('[收尾 ②] L2 跨池审查 + L3 精选池')
-        log('=' * 76)
-        try:
-            r = subprocess.run([PY, '-u', 'tools/cross_pool_review.py'],
-                               cwd=ROOT, capture_output=True, text=True,
-                               encoding='utf-8', errors='replace', timeout=3600)
-            for ln in (r.stdout or '').splitlines():
-                log('    ' + ln[:150])
-            if r.stderr and r.stderr.strip():
-                log('    [stderr] ' + r.stderr.strip()[:300])
-        except Exception as e:
-            log('    [!] 审查失败({}: {})'.format(type(e).__name__, e))
-        log('')
-        log('⇒ 精选池见 docs/factor_pool_selected.md（比"入库数"更接近"能用几个"）')
     return 0
 
 
