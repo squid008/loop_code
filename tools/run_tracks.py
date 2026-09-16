@@ -21,6 +21,15 @@
   python tools/run_tracks.py --pools=all --inject_pools=300,500,1000   # 显式指定注入
   python tools/run_tracks.py --pools=all --inject_pools=none           # 关掉注入
 
+ ★★ `--no_global`（2026-09-16 新增）：**跳过一轮结束后的"全局收尾"**。
+    收尾两项（`build_facs.py --only-new` + `cross_pool_review.py`）是**全局动作** ——
+    尤其跨池审查必须"看全所有池"才能去重（见下方 L332 注释）⇒
+    **池驱动一律加 `--no_global`**（看板「每池独立启停」就是这么调的）✓
+    全局收尾由**单独一次**调用完成：`python tools/run_tracks.py --pools=300 --rounds=0`
+    （`--rounds=0` ⇒ 一轮都不跑、直接进收尾；看板上的「收尾审查」按钮即调它）✓
+    ⚠ 不加它的后果：5 个池各跑一次收尾 ⇒ **重复 5 倍 + 并发写同一份
+      `factor_library_crosspool.md` / `factor_pool_selected.md` ⇒ 互相覆盖** ✗✗
+
 ★★ `--inject_pools`（2026-09-14, loop_todo §1.8）：给 `all` 轨道**注入池库作对照集**。
    默认（不传）= **自动给 `all` 注入本次要跑的其它池**；池轨道**不注入**（理由见 `inject_for`）。
    为什么：`--decorr`/`--dup_ex_corr` 的对照集原本只是本轨道自己的 bank ⇒ 跑全A 时不知道
@@ -137,6 +146,16 @@ def main():
     n, l2 = 800, 30
     dry = False
     inject_spec = ''       # ★ §1.8：外部池库对照集注入（默认自动：只给 all 轨道）
+    # ★★★ 2026-09-16 新增 `--no_global`：**跳过一轮结束后的「全局收尾」**。
+    #   为什么需要（"看板每池独立启停"改造的前提）：
+    #     · 收尾两项（`build_facs.py --only-new` / `cross_pool_review.py`）是**全局动作** ——
+    #       尤其 `cross_pool_review` 要做**跨池去重**，它必须"看全所有池"才能做（见 L332-335 注释）
+    #     · 一旦改成"**每池一个独立驱动进程**"（可单独启停），5 个池就会**各跑一次收尾**
+    #       ⇒ ①**重复 5 倍**（`cross_pool_review` 单次要 ~5min）②**并发写同一份
+    #          `factor_library_crosspool.md` / `factor_pool_selected.md` ⇒ 互相覆盖** ✗✗
+    #     ⇒ 所以：**池驱动一律加 `--no_global`**；全局收尾由**单独一次**调用完成
+    #       （看板「收尾审查」按钮 / 或 `run_tracks.py --pools=... --rounds=0`）✓
+    no_global = False
     # ★★ 池内挖掘的**必要参数组**（2026-09-13 实测；不传 = 白跑一整夜）
     #   300/500 gen6~8 六代全部 `fail_calmar = 1.000`（**100%** 因全A Calmar 不足被砍），
     #   B角原话:「L2中100%因Calmar不足(信号弱)」。根因：我只传了 `--pool_obs`，
@@ -230,6 +249,8 @@ def main():
             inject_spec = a.split('=', 1)[1].strip()
         elif a == '--dry':
             dry = True
+        elif a == '--no_global':
+            no_global = True
         elif a.startswith('--extra='):
             extra = [x for x in a.split('=', 1)[1].split() if x]
 
@@ -334,7 +355,14 @@ def main():
     #   若让后跑的池读先跑的池的 bank ⇒ **跑序一变结果就变、不可复现**。
     #   ⇒ 正确地做成"**一轮轨道跑完后的一次性审查**"。
     #   ⚠ 前置：先把新入库因子的值落地到 `facs/`（否则审查看不到新因子）。
-    if not dry:
+    if no_global and not dry:
+        log('')
+        log('=' * 76)
+        log('[收尾] ⏭ **已跳过**（`--no_global`）—— 全局收尾（facs 落地 + 跨池审查）')
+        log('       必须由**单独一次**调用完成（池驱动并行时会重复 5 倍且并发写同一份产出 ✗）')
+        log('       ⇒ 用 `run_tracks.py --rounds=0`（或看板的「收尾审查」）✓')
+        log('=' * 76)
+    if not dry and not no_global:
         log('')
         log('=' * 76)
         log('[收尾 ①] 因子值落地到 facs/（新入库的必须落，否则审查看不到）')

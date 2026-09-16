@@ -119,29 +119,40 @@ export interface MetaDto {
 }
 
 // ---------------------------------------------------------------- 挖掘控制
+export interface PoolProcs { driver: number[]; engine: number[]; running: boolean }
+
 export interface MineStateDto {
-  canStart: boolean
+  mode: string                    // 'per-pool'
+  knownPools: string[]
+  runningPools: string[]
+  byPool: Record<string, PoolProcs>
   drivers: ProcessInfo[]
   engines: ProcessInfo[]
-  runningPools: string[]
-  driverPools: string[]
+  anyRunning: boolean
+  freeGB: number | null
+  gbPerEngine: number
+  canStartMore: number | null
+  maxParallel: number | null
   defaultRounds: number
   roundsRange: [number, number]
-  knownPools: string[]
   script: string
   note: string
 }
 
 export interface MineStartResp {
-  ok: boolean; pid: number; alive: boolean
-  pools: string[]; rounds: number; cmd: string; log: string; note: string
+  ok: boolean
+  started: { pool: string; pid: number; alive: boolean | null; cmd: string; log: string }[]
+  skipped: { pool: string; why: string; pids: number[] }[]
+  noGlobal?: boolean
+  freeGB?: number | null
+  note: string
 }
 
 export interface MineStopResp {
   ok: boolean
-  killed: { pid: number; kind: string; rc: number; out: string }[]
-  stillRunning: { pid: number; kind: string }[]
   scope: string
+  killed: { pid: number; kind: string; pools: string[] | null; rc: number; out: string }[]
+  stillRunning: { pid: number; kind: string; pools: string[] | null }[]
   note: string
 }
 
@@ -155,10 +166,12 @@ export const api = {
   stripBank: () => get<{ found: boolean; count: number; rows: Record<string, string>[] }>('/strip-bank'),
   poolObs: (pool: string, limit = 200) =>
     get<{ found: boolean; columns: string[]; rows: Record<string, string>[] }>(`/pool-obs/${pool}?limit=${limit}`),
-  // ★ 挖掘控制
+  // ★ 挖掘控制（每池独立进程）
   mineState: () => get<MineStateDto>('/mine/state', 40000),
   mineStart: (pools: string[], rounds: number) =>
-    post<MineStartResp>('/mine/start', { pools, rounds }),
-  mineStop: (scope: 'all' | 'pool' = 'all', pool?: string) =>
-    post<MineStopResp>('/mine/stop', { scope, pool }),
+    post<MineStartResp>('/mine/start', { pools, rounds, noGlobal: true }),
+  mineStop: (pool?: string) =>
+    post<MineStopResp>('/mine/stop', pool ? { scope: 'pool', pool } : { scope: 'all' }),
+  mineGlobal: () => post<{ ok: boolean; pid: number; alive: boolean | null; log: string; note: string }>(
+    '/mine/global', {}, 60000),
 }

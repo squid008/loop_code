@@ -60,7 +60,7 @@ def meta():
             '/api/health', '/api/meta', '/api/status', '/api/pools',
             '/api/library', '/api/library/{pool}', '/api/selected',
             '/api/strip-bank', '/api/pool-obs/{pool}', '/api/factors/flat',
-            '/api/mine/state', '/api/mine/start', '/api/mine/stop',
+            '/api/mine/state', '/api/mine/start', '/api/mine/stop', '/api/mine/global',
         ],
     }
 
@@ -118,6 +118,7 @@ def flat():
 class StartBody(BaseModel):
     pools: list[str] = []
     rounds: int = 50
+    noGlobal: bool = True       # ★ 池驱动默认跳过全局收尾（并行安全）
 
 
 class StopBody(BaseModel):
@@ -125,23 +126,32 @@ class StopBody(BaseModel):
     pool: str | None = None
 
 
-@app.get('/api/mine/state', summary='★ 挖掘控制状态（能否启动 / 谁在跑）')
+@app.get('/api/mine/state', summary='★ 挖掘控制状态（每池能否启停 / 资源）')
 def mine_state():
     return mine.state()
 
 
-@app.post('/api/mine/start', summary='★ 启动挖掘（一键 = 全部池；单池 = 只跑该池）')
+@app.post('/api/mine/start', summary='★ 启动挖掘 —— **每池一个独立进程**（可单独启停、互不干扰）')
 def mine_start(body: StartBody):
     try:
-        return mine.start(body.pools, body.rounds)
+        return mine.start(body.pools, body.rounds, no_global=body.noGlobal)
     except mine.MineError as e:
         raise HTTPException(e.code, e.msg)
 
 
-@app.post('/api/mine/stop', summary='★ 停止挖掘（树杀驱动 + 兜底杀残留引擎）')
+@app.post('/api/mine/stop', summary='★ 停止挖掘 —— 指定池则**只停该池**；不指定则停全部')
 def mine_stop(body: StopBody):
     try:
-        return mine.stop(all_pools=(body.scope != 'pool'), pool=body.pool)
+        pool = body.pool if (body.scope == 'pool' and body.pool) else None
+        return mine.stop(pool=pool)
+    except mine.MineError as e:
+        raise HTTPException(e.code, e.msg)
+
+
+@app.post('/api/mine/global', summary='★ 全局收尾（facs 落地 + 跨池审查 + 精选池）—— 要求无池在跑')
+def mine_global():
+    try:
+        return mine.run_global()
     except mine.MineError as e:
         raise HTTPException(e.code, e.msg)
 
