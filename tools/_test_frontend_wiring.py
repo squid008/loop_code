@@ -110,6 +110,22 @@ chk('★ 指标表/曲线的取数口径写明是 **state.bank（当前有效库
     'state.bank' in src)
 
 print()
+print('【7】★ 顶栏控件栏：**永远保持一行**（2026-09-17 用户："红框这行就干脆一直放在这一行吧，'
+      '不然它会随着内存变动一会儿跳到第一行一会儿跳到第二行"）')
+css = io.open(r'D:\loop_code\dashboard\web\src\styles.css', encoding='utf-8').read()
+chk('控件栏内部**不换行**且**不被压缩**（整条整体换行交给 `.top`）',
+    re.search(r'\.ctrls \{[^}]*flex-wrap: nowrap', css) is not None
+    and re.search(r'\.ctrls \{[^}]*flex: 0 0 auto', css) is not None,
+    '可收缩 + 内部 wrap ⇒ 空间一变就逐项折行（用户看到的"跳来跳去"✗）')
+chk('★ **会变宽的内存数字**定宽 + 等宽数字（一变宽就把邻居挤走 ⇒ 跳行）',
+    re.search(r'\.ctrls \.res b \{ min-width: 62px', css) is not None,
+    '`3.1 GB` → `19.4 GB` 宽度会变 ⇒ 必须 min-width + tabular-nums')
+chk('相位条 / 启动按钮也定宽（gen、轮数、按钮文案一变就整体位移 ✗）',
+    '.ctrls .phase { min-width: 190px; }' in css and '.ctrls .btn.start { min-width: 116px; }' in css)
+chk('极窄屏**优雅降级**（先省次要文字，而不是折行或横滑）',
+    '@media (max-width: 1000px)' in css)
+
+print()
 print('【6】★ 风格相关性画像：横向条形图 + 图例显隐 + 数据来源（2026-09-16 用户要求）')
 chk('风格画像走**同一个 /curves 接口**的 style 字段（不另开接口），且**口径串过出口清洗**',
     'StyleProfileDto' in api and "'style': _plain_style(d.get('style'))" in io.open(
@@ -168,8 +184,12 @@ chk('★ 状态区仍以**真实进程命令行**为准显示模式（UI 固定�
 # ⚠ 必须**先剔注释**再断言 —— 注释里就写着 `overflow-x: auto` 这几个字（解释它为何被去掉）✗
 _CSS_NC = re.sub(r'/\*.*?\*/', '', CSS, flags=re.S)
 _m = re.search(r'\.ctrls \{[^}]*\}', _CSS_NC)
-chk('★ 顶栏 `.ctrls` 不再用 overflow-x（否则内容一变宽就冒出横向滚动条），改为整块换行',
-    _m is not None and 'overflow-x' not in _m.group(0) and 'flex-wrap: wrap' in _m.group(0),
+# ⚠ 2026-09-17 改：原来断言"整块换行（`flex-wrap: wrap`）"，但用户实测发现**整排会被压窄后
+#   内部逐项折行**（内存数字一变宽就换位置 ⇒ "一会儿跳第一行一会儿跳第二行"✗）
+#   ⇒ 新意图：**内部 nowrap + 不被压缩**（整条整体换行交给 `.top`）、且**不用 overflow-x** ✓
+chk('★ 顶栏 `.ctrls` 不用 overflow-x（避免横条）+ 内部不换行、不被压缩',
+    _m is not None and 'overflow-x' not in _m.group(0)
+    and 'flex-wrap: nowrap' in _m.group(0) and 'flex: 0 0 auto' in _m.group(0),
     '实际规则：%s' % (_m.group(0).replace('\n', ' ') if _m else '(没匹配到 .ctrls 规则)'))
 chk('★ 状态条文案已缩短（免得把顶栏挤爆）', '池在跑' in src)
 chk('★ 调度器活着但没池可跑 ⇒ 不再谎报「挖掘中」（`_runnable` 判定）', '_runnable' in minepy)

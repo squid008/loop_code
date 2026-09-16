@@ -39,7 +39,17 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 /* ⚠ 2026-09-16（用户："开始挖后顶栏咋出现滚动条了"）：`overflow-x: auto` 会在**内容变宽时冒出横条**
    ⇒ 去掉它；改为**整块换行**（`flex-wrap: wrap` + 行距）—— 单个控件**永不断行**（见下），
    实在放不下就整排挪到第二行，**不会再出现滚动条** ✓ */
-.ctrls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 8px; }
+/* ★★★ 2026-09-17（用户："红框这行东西就干脆一直放在这一行吧，不然它会随着内存变动一会儿跳到
+   第一行一会儿跳到第二行"）—— 根因与修法：
+   根因 = `.ctrls` 是 `.top` 的 flex 子项，**默认可收缩** ⇒ 品牌区一占位，控件栏被压窄 ⇒ 
+          它内部 `flex-wrap: wrap` 就开始**逐项折行**；而内存数字 `3.1 GB` → `19.4 GB` 一变宽、
+          相位条里 gen/轮数一涨，**折行的位置就变** ⇒ 视觉上"跳来跳去" ✗
+   修法 = ① `.ctrls` **不再被压缩**（`flex: 0 0 auto`）⇒ 放不下时由 `.top` 把**整条控件栏**
+            整体挪到第二行（品牌一行、控件一行），**栏内永不分裂** ✓
+          ② 栏内 `flex-wrap: nowrap` ⇒ 任何情况下都保持一行 ✓
+          ③ **仍然不用** `overflow-x`（滚动条比换行更难看 —— 2026-09-16 已踩过）✓
+          ④ 会变宽的元素**定宽**（见下面 `.res b` / `.phase` / `.start` 的 `min-width`）⇒ 不抖 ✓ */
+.ctrls { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; flex: 0 0 auto; }
 .ctrls > * { flex: 0 0 auto; }
 .ctrls .btn, .ctrls .seg, .ctrls .rounds, .ctrls .num, .ctrls .chk, .ctrls .res { white-space: nowrap; }
 /* 并行数 / 预算：紧凑的行内数字框（省地方，避免把这一排挤爆） */
@@ -285,6 +295,20 @@ tr.outbank .fcode { color: var(--mut); }
 .ctrls .res small { white-space: nowrap; }
 .ctrls .phase { padding: 0 12px; }
 .ctrls .chk { padding: 0 2px; }
+/* ★★ 定宽防抖（2026-09-17 用户："随内存变动一会儿跳第一行一会儿跳第二行"）：
+   把**会变宽**的几处钉死宽度 ⇒ 数值变化不再推动邻居、也不再触发整排重排 ✓ */
+.ctrls .res b { min-width: 62px; text-align: right; font-variant-numeric: tabular-nums; }
+.ctrls .res small { min-width: 68px; text-align: right; }
+.ctrls .phase { min-width: 190px; }                 /* 相位条：idle 时也不缩（避免邻居位移）*/
+.ctrls .phase em { min-width: 88px; }               /* "500 · gen 17" */
+.ctrls .phase small { min-width: 58px; text-align: right; }   /* "第1轮/50" */
+.ctrls .btn.start { min-width: 116px; }             /* "一键启动全部" / "已在运行" 宽度不同 ⇒ 钉死 */
+/* ★ 极窄屏（<1000px）的**优雅降级**：宁可靠"少显示一点次要信息"保持一行，
+   也不要折行/横滑 —— 先省掉最不关键的"x/y 池在跑"与"相位条的预留宽度" ✓ */
+@media (max-width: 1000px) {
+  .ctrls .res small { display: none; }
+  .ctrls .phase { min-width: 0; }
+}
 
 /* 「历史」行的状态标签：**不要绿色**（绿=正常入库），历史/已移出用**琥珀色** ✓ */
 .status.hist { color: #fcd34d; background: #3a2a06; border-color: #6b4a0f; }
