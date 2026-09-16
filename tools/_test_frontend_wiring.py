@@ -117,11 +117,23 @@ MINE = r'D:\loop_code\dashboard\api\app\mine.py'
 minepy = io.open(MINE, encoding='utf-8').read()
 chk('模式分段控件存在（轮转 / 并行）',
     "setExecMode('parallel')" in src and "setExecMode('rotate')" in src)
-# ⚠ 断言里的字面量**别带引号** —— TSX 里是 `mine?.parallelRange`（不带引号），带引号就永远不匹配 ✗
-chk('并行数只在 parallel 时出现', 'parallelRange' in src and "execMode === 'parallel'" in src)
-# ★ 2026-09-16（用户："预算改了跟 3 没区别，还不如去掉"）——实测它是**闸门**不是**上限** ⇒ 撤掉 ✓
-chk('★「预算」输入框已撤（避免误导：它只决定"要不要排队等"，不决定引擎吃多少内存）',
-    '每个引擎的内存预算' not in src)
+# ★ 2026-09-16（用户要求）：**UI 只留"模式"一个开关** —— 并行数自动算、预算撤掉、共享默认开
+chk('★ 并行数**输入框已撤**（后端按可用内存自动定：能开几个开几个）',
+    'parallelRange' not in src and 'setMaxParallel' not in src)
+chk('★「预算」输入框已撤（实测它是"排队闸门"不是"内存上限"，改了没用 ✗）',
+    '每个引擎的内存预算' not in src and 'setMemPerEngine' not in src)
+chk('★ 面板共享**勾选框已撤**（改为默认常开），启动固定传 panelCache=use',
+    'setPanelCache' not in src and "panelCache: 'use'" in src)
+MINE = r'D:\loop_code\dashboard\api\app\mine.py'
+minepy = io.open(MINE, encoding='utf-8').read()
+PARR = r'D:\loop_code\tools\parallel_runner.py'
+prpy = io.open(PARR, encoding='utf-8').read()
+chk('★ mine.py：并行数**自动算**（`floor((可用-余量)/每引擎)` 再夹到 1~池数）',
+    'max_parallel = int(max(1, min(len(pool_list)' in minepy)
+chk('★ mine.py：缓存不可用 ⇒ **自动降级为 off**（不让启动失败）+ note 说明',
+    '_pc_degraded' in minepy and '自动关掉' in minepy)
+chk('★★ parallel_runner：用户**单独停池**后**本轮不再补位**（空槽留给用户自己决定）',
+    'paused_refill' in prpy and '不再补位' in prpy)
 # ★★ 用户实测"停完再启动变成了轮转"⇒ 根因是 UI 控件与后端"上次设置"脱钩（页面刷新回默认）⇒ 从状态同步 ✓
 CSS = io.open(r'D:\loop_code\dashboard\web\src\styles.css', encoding='utf-8').read()
 chk('★ 控件从**后端状态**同步（没在跑时才对，且只在值变了才覆盖）',
@@ -134,7 +146,6 @@ chk('★ 顶栏 `.ctrls` 不再用 overflow-x（否则内容一变宽就冒出�
     '实际规则：%s' % (_m.group(0).replace('\n', ' ') if _m else '(没匹配到 .ctrls 规则)'))
 chk('★ 状态条文案已缩短（免得把顶栏挤爆）', '池在跑' in src)
 chk('★ 调度器活着但没池可跑 ⇒ 不再谎报「挖掘中」（`_runnable` 判定）', '_runnable' in minepy)
-chk('面板共享复选框存在（勾选 ⇒ panel_cache=use）', "panelCache ? 'use' : 'off'" in src)
 chk('doStart 把模式参数**真的**发给接口', 'api.mineStart(pools, rounds, {' in src)
 chk('api.mineStart 支持 opts 透传（含 execMode/panelCache）',
     'opts?' in api and 'execMode?: string' in api and 'panelCache?: string' in api)

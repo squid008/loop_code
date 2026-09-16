@@ -4,18 +4,20 @@
 为什么必须有它：
   用户之问「前端还没把并行切换加上是吧？」的答案曾是"**能力全在 CLI（v1.4.0），缺看板这一层**"。
   现在补齐了 ⇒ 必须钉住三件事，否则会**静默退化**：
-  ① **默认行为一行不改**：不传模式参数时，发给 `run_tracks.py` 的命令必须与改造前**逐字一致** ✗
+  ① **默认行为一行不改**：不传模式参数、且控制文件里也没有"上次设置"时 ⇒ 命令行与改造前**逐字一致** ✗
   ② 选了模式/面板共享 ⇒ 必须**真的**出现在命令行里（不是只写进 UI 状态）✗
-  ③ **启动参数不能热改** + 内存护栏按模式算（否则"以为切了模式其实没切"/OOM）✗
+  ③ **启动参数不能热改** + 内存护栏 + **并行数自动算** + **面板缓存不可用自动降级**（2026-09-16 加强）
 
 ⚠ 本测试**不起真进程**（用假 `Popen` 只抓命令行），并**快照/还原** `_control.json`（逐字节校验）
   —— 按项目铁律："凡临时改写文件再还原的工具，必须还原后校验" ✓
+  ★ 每个小节**先把 ctl 摆成确定状态**再断言（否则"沿用上次设置"的语义会让用例互相污染✗ —— 实测踩过）
 """
 import hashlib
 import io
 import json
 import os
 import sys
+import tempfile
 import types
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -44,9 +46,14 @@ class FakeProc:
 
 
 def _sha(p):
-    if not os.path.isfile(p):
-        return None
-    return hashlib.sha256(open(p, 'rb').read()).hexdigest()
+    return hashlib.sha256(open(p, 'rb').read()).hexdigest() if os.path.isfile(p) else None
+
+
+def _set_ctl(d):
+    """**直接**写控制文件到确定状态（`mine._write_ctl` 是合并式，删不掉键 ⇒ 这里整份覆盖）。"""
+    os.makedirs(os.path.dirname(mine.CTL_FILE), exist_ok=True)
+    with io.open(mine.CTL_FILE, 'w', encoding='utf-8') as f:
+        json.dump(d, f, ensure_ascii=False, indent=1)
 
 
 def main():
@@ -56,55 +63,60 @@ def main():
     old_sub, old_time = mine.subprocess, mine.time
     old_sched, old_avail = mine.scheduler, mine.avail_gb
     old_pcdir = mine.PANEL_CACHE_DIR
+    real_pcinfo = mine.panel_cache_info()
     try:
         # ⚠ 假 `subprocess` 必须**继承真模块的所有属性**（STDOUT/DEVNULL/run 都要在）⇒ 只替换 Popen ✓
-        _fake_sub = types.SimpleNamespace(
-            **{k: getattr(old_sub, k) for k in dir(old_sub) if not k.startswith('_')})
-        _fake_sub.Popen = FakeProc
-        mine.subprocess = _fake_sub
-        _fake_time = types.SimpleNamespace(
-            **{k: getattr(old_time, k) for k in dir(old_time) if not k.startswith('_')})
-        _fake_time.sleep = lambda *a: None
-        mine.time = _fake_time
-
-        print('=' * 96)
-        print('【1】默认（不传模式参数）⇒ 命令行必须与改造前**逐字一致**（旧行为一行不改）')
-        print('=' * 96)
+        _fs = types.SimpleNamespace(**{k: getattr(old_sub, k) for k in dir(old_sub)
+                                       if not k.startswith('_')})
+        _fs.Popen = FakeProc
+        mine.subprocess = _fs
+        _ft = types.SimpleNamespace(**{k: getattr(old_time, k) for k in dir(old_time)
+                                       if not k.startswith('_')})
+        _ft.sleep = lambda *a: None
+        mine.time = _ft
         mine.scheduler = lambda: []
         mine.avail_gb = lambda: 20.0
+
+        print('=' * 96)
+        print('【1】控制文件**没有**"上次设置" + 不传模式参数 ⇒ 只有**面板共享**是新增的（默认开）')
+        print('=' * 96)
+        _set_ctl({'running': False, 'enabled': ['all'], 'stopped': [], 'rounds': 50})
         r = mine.start(['all'], rounds=5, reset_stopped=True)
-        args = FakeProc.last
-        chk('命令 = [python, run_tracks.py, --pools=all, --rounds=5]（无新增开关）',
-            args[2:] == ['--pools=all', '--rounds=5'], str(args[2:]))
-        chk('返回体里 execMode=rotate / panelCache=off（默认）',
-            r.get('execMode') == 'rotate' and r.get('panelCache') == 'off')
+        a = FakeProc.last[2:]
+        # ★ 2026-09-16 用户要求「共享一直默认勾、去掉勾选框」⇒ **默认开面板共享**（这是**有意的**默认变更，
+        #   理由：无副作用——结果逐位相同、载入 28.6s→1.8s、内存更低；缓存失效时自动降级 ✓）
+        chk('命令 = [--pools=all, --rounds=5, --panel_cache=use]（**唯一**新增就是面板共享）',
+            a == ['--pools=all', '--rounds=5', '--panel_cache=use'], str(a))
+        chk('★ **模式**仍默认 rotate（没冒 --exec_mode）',
+            not any(x.startswith('--exec_mode') for x in a))
+        chk('返回体 execMode=rotate（模式没变）/ panelCache=use（共享默认开）',
+            r.get('execMode') == 'rotate' and r.get('panelCache') == 'use')
 
         print()
         print('【2】并行 + 面板共享 ⇒ 参数**真的**透传到命令行')
         print('=' * 96)
+        _set_ctl({'running': False, 'enabled': ['300', '500'], 'stopped': [], 'rounds': 50})
+        pc = 'use' if (real_pcinfo.get('exists') and real_pcinfo.get('sourceOk')) else 'off'
         r = mine.start(['300', '500'], rounds=2, exec_mode='parallel',
-                       max_parallel=3, mem_per_engine=2.5,
-                       panel_cache='use' if mine.panel_cache_info().get('exists') else 'off')
-        args = FakeProc.last
-        chk('含 --exec_mode=parallel', '--exec_mode=parallel' in args, str(args[2:]))
-        chk('含 --max_parallel=3', '--max_parallel=3' in args)
-        chk('含 --mem_per_engine=2.5', '--mem_per_engine=2.5' in args)
-        if mine.panel_cache_info().get('exists'):
-            chk('含 --panel_cache=use', '--panel_cache=use' in args)
-        chk('返回体回显设置（供 UI 显示"实际在跑什么"）',
-            r.get('execMode') == 'parallel' and r.get('maxParallel') == 3)
+                       max_parallel=3, mem_per_engine=2.5, panel_cache=pc)
+        a = FakeProc.last
+        chk('含 --exec_mode=parallel', '--exec_mode=parallel' in a, str(a[2:]))
+        chk('含 --max_parallel=3（显式传入时按传入值）', '--max_parallel=3' in a)
+        chk('含 --mem_per_engine=2.5', '--mem_per_engine=2.5' in a)
+        if pc == 'use':
+            chk('含 --panel_cache=use', '--panel_cache=use' in a)
+        chk('返回体回显设置', r.get('execMode') == 'parallel' and r.get('maxParallel') == 3)
 
         print()
         print('【3】只用面板共享（轮转模式）⇒ 只加 --panel_cache，**不加**并行开关')
         print('=' * 96)
-        pc = 'use' if (mine.panel_cache_info().get('exists')
-                       and mine.panel_cache_info().get('sourceOk')) else None
-        if pc:
+        _set_ctl({'running': False, 'enabled': ['all'], 'stopped': [], 'rounds': 50})
+        if pc == 'use':
             mine.start(['all'], rounds=1, exec_mode='rotate', panel_cache='use')
-            args = FakeProc.last
+            a = FakeProc.last
             chk('含 --panel_cache=use 且**不含** --exec_mode',
-                '--panel_cache=use' in args and not any(x.startswith('--exec_mode') for x in args),
-                str(args[2:]))
+                '--panel_cache=use' in a and not any(x.startswith('--exec_mode') for x in a),
+                str(a[2:]))
         else:
             print('  [SKIP] 面板缓存不可用 ⇒ 跳过')
 
@@ -119,11 +131,13 @@ def main():
                 mine.start(['all'], rounds=1, **kw)
                 chk('拒绝 %s' % desc, False, '居然通过了 ✗')
             except mine.MineError as e:
-                chk('拒绝 %s ⇒ %s' % (desc, str(e.msg)[:38]), True)
+                chk('拒绝 %s ⇒ %s' % (desc, str(e.msg)[:34]), True)
 
         print()
-        print('【5】★ 已在跑时：改**启动参数**必须 409 拒绝（绝不静默 no-op）')
+        print('【5】★ 已在跑时：改**模式类**启动参数必须 409 拒绝（绝不静默 no-op）')
         print('=' * 96)
+        _set_ctl({'running': True, 'enabled': ['all'], 'stopped': [], 'rounds': 5,
+                  'execMode': 'rotate', 'panelCache': 'off'})
         mine.scheduler = lambda: [{'pid': 1, 'cmd': 'python tools\\run_tracks.py --pools=all --rounds=5',
                                    'pools': None}]
         try:
@@ -131,42 +145,50 @@ def main():
                        mem_per_engine=3.0, panel_cache='off')
             chk('改模式被拒', False, '居然允许热改 ✗')
         except mine.MineError as e:
-            chk('改模式被拒（%s）' % str(e.msg)[:34], e.code == 409)
-        # ⚠ 必须传**与当前一致**的参数（否则会被上面那条守卫正当拒绝 —— 实测踩到过 ✓）
-        _c = mine.ctl()
-        r = mine.start(['all', '300'], rounds=7, exec_mode=_c.get('execMode') or 'rotate',
-                       max_parallel=_c.get('maxParallel') or 3,
-                       mem_per_engine=_c.get('memPerEngine') or mine.MEM_DEFAULT,
-                       panel_cache=_c.get('panelCache') or 'off')
-        chk('参数一致 ⇒ 仍然就地更新（reused=True，轮数改到 7）',
+            chk('改模式被拒（%s）' % str(e.msg)[:32], e.code == 409)
+        # ⚠ 必须传**与当前一致**的模式（否则会被上面那条守卫正当拒绝 —— 实测踩到过 ✓）
+        r = mine.start(['all', '300'], rounds=7, exec_mode='rotate', panel_cache='off')
+        chk('模式一致 ⇒ 仍然就地更新（reused=True，轮数改到 7）',
             r.get('reused') is True and r.get('rounds') == 7)
 
         print()
-        print('【6】内存护栏**按模式算**（并行 ×N 与轮转不是一个数）')
+        print('【6】★★ 并行数**自动算**（用户："一键启动就全部五池，万一会爆内存就自动少一个池"）')
         print('=' * 96)
         mine.scheduler = lambda: []
-        mine.avail_gb = lambda: 8.0
-        try:
-            mine.start(['all'], rounds=1, exec_mode='parallel', max_parallel=3,
-                       mem_per_engine=3.0, panel_cache='use')
-            chk('8 GB 可用 ⇒ 拒绝 3×3.0+3.0=12 GB', False, '护栏没生效 ✗')
-        except mine.MineError as e:
-            chk('8 GB 可用 ⇒ 拒绝并行 ×3（%s）' % str(e.msg)[:30], e.code == 409)
-        try:
-            mine.start(['all'], rounds=1, exec_mode='rotate', panel_cache='off')
-            chk('8 GB 可用 ⇒ 轮转（关面板）也拒绝（需 9+3=12）', False, '护栏没生效 ✗')
-        except mine.MineError as e:
-            chk('8 GB 可用 ⇒ 轮转（关面板）也拒绝（需 9+3=12）', e.code == 409)
-        # ★ 反面：面板共享=use ⇒ 轮转只需 3+3=6 GB ⇒ **同一个内存下应该放行**
-        #   （这正说明「面板共享」不是摆设 —— 它真的能把"起不来"变成"起得来"✓）
-        if mine.panel_cache_info().get('exists') and mine.panel_cache_info().get('sourceOk'):
+        # ★ 自动并行数 K = clamp(1, min(池数, (可用-3)//每引擎))；停不下来时**内存护栏会拒绝**
+        #   （1 个引擎也要 3+3=6 GB ⇒ 可用 <6 时拒绝是对的，别硬上 ✗）
+        for free, want in ((26.0, 5), (12.0, 3), (9.0, 2), (8.9, 1), (5.0, 'REJECT'), (3.5, 'REJECT')):
+            _set_ctl({'running': False, 'enabled': ['all', '300', '500', '1000', '50'],
+                      'stopped': [], 'rounds': 1})
+            mine.avail_gb = lambda f=free: f
             try:
-                mine.start(['all'], rounds=1, exec_mode='rotate', panel_cache='use')
-                chk('同一个 8 GB 可用 ⇒ 面板共享后轮转**放行**（3+3=6）✓', True)
+                mine.start(['all', '300', '500', '1000', '50'], rounds=1, exec_mode='parallel',
+                           panel_cache=pc, mem_per_engine=2.0)
+                a = FakeProc.last
+                got = [x for x in a if x.startswith('--max_parallel=')]
+                got = int(got[0].split('=')[1]) if got else None
             except mine.MineError as e:
-                chk('同一个 8 GB 可用 ⇒ 面板共享后应放行', False, str(e.msg)[:40])
-        else:
-            print('  [SKIP] 面板缓存不可用 ⇒ 跳过"共享后放行"这一项')
+                got = 'REJECT' if e.code == 409 else 'ERR:%s' % e.code
+            chk('可用 %4.1f GB + 面板共享(3GB/引擎) ⇒ %s' % (
+                free, ('自动并行 %d' % want) if want != 'REJECT' else '内存护栏拒绝（409）'),
+                got == want, '实测 %s' % got)
+
+        print()
+        print('【7】★★ 面板缓存不可用 ⇒ **自动降级为 off**（不让启动失败），并在 note 里说明')
+        print('=' * 96)
+        _set_ctl({'running': False, 'enabled': ['all'], 'stopped': [], 'rounds': 1})
+        mine.avail_gb = lambda: 20.0
+        with tempfile.TemporaryDirectory(prefix='_pc_missing_') as tmp:
+            mine.PANEL_CACHE_DIR = tmp                     # 空目录 ⇒ 缓存"缺失"
+            try:
+                r = mine.start(['all'], rounds=1, exec_mode='rotate', panel_cache='use')
+                chk('缓存缺失时**不报错**（降级继续）', r.get('ok') is True)
+                chk('返回体 panelCache=off（降级后的真实值）', r.get('panelCache') == 'off')
+                chk('命令行里**没有** --panel_cache（没拿失效缓存去跑）',
+                    not any(x.startswith('--panel_cache') for x in FakeProc.last), str(FakeProc.last[2:]))
+                chk('note 里明确说了"自动关掉面板共享"', '自动关掉' in (r.get('note') or ''))
+            except mine.MineError as e:
+                chk('缓存缺失时应降级而不是报错', False, str(e.msg)[:50])
     finally:
         mine.subprocess, mine.time = old_sub, old_time
         mine.scheduler, mine.avail_gb = old_sched, old_avail

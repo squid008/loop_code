@@ -64,7 +64,9 @@ MIN_FREE_GB = 3.0
 
 # ★★★ 2026-09-16（用户之问「前端还没把并行切换加上是吧？」）：把 `run_tracks.py` **v1.4.0 就有的**
 #   调度模式开关与面板共享**暴露到看板**（能力全在 CLI，缺的只是这一层）。
-#   ★ 原则不变：**默认 = 现状**（`rotate` + `panel_cache=off`）⇒ 不加参数时命令行与改造前**逐字一致** ✓
+#   ★ 默认：**模式仍是 `rotate`**（不加参数时命令行与改造前一致）✓
+#     ⚠ **面板共享**自 2026-09-16 起**默认开**（用户要求「一直默认勾、去掉勾选框」）——
+#       理由：无副作用（结果逐位相同 · 载入 28.6s→1.8s · 内存更低）；缓存失效时**自动降级为 off** ✓
 EXEC_MODES = ('rotate', 'parallel')
 PANEL_CACHES = ('off', 'use', 'build')
 PARALLEL_RANGE = (1, 6)
@@ -356,26 +358,47 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
     # ---- ★ 调度模式参数：校验 + 缺省继承（`None` ⇒ 沿用上次设置）----
     c0 = ctl()
     exec_mode = (exec_mode if exec_mode is not None else c0.get('execMode') or 'rotate')
-    panel_cache = (panel_cache if panel_cache is not None else c0.get('panelCache') or 'off')
+    panel_cache = (panel_cache if panel_cache is not None else c0.get('panelCache') or 'use')
     exec_mode = str(exec_mode).strip().lower()
     panel_cache = str(panel_cache).strip().lower()
-    max_parallel = int(max_parallel if max_parallel is not None else (c0.get('maxParallel') or 3))
     mem_per_engine = float(mem_per_engine if mem_per_engine is not None
                            else (c0.get('memPerEngine') or MEM_DEFAULT))
+    _mp_explicit = max_parallel is not None
+    max_parallel = int(max_parallel) if _mp_explicit else 0     # 0 = 待自动算（见下）
     if exec_mode not in EXEC_MODES:
         raise MineError('调度模式只能是 %s（收到 %s）' % (list(EXEC_MODES), exec_mode))
     if panel_cache not in PANEL_CACHES:
         raise MineError('面板缓存只能是 %s（收到 %s）' % (list(PANEL_CACHES), panel_cache))
-    if not (PARALLEL_RANGE[0] <= max_parallel <= PARALLEL_RANGE[1]):
+    if _mp_explicit and not (PARALLEL_RANGE[0] <= max_parallel <= PARALLEL_RANGE[1]):
         raise MineError('并行上限要在 %d~%d 之间（收到 %s）' % (PARALLEL_RANGE[0], PARALLEL_RANGE[1],
                                                           max_parallel))
     if not (0.5 <= mem_per_engine <= 32.0):
         raise MineError('每引擎预算要在 0.5~32 GB 之间（收到 %s）' % mem_per_engine)
+    # ---- ★★ 面板共享：**缓存不可用就自动降级为 off**（而不是让启动失败）----
+    #   2026-09-16 用户要求：「一直默认勾，没副作用的话干脆不要这个勾选框」⇒ 看板固定发 `use`：
+    #     · 缓存**有效** ⇒ 真的共享（载入 28.6s→1.8s、内存更低；结果**逐位相同**，见 _test_panel_cache）
+    #     · 缓存**过期/缺失** ⇒ **自动关掉共享**（降到"更慢但一定正确"的路径）+ 在 note 里说清楚 ✓
+    #   ⚠ 这是"降级到安全路径"、不是"用旧数据算新结果" ⇒ 不违反"绝不静默污染" ✓（但必须**明确告知**）
     _pcinfo = panel_cache_info()
+    _pc_degraded = False
     if panel_cache == 'use' and (not _pcinfo.get('exists') or not _pcinfo.get('sourceOk')):
-        # ★ 提前拒绝：否则要等 N 个引擎各自启动后才报错（还白起一堆进程）✗
-        raise MineError('「面板共享」选了 use，但缓存不可用：%s\n  ⇒ 修复：python tools/build_panel_cache.py'
-                        % (_pcinfo.get('hint') or _pcinfo.get('err') or '未知原因'), 409)
+        _pc_degraded = True
+        panel_cache = 'off'
+
+    # ---- ★★ 并行上限：**没传就按可用内存自动算**（用户要求：「一键启动就全部五池启动 +
+     #   万一会爆内存就自动少一个池」）----
+    #   `K = floor((可用 - 余量) / 每引擎)`，再夹到 `1 ~ 池数` ⇒ **能开几个开几个** ✓
+    #   · 面板共享开着 ⇒ 每引擎按 3 GB（共享的那 4.56 GB 只算一份）✓ 关着 ⇒ 按 9 GB（各建一份）
+    #   · 还有一道**运行期**护栏在 `parallel_runner`（可用内存 < 预算就**排队等**，宁慢不炸）✓
+    free0 = avail_gb()
+    _mp_auto = False
+    if exec_mode == 'parallel' and not _mp_explicit:
+        _eff = GB_PER_ENGINE_SHARED if panel_cache != 'off' else GB_PER_ENGINE
+        if free0 is None:
+            max_parallel = min(len(pool_list), 3)
+        else:
+            max_parallel = int(max(1, min(len(pool_list), (free0 - MIN_FREE_GB) // _eff)))
+        _mp_auto = True
 
     sched = scheduler()
     if sched:
@@ -388,11 +411,9 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
                     panelCache=_flag(_cmd, 'panel_cache', str, c0.get('panelCache') or 'off'))
         _want = dict(execMode=exec_mode, maxParallel=max_parallel,
                      memPerEngine=mem_per_engine, panelCache=panel_cache)
-
-        def _differs(k):
-            a, b = _want[k], _cur[k]
-            return abs(a - b) > 1e-9 if isinstance(b, float) else a != b
-        _d = [k for k in _want if _differs(k)]
+        # ★ 只比"模式类"参数：`execMode` / `panelCache`。
+        #   并行数是**每次按内存自动算**的（换个时刻算出来就不一样）⇒ 拿它做"热改"比较会**误报 409** ✗
+        _d = [k for k in ('execMode', 'panelCache') if _want[k] != _cur[k]]
         if _d:
             raise MineError(
                 '调度器已在运行（当前 %s）；而 %s 是**启动参数、不能热改** ✗\n'
@@ -419,7 +440,7 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
     # ---- 内存护栏（**按模式 + 面板共享**算）----
     # ★ 面板共享开着时，4.42 GB 面板**只占一份物理页**，每进程私有只剩 L1 子面板+缓存 ≈ 3 GB
     #   ⇒ 护栏必须分档，否则"面板共享"这个开关**永远解锁不了低内存启动**（白做）✗
-    free = avail_gb()
+    free = free0                      # ★ 复用上面那次读数（同一次启动内一致，别读两次）
     _eff1 = GB_PER_ENGINE if panel_cache == 'off' else GB_PER_ENGINE_SHARED
     if exec_mode == 'parallel':
         _eff = _eff1 if panel_cache == 'off' else max(mem_per_engine, GB_PER_ENGINE_SHARED)
@@ -460,6 +481,14 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                             creationflags=flags, close_fds=True)
     time.sleep(3)
+    _extra = []
+    if exec_mode == 'parallel' and _mp_auto:
+        _extra.append('并行数**按可用内存自动定**为 %d（可用 %.1f GB / 每引擎按 %.0f GB 估）'
+                      % (max_parallel, free or 0,
+                         GB_PER_ENGINE_SHARED if panel_cache != 'off' else GB_PER_ENGINE))
+    if _pc_degraded:
+        _extra.append('⚠ 面板缓存不可用（%s）⇒ **本次自动关掉「面板共享」**（载入慢 ~27s、结果不变）'
+                      % ((_pcinfo.get('hint') or _pcinfo.get('err') or '未知原因')[:70]))
     return {'ok': True, 'started': [{'pool': ','.join(pool_list), 'pid': proc.pid,
                                      'alive': _alive(proc.pid), 'cmd': ' '.join(args[1:]),
                                      'log': os.path.relpath(log, settings.PROJECT_ROOT)}],
@@ -472,7 +501,8 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
                         proc.pid, pool_list, rounds,
                         ('**同时最多 %d 个引擎**（其余排队）· 面板共享=%s ✓ '
                          % (max_parallel, panel_cache)) if exec_mode == 'parallel'
-                        else '同一时刻只 1 个引擎（内存 1 份）· 面板共享=%s ✓ ' % panel_cache))}
+                        else '同一时刻只 1 个引擎（内存 1 份）· 面板共享=%s ✓ ' % panel_cache)
+                     + ('；' + '；'.join(_extra) if _extra else ''))}
 
 
 # ---------------------------------------------------------------- 停止

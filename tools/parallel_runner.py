@@ -22,6 +22,9 @@
         ★ 一轮全部结束 ⇒ 自动收尾（`--no_global` 可关）
     ★ `stopAll`   ⇒ **不再补新任务**，等在跑的自然结束 ⇒ 收尾退出
     ★ `stopped`   ⇒ 该池**本轮不启动**（不影响其他池）
+    ★★ 2026-09-16 新增（用户要求）：「单独停止某个池」⇒ **本轮不再补位** —— 空槽**留给用户自己决定**
+       （想加回来点「启动本池」），不会"停一个就自动顶上来一个"✓；只影响**本轮**，
+       下一轮按 `enabled - stopped` **重新组队**（被停的池不会自己回来）✓
 
 ★ 内存护栏（这套东西存在的意义就是"**别把机器挤爆**"）：
   · `--max_parallel=N`（硬上限，默认 3）
@@ -140,6 +143,8 @@ def _reap(t):
     if rc != 0 or errsz > 0:
         ctl = RT.read_ctl()
         killed = bool(ctl.get('stopAll')) or (t['pool'] in set(ctl.get('stopped') or []))
+        # ★ 2026-09-16：把"是不是被用户停的"**带出去**给调用方（用来触发"本轮不再补位"）✓
+        t['killed'] = bool(killed)
         RT.log('[!] pool={} 本代非正常结束{} -> **只跳过本池本轮**。人工看 {}'.format(
             t['pool'], '（★ 被用户停止，该代作废下次重跑）' if killed else '（疑似崩溃）',
             os.path.basename(t['errf'])))
@@ -196,6 +201,12 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
             RT.log('#' * 76)
             queue = list(plan)          # 本轮待跑（每池恰好 1 代）
             ran_round = False
+            # ★★ 2026-09-16（用户要求：「不要搞成我停一个池然后下一个闲置池就自动跑起来，
+            #   停了就跑 2 个，我自己会选要再加跑哪个池子」）：
+            #   本轮内一旦检测到**用户单独停止**过某个池 ⇒ **本轮不再补位**（就保持"停完剩下的那几个"在跑），
+            #   该池的空槽**留给用户自己决定**（想加回来点「启动本池」）。
+            #   ⚠ 只影响**本轮**：下一轮按 `enabled - stopped` **重新组队**（被停的池不会自己回来）✓
+            paused_refill = False
             while queue or running:
                 ctl = RT.read_ctl()
                 if ctl.get('stopAll') and not stopped_by_user:
@@ -210,9 +221,19 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                         if _reap(t):
                             ran_round = True
                             dirty = True
+                        if t.get('killed') and not paused_refill and not stopped_by_user:
+                            paused_refill = True
+                            RT.log('[CTL] ★ 检测到「单独停止」⇒ **本轮不再补位**：'
+                                   '就保持"停完剩下的 {} 个"在跑；空出来的槽**留给你自己决定**'
+                                   '（想加哪个池回来就点「启动本池」）✓'.format(len(running) - 1))
                         running.remove(t)
+                if paused_refill and not running and queue:
+                    RT.log('[CTL] 本轮剩余 {} 个池未启动（{}）⇒ 留到下一轮（下一轮按'
+                           '你保留的启用集重新组队）'.format(
+                               len(queue), ' '.join(p for p, _, _ in queue)))
+                    queue = []
                 # ---- 补位（★ 队列化：跑完一个立刻补一个）----
-                while queue and len(running) < max_parallel and not stopped_by_user:
+                while queue and len(running) < max_parallel and not stopped_by_user and not paused_refill:
                     p, _g0, _done = queue[0]
                     ctl = RT.read_ctl()
                     if ctl.get('stopAll'):
