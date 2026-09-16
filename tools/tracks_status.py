@@ -143,7 +143,9 @@ def main():
     try:
         out = subprocess.run(['powershell', '-NoProfile', '-Command', ps],
                              capture_output=True, text=True, encoding='utf-8',
-                             errors='replace').stdout.strip()
+                             errors='replace',
+                             creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                                            if os.name == 'nt' else 0)).stdout.strip()
         print('\n'.join('    ' + x[:150] for x in out.splitlines()) if out
               else '    (无)')
     except Exception as e:
@@ -185,7 +187,9 @@ def main():
         o = subprocess.run(['powershell', '-NoProfile', '-Command',
                             'Get-CimInstance Win32_OperatingSystem | '
                             'Select-Object -ExpandProperty FreePhysicalMemory'],
-                           capture_output=True, text=True).stdout.strip()
+                           capture_output=True, text=True,
+                           creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                                          if os.name == 'nt' else 0)).stdout.strip()
         if o.isdigit():
             print('\n[7] 可用内存 {:.1f} GB'.format(float(o) / 1e6))
     except Exception:

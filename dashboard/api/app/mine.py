@@ -60,6 +60,15 @@ DEFAULT_ROUNDS = 50
 GB_PER_ENGINE = 9.0          # 保守（实测 6~9 GB）
 MIN_FREE_GB = 3.0
 
+# ★★★ 2026-09-16：起子进程**一律不弹黑窗**（用户要求「启动不要开 python 窗口，审查之类的都后台静默」）。
+#   ⚠ 为什么用 `CREATE_NO_WINDOW` 而**不是 `DETACHED_PROCESS`**（这个区别很关键）：
+#     · `DETACHED_PROCESS` ⇒ 子进程**没有控制台** ⇒ 它再 spawn 孙子进程时，
+#       Windows 会**给孙子新建一个控制台窗口** ⇒ **弹黑窗** ✗（这正是"每代/收尾都弹窗"的来源）
+#     · `CREATE_NO_WINDOW` ⇒ 子进程**有控制台但隐藏** ⇒ **孙进程默认继承它** ⇒ 全链路静默 ✓✓
+#   ⇒ 所以「隐藏控制台」比「去掉控制台」更能"传染"到整条进程链 ✓
+_NO_WIN = (getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+           | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)) if os.name == 'nt' else 0
+
 
 class MineError(Exception):
     def __init__(self, msg, code=400):
@@ -125,7 +134,8 @@ def avail_gb():
 def _alive(pid):
     try:
         r = subprocess.run(['tasklist', '/FI', 'PID eq %d' % pid, '/NH'],
-                           capture_output=True, text=True, encoding='utf-8', errors='replace')
+                           capture_output=True, text=True, encoding='utf-8', errors='replace',
+                           creationflags=_NO_WIN)
         return str(pid) in (r.stdout or '')
     except Exception:
         return None
@@ -256,8 +266,7 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, no_global=False):
                round=0, curPool=None, curGen=None, phase='mine', tailAt=None)
     env = dict(os.environ)
     env['PYTHONIOENCODING'] = 'utf-8'
-    flags = (getattr(subprocess, 'DETACHED_PROCESS', 0)
-             | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)) if os.name == 'nt' else 0
+    flags = _NO_WIN
     args = [sys.executable, RUN_TRACKS, '--pools=%s' % ','.join(pool_list),
             '--rounds=%d' % rounds]
     log = os.path.join(LOGD, '_ui_scheduler.log')
@@ -290,7 +299,8 @@ def stop(pool=None, **kw):
         killed = []
         for p in engine_of(pool):
             r = subprocess.run(['taskkill', '/PID', str(p['pid']), '/T', '/F'],
-                               capture_output=True, text=True, encoding='utf-8', errors='replace')
+                               capture_output=True, text=True, encoding='utf-8', errors='replace',
+                               creationflags=_NO_WIN)
             killed.append({'pid': p['pid'], 'kind': 'engine', 'pools': p.get('pools'),
                            'rc': r.returncode, 'out': (r.stdout or r.stderr or '').strip()[:160]})
         time.sleep(1)
@@ -313,7 +323,8 @@ def stop(pool=None, **kw):
     killed = []
     for p in engines():
         r = subprocess.run(['taskkill', '/PID', str(p['pid']), '/T', '/F'],
-                           capture_output=True, text=True, encoding='utf-8', errors='replace')
+                           capture_output=True, text=True, encoding='utf-8', errors='replace',
+                           creationflags=_NO_WIN)
         killed.append({'pid': p['pid'], 'kind': 'engine', 'pools': p.get('pools'),
                        'rc': r.returncode, 'out': (r.stdout or r.stderr or '').strip()[:160]})
         time.sleep(0.4)
@@ -372,8 +383,7 @@ def run_global():
     os.makedirs(LOGD, exist_ok=True)
     env = dict(os.environ)
     env['PYTHONIOENCODING'] = 'utf-8'
-    flags = (getattr(subprocess, 'DETACHED_PROCESS', 0)
-             | getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)) if os.name == 'nt' else 0
+    flags = _NO_WIN
     log = os.path.join(LOGD, '_ui_global.log')
     proc = subprocess.Popen(args, cwd=settings.PROJECT_ROOT, env=env, stdout=open(log, 'ab'),
                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,

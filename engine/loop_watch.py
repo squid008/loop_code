@@ -88,7 +88,9 @@ def is_engine_running() -> bool:
         '| Measure-Object | Select-Object -ExpandProperty Count"'
     )
     try:
-        out = subprocess.run(ps, shell=True, capture_output=True, text=True, timeout=60)
+        out = subprocess.run(ps, shell=True, capture_output=True, text=True, timeout=60,
+                             creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                                            if os.name == 'nt' else 0))
         n = int((out.stdout or "").strip())
         return n > 0
     except Exception as e:
@@ -135,7 +137,10 @@ def start_next_gen(g: int) -> bool:
     log(f"[START] gen{g} seed={seed}")
     out = open(log_p, "w", encoding="utf-8")
     err = open(err_p, "w", encoding="utf-8")
-    subprocess.Popen(cmd, cwd=ENGINE_DIR, stdout=out, stderr=err)
+    # ★ 2026-09-16：隐藏控制台（否则会被 Windows 新建一个黑窗；用户要求"后台静默启动"）
+    subprocess.Popen(cmd, cwd=ENGINE_DIR, stdout=out, stderr=err,
+                     creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                                    if os.name == 'nt' else 0))
     return True
 
 
@@ -172,7 +177,9 @@ def already_running() -> bool:
         '| Measure-Object | Select-Object -ExpandProperty Count"'
     )
     try:
-        out = subprocess.run(ps, shell=True, capture_output=True, text=True, timeout=60)
+        out = subprocess.run(ps, shell=True, capture_output=True, text=True, timeout=60,
+                             creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                                            if os.name == 'nt' else 0))
         n = int((out.stdout or "").strip())
         return n > 1   # 含本进程自身
     except Exception:

@@ -37,8 +37,12 @@ _POOLS_RE = re.compile(r'--pools[= ]([A-Za-z0-9,]+)')
 def list_processes():
     """列出与本项目相关的 python 进程（只读；PowerShell CIM）。"""
     try:
+        # ★★★ 2026-09-16：**必须**隐藏窗口 —— 本函数由看板**每 10 秒**调用一次，
+        #   若 `powershell` 弹出控制台，就会**一直闪黑窗** ✗（用户要求"后台静默"）
         out = subprocess.run(['powershell', '-NoProfile', '-Command', PS_PROCS],
-                             capture_output=True, timeout=25)
+                             capture_output=True, timeout=25,
+                             creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
+                                            if os.name == 'nt' else 0))
         s = (out.stdout or b'').decode('utf-8', 'replace').strip()
         if not s:
             return []

@@ -65,6 +65,18 @@ DOCS = os.path.join(ROOT, 'docs')
 LOGD = os.path.join(ROOT, 'ai_test', '_tracks')
 PY = sys.executable
 
+# ★★★ 2026-09-16：**所有子进程都不许弹黑窗**（用户要求「启动不要开 python 窗口，审查之类的都后台静默」）。
+#
+# 为什么会弹窗（Windows 经典陷阱）：
+#   看板后端用 `DETACHED_PROCESS` 起本调度器 ⇒ **本进程没有控制台**；
+#   此时若再用 `subprocess.run(...)` **不指定** `CREATE_NO_WINDOW` 起子进程，
+#   Windows 会给这个 **控制台程序新建一个控制台窗口** ✗✗
+#   ⇒ 表现：点「一键启动全部」弹一个黑窗、每代再弹一个、收尾审查还弹 ✗
+# ⇒ 修法：**所有** `subprocess` 调用统一带 `NO_WIN` ✓
+#   （已核实：`build_facs.py` / `cross_pool_review.py` / `engine/loop_engine.py`
+#     **都不再 spawn 子进程** ⇒ 只需这一层，不会漏孙子进程 ✓）
+NO_WIN = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000) if os.name == 'nt' else 0
+
 MY_LOG = os.path.join(LOGD, '_driver.log')
 
 
@@ -228,7 +240,8 @@ def do_global_tail(tag=''):
         # ★ `--only-new`（增量落地）：52 个全就绪 ⇒ **4.0s**（全量 ~21min）✓
         r = subprocess.run([PY, '-u', 'tools/build_facs.py', '--only-new'],
                            cwd=ROOT, capture_output=True, text=True,
-                           encoding='utf-8', errors='replace', timeout=7200)
+                           encoding='utf-8', errors='replace', timeout=7200,
+                           creationflags=NO_WIN)
         for ln in (r.stdout or '').splitlines()[-4:]:
             log('      ' + ln[:150])
         if r.returncode != 0:
@@ -239,7 +252,8 @@ def do_global_tail(tag=''):
     try:
         r = subprocess.run([PY, '-u', 'tools/cross_pool_review.py'],
                            cwd=ROOT, capture_output=True, text=True,
-                           encoding='utf-8', errors='replace', timeout=3600)
+                           encoding='utf-8', errors='replace', timeout=3600,
+                           creationflags=NO_WIN)
         for ln in (r.stdout or '').splitlines()[-10:]:
             log('      ' + ln[:150])
         if r.stderr and r.stderr.strip():
@@ -457,7 +471,8 @@ def main():
             _env['PYTHONIOENCODING'] = 'utf-8'
             with io.open(logf, 'w', encoding='utf-8') as o, \
                     io.open(errf, 'w', encoding='utf-8') as e:
-                pr = subprocess.run(cmd, cwd=ROOT, stdout=o, stderr=e, env=_env)
+                pr = subprocess.run(cmd, cwd=ROOT, stdout=o, stderr=e, env=_env,
+                                    creationflags=NO_WIN)
             mins = (time.time() - t0) / 60.0
             errsz = os.path.getsize(errf) if os.path.exists(errf) else 0
             log('[END]   pool={} gen={} 退出码={} 耗时={:.1f}min err={}B'.format(

@@ -225,12 +225,16 @@ export default function App() {
                    value={rounds} disabled={mineBusy}
                    onChange={e => setRounds(Math.max(1, Math.min(200, Number(e.target.value) || 1)))} />
           </span>
-          <button className="btn start" disabled={mineBusy} onClick={() => doStart([])}
-                  title="启动调度器，让所有池参与轮转。已经在跑的话就直接更新设置，不会重复启动">
-            {mineBusy ? '处理中…' : '一键启动全部'}
+          <button className="btn start" disabled={mineBusy || !!mine?.running} onClick={() => doStart([])}
+                  title={mine?.running
+                    ? '调度器已经在运行了。要改设置请先「全部停止」再重新启动'
+                    : '启动调度器，让所有池参与轮转'}>
+            {mine?.running ? '已在运行' : (mineBusy ? '处理中…' : '一键启动全部')}
           </button>
-          <button className="btn stop" disabled={mineBusy} onClick={() => doStop()}
-                  title="全部停止：结束当前那一代，然后自动做收尾审查，再退出">
+          <button className="btn stop" disabled={mineBusy || !mine?.running} onClick={() => doStop()}
+                  title={mine?.running
+                    ? '全部停止：结束当前那一代，然后自动做收尾审查，再退出'
+                    : '当前没有在运行，无需停止'}>
             全部停止
           </button>
           {/* 「收尾审查」按钮已按用户要求隐藏（后端 /api/mine/global 仍在）：

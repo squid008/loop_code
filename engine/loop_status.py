@@ -32,7 +32,7 @@ def running_engine():
           "mem=[math]::Round($_.WorkingSetSize/1MB,0) } } | ConvertTo-Json -Compress")
     try:
         out = subprocess.run(['powershell', '-NoProfile', '-Command', ps],
-                             capture_output=True, timeout=30)
+                             capture_output=True, timeout=30, creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000) if os.name == 'nt' else 0))
         s = out.stdout.decode('utf-8', 'replace').strip()
         if not s:
             return []

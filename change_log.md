@@ -15,6 +15,58 @@
 
 ---
 
+## [1.3.4] — 2026-09-16
+
+> 主题：★★ 用户报「一键启动全部后按钮没变灰还能按」+「**启动不要开 python 窗口**，审查之类的都后台静默」
+
+### ① 按钮状态：应按「**是否在运行**」而不是「是否正在请求」
+- 旧：`disabled={mineBusy}` ⇒ **请求完就复位** ⇒ 按钮**一直可点** ✗（用户看到的）
+- 修：
+  · 「一键启动全部」⇒ `disabled={mineBusy || !!mine?.running}`，且**文案变「已在运行」** ✓
+  · 「全部停止」⇒ `disabled={mineBusy || !mine?.running}`（没在跑就变灰）✓
+  ⇒ 两个按钮**互斥地**反映真实状态 ✓
+
+### ② ★★★★ 弹黑窗：**Windows 的"控制台继承"陷阱**
+**根因**（两层，都必须修）：
+1. 看板后端用 **`DETACHED_PROCESS`** 起调度器 ⇒ 调度器**没有控制台**
+2. 调度器再用 `subprocess.run(...)` **不指定** `CREATE_NO_WINDOW` 起引擎
+   ⇒ Windows 给这个**控制台程序新建一个控制台窗口** ✗✗
+   ⇒ 表现：点启动弹一个、**每代再弹一个**、收尾审查还弹 ✗
+
+**修法**：所有子进程统一带隐藏窗口标志 ——
+```python
+_NO_WIN = CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP      # Windows
+```
+- ★★ **关键洞察**：**`CREATE_NO_WINDOW` 优于 `DETACHED_PROCESS`** ——
+  · `DETACHED_PROCESS`：子进程**没有控制台** ⇒ 它 spawn 孙进程时 Windows 会**新建窗口** ✗
+  · `CREATE_NO_WINDOW`：子进程**有控制台但隐藏** ⇒ **孙进程默认继承它** ⇒ **全链路静默** ✓✓
+- 改动清单（**主链路 12/12 处全覆盖**）：
+  | 文件 | 处数 | 内容 |
+  |---|---|---|
+  | `tools/run_tracks.py` | 3 | 起引擎 · `build_facs` · `cross_pool_review`（★ 用户点名的"审查"）|
+  | `dashboard/api/app/mine.py` | 5 | 起调度器 · 全局收尾 · `tasklist` · `taskkill`×2 |
+  | `dashboard/api/app/sources/pools.py` | 1 | ★★ **看板每 10 秒查进程** ⇒ 不加会**一直闪黑窗** ✗✗ |
+  | `engine/loop_watch.py` | 3 | 起引擎 · 查询进程 ×2 |
+  | （附带）`engine/loop_status.py` · `tools/tracks_status.py` | 3 | CLI 工具，一并改 ✓ |
+- ★ 已核实：`build_facs.py` / `cross_pool_review.py` / `loop_engine.py` **都不 spawn 子进程**
+  ⇒ **只需这一层**，不会漏"孙子进程" ✓
+
+### 验证（AST 静态核对，不是肉眼）
+```
+主链路 12/12 ✓ 全覆盖
+  tools/run_tracks.py                        3/3
+  dashboard/api/app/mine.py                  5/5
+  dashboard/api/app/sources/pools.py         1/1
+  engine/loop_watch.py                       3/3
+CLI 工具 3/3 ✓
+```
+编译 115 全过 · 引号干净 · 14/14 测试 · `tsc` 0 错 ✓
+
+★ 教训：**Windows 上"不给子进程建控制台"反而会弹窗**（孙进程新建）
+  ⇒ 正确做法是 `CREATE_NO_WINDOW`（隐藏但可继承）✓
+
+---
+
 ## [1.3.3] — 2026-09-16
 
 > 主题：★★ 修「点一键启动全部没反应」—— **废弃 `window.confirm`**，改用自定义弹窗
