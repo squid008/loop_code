@@ -40,6 +40,15 @@ export default function App() {
   const [rounds, setRounds] = useState(50)
   const [mineBusy, setMineBusy] = useState(false)
   const [toast, setToast] = useState<{ kind: 'ok' | 'err' | 'info'; msg: string } | null>(null)
+  // ★★★ 2026-09-16 修：**不用 `window.confirm`** ——
+  //   它在 IDE 内置浏览器/部分环境里会被**阻止**（不弹窗、直接返回 false）
+  //   ⇒ `if (!confirm(...)) return` 就变成"点了完全没反应" ✗（用户实测：
+  //     后端日志里连 POST /api/mine/start 都没有 ⇒ 请求根本没发出去）
+  //   ⇒ 改用**自定义弹窗**（React 组件）⇒ 任何环境都能用 ✓
+  const [askBox, setAskBox] = useState<{
+    title: string; lines: string[]; okText?: string; danger?: boolean
+    onOk: () => void | Promise<void>
+  } | null>(null)
 
   const loadAll = useCallback(async (fresh = false) => {
     if (busyRef.current) return
@@ -61,84 +70,99 @@ export default function App() {
     }
   }, [])
 
-  // ---- ★ 挖掘控制 ----
+  // ---- 挖掘控制 ----
   const say = (kind: 'ok' | 'err' | 'info', msg: string) => {
     setToast({ kind, msg })
     window.setTimeout(() => setToast(t => (t && t.msg === msg ? null : t)), kind === 'err' ? 12000 : 6000)
   }
 
+  // 弹出确认框（自定义，替代被浏览器阻止的 window.confirm）
+  const ask = useCallback((title: string, lines: string[], onOk: () => void | Promise<void>, danger = false) => {
+    setAskBox({ title, lines, onOk, danger })
+  }, [])
+
   const doStart = useCallback(async (pools: string[]) => {
     const label = pools.length ? pools.join(' + ') : '全部池'
-    if (!window.confirm(
-      `确定启动挖掘？\n\n参与轮转的池：${label}\n每池轮数：${rounds}\n\n` +
-      `会用一个调度器依次跑这些池，每轮每个池各跑 1 代。\n` +
-      `内存只占一份（约 ${mine?.gbPerEngine ?? 9} GB），不再是每个池一份。\n` +
-      `每轮结束会自动做收尾审查（因子值落地、跨池审查、精选池），不用手动点。\n\n` +
-      `一轮的时长取决于最慢的那个池。\n` +
-      `正在跑的那一代如果被停掉会作废，下次重跑（不会损坏已有数据）。`
-    )) return
-    setMineBusy(true)
-    try {
-      const r = await api.mineStart(pools, rounds)
-      if (r.reused) {
-        say('ok', `调度器已在运行（PID ${(r.schedulerPids ?? []).join(',')}），已更新设置：启用池 ${(r.enabled ?? []).join(',')}，${r.rounds} 轮（没有重复启动）`)
-      } else {
-        const st = r.started.map(x => `PID ${x.pid}`).join(' ') || '无'
-        say('ok', `已启动调度器 ${st}，启用池：${(r.enabled ?? []).join(',')}，每池 ${r.rounds} 轮`)
-      }
-      await loadAll(true)
-    } catch (e) {
-      say('err', `启动失败：${e instanceof Error ? e.message : String(e)}`)
-      await loadAll(true)
-    } finally { setMineBusy(false) }
-  }, [rounds, mine, loadAll])
+    ask('启动挖掘', [
+      `参与的池：${label}`,
+      `每个池跑：${rounds} 轮`,
+      '',
+      '会用一个调度器依次跑这些池，每轮每个池各跑 1 代。',
+      `内存只占一份（约 ${mine?.gbPerEngine ?? 9} GB），不再是每个池一份。`,
+      '每轮结束会自动做收尾审查（因子值落地、跨池审查、精选池），不用手动点。',
+      '',
+      '一轮的时长取决于最慢的那个池。',
+      '正在跑的那一代如果被停掉会作废，下次重跑（不会损坏已有数据）。',
+    ], async () => {
+      setMineBusy(true)
+      try {
+        const r = await api.mineStart(pools, rounds)
+        if (r.reused) {
+          say('ok', `调度器已在运行（PID ${(r.schedulerPids ?? []).join(',')}），已更新设置：启用池 ${(r.enabled ?? []).join(',')}，${r.rounds} 轮（没有重复启动）`)
+        } else {
+          const st = r.started.map(x => `PID ${x.pid}`).join(' ') || '无'
+          say('ok', `已启动调度器 ${st}，启用池：${(r.enabled ?? []).join(',')}，每池 ${r.rounds} 轮`)
+        }
+        await loadAll(true)
+      } catch (e) {
+        say('err', `启动失败：${e instanceof Error ? e.message : String(e)}`)
+        await loadAll(true)
+      } finally { setMineBusy(false) }
+    })
+  }, [rounds, mine, loadAll, ask])
 
   const doStop = useCallback(async (pool?: string) => {
     const label = pool ? `池 ${pool}` : '全部池'
-    if (!window.confirm(
-      `确定停止 ${label}？\n\n` +
-      (pool
-        ? `只停这一个池：把它移出轮转，并结束它当前的那一代。其他池不受影响。\n` +
-          `如果它是最后一个还在轮转的池，调度器会自己退出（之后点「启动本池」可以重新拉起）。`
-        : `会结束当前那一代，然后调度器自动做一次收尾审查\n` +
-          `（因子值落地、跨池审查、精选池）再退出。\n` +
-          `收尾期间不要再启动，否则两边会互相干扰。`) +
-      `\n\n正在跑的那一代会作废，下次重跑。`
-    )) return
-    setMineBusy(true)
-    try {
-      const r = await api.mineStop(pool)
-      const k = r.killed.filter(x => x.rc === 0).map(x => `${x.kind}#${x.pid}`).join(', ')
-      say(r.ok ? 'ok' : 'err',
-        r.ok ? `已停止${pool ? `池 ${pool}（其他池不受影响）` : '全部'}，结束进程：${k || '无'}`
-          + (r.tail ? `；已开始收尾审查（PID ${r.tail.pid}）` : '')
-             : `有进程没停掉：${r.stillRunning.map(s => `${s.kind}#${s.pid}`).join(', ')}`)
-      await loadAll(true)
-    } catch (e) {
-      say('err', `停止失败：${e instanceof Error ? e.message : String(e)}`)
-      await loadAll(true)
-    } finally { setMineBusy(false) }
-  }, [loadAll])
+    ask(
+      pool ? `停止池 ${pool}` : '停止全部',
+      pool
+        ? [`只停 ${pool}：把它移出轮转，并结束它当前那一代。其他池不受影响。`,
+           '如果它是最后一个还在轮转的池，调度器会自己退出（之后点「启动本池」可以重新拉起）。',
+           '',
+           '正在跑的那一代会作废，下次重跑。']
+        : ['会结束当前那一代，然后调度器自动做一次收尾审查',
+           '（因子值落地、跨池审查、精选池）再退出。',
+           '收尾期间不要再启动，否则两边会互相干扰。',
+           '',
+           '正在跑的那一代会作废，下次重跑。'],
+      async () => {
+        setMineBusy(true)
+        try {
+          const r = await api.mineStop(pool)
+          const k = r.killed.filter(x => x.rc === 0).map(x => `${x.kind}#${x.pid}`).join(', ')
+          say(r.ok ? 'ok' : 'err',
+            r.ok ? `已停止${pool ? `池 ${pool}（其他池不受影响）` : '全部'}，结束进程：${k || '无'}`
+              + (r.tail ? `；已开始收尾审查（PID ${r.tail.pid}）` : '')
+                 : `有进程没停掉：${r.stillRunning.map(s => `${s.kind}#${s.pid}`).join(', ')}`)
+          await loadAll(true)
+        } catch (e) {
+          say('err', `停止失败：${e instanceof Error ? e.message : String(e)}`)
+          await loadAll(true)
+        } finally { setMineBusy(false) }
+      },
+      true,
+    )
+  }, [loadAll, ask])
 
   // 单独启动 / 恢复某个池（调度器不在时会自动重启）
   const doStartPool = useCallback(async (pool: string) => {
-    if (!window.confirm(
-      `确定启动/恢复池 ${pool}？\n\n` +
-      `如果它之前被停止，会重新加入轮转，下一轮就轮到它。\n` +
-      `如果调度器已经不在运行，会自动重新启动。`
-    )) return
-    setMineBusy(true)
-    try {
-      const r = await api.mineStartPool(pool)
-      say('ok', r.restarted
-        ? `调度器之前没在运行，已自动重启。池 ${pool} 已加入轮转（当前启用：${r.enabled.join(',')}）`
-        : `池 ${pool} 已重新加入轮转，下一轮轮到它`)
-      await loadAll(true)
-    } catch (e) {
-      say('err', `启动本池失败：${e instanceof Error ? e.message : String(e)}`)
-      await loadAll(true)
-    } finally { setMineBusy(false) }
-  }, [loadAll])
+    ask(`启动池 ${pool}`, [
+      '如果它之前被停止，会重新加入轮转，下一轮就轮到它。',
+      '如果调度器已经不在运行，会自动重新启动。',
+    ], async () => {
+      setMineBusy(true)
+      try {
+        const r = await api.mineStartPool(pool)
+        say('ok', r.restarted
+          ? `调度器之前没在运行，已自动重启。池 ${pool} 已加入轮转（当前启用：${r.enabled.join(',')}）`
+          : `池 ${pool} 已重新加入轮转，下一轮轮到它`)
+        await loadAll(true)
+      } catch (e) {
+        say('err', `启动本池失败：${e instanceof Error ? e.message : String(e)}`)
+        await loadAll(true)
+      } finally { setMineBusy(false) }
+    })
+  }, [loadAll, ask])
 
   useEffect(() => { loadAll() }, [loadAll])
   useEffect(() => {
@@ -231,6 +255,25 @@ export default function App() {
         </div>
       )}
       {err && <div className="err">⚠ {err}</div>}
+
+      {/* 自定义确认弹窗（替代 window.confirm —— 它在某些环境会被浏览器阻止） */}
+      {askBox && (
+        <div className="ask-mask" onClick={() => setAskBox(null)}>
+          <div className="ask" onClick={e => e.stopPropagation()}>
+            <div className="ask-h">{askBox.title}</div>
+            <div className="ask-b">
+              {askBox.lines.map((l, i) => (l === '' ? <div key={i} className="ask-gap" /> : <p key={i}>{l}</p>))}
+            </div>
+            <div className="ask-a">
+              <button className="btn" onClick={() => setAskBox(null)}>取消</button>
+              <button className={askBox.danger ? 'btn stop' : 'btn start'}
+                      onClick={() => { const f = askBox.onOk; setAskBox(null); void f() }}>
+                确定
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {status && (
         <section className="summary">
