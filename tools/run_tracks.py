@@ -308,6 +308,9 @@ def main():
     #     而 `--panel_cache=use` 把 4.42 GB 面板落成**只读 memmap** ⇒ 多进程共享同一批物理页 ✓
     exec_mode = 'rotate'
     max_parallel = 3          # 并行上限（仅 parallel 模式）
+    # ★★★ 2026-09-16（用户实测「加的池只排队、不并行」后新增）：`--auto_parallel=1` ⇒ 上限**动态重算**
+    #   （按"当前启用池数 + 可用内存"每次迭代）—— 看板默认走这个（它能随时加池却不用重启调度器）✓
+    auto_parallel = False
     mem_per_engine = 3.0      # 每引擎内存预算 GB（仅 parallel 模式；不足就排队等）
     panel_cache = 'off'       # 透传给引擎：off(默认,现状) / use / build（见 tools/build_panel_cache.py）
     # ★★ 2026-09-16 新增 `--engine_arg=...`（可重复）：**追加**到默认 extra。
@@ -414,6 +417,8 @@ def main():
             exec_mode = a.split('=', 1)[1].strip().lower()
         elif a.startswith('--max_parallel='):
             max_parallel = max(1, int(a.split('=', 1)[1]))
+        elif a.startswith('--auto_parallel='):
+            auto_parallel = str(a.split('=', 1)[1]).strip().lower() in ('1', 'true', 'yes', 'on')
         elif a.startswith('--mem_per_engine='):
             mem_per_engine = float(a.split('=', 1)[1])
         elif a.startswith('--panel_cache='):
@@ -454,7 +459,7 @@ def main():
         return _PR.run(pools=pools, rounds=rounds, n=n, l2=l2, extra=extra,
                        inject_spec=inject_spec, no_global=no_global,
                        max_parallel=max_parallel, mem_per_engine=mem_per_engine,
-                       panel_cache=panel_cache, dry=dry)
+                       panel_cache=panel_cache, dry=dry, auto_parallel=auto_parallel)
     if dry:
         log('（--dry：只列计划，不执行）')
         return 0

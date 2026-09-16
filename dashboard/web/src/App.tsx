@@ -194,7 +194,9 @@ export default function App() {
             {/* ★ 当前**实际**在跑的模式（以进程命令行为准，不是 UI 上选的那个） */}
             {mine?.running && (
               <em className="mode">
-                {mine.execMode === 'parallel' ? `并行×${mine.maxParallel}` : '轮转'}
+                {/* ★ 并行数是**自动**的 ⇒ 标出来（否则用户看到 ×1 会以为"只能跑一个" ✗） */}
+                {mine.execMode === 'parallel'
+                  ? `并行×${mine.maxParallel}${mine.autoParallel ? '（自动）' : ''}` : '轮转'}
                 {mine.panelCache !== 'off' ? ' · 共享' : ''}
               </em>
             )}

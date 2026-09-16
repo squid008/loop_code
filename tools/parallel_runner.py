@@ -152,21 +152,50 @@ def _reap(t):
     return ok
 
 
+MIN_FREE_GB = 3.0      # 系统余量（与看板 `mine.MIN_FREE_GB` 同一口径：留 3 GB 不碰）
+
+
+def _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine):
+    """★ **有效并行上限**（2026-09-16 用户实测「加的池只排队、不并行」后新增）。
+
+    `--auto_parallel=1`（看板默认）⇒ **每次迭代重算**：
+        `min(可跑池数, floor((可用内存 - 余量) / 每引擎预算))`，至少 1
+      ⇒ "能开几个开几个、快爆就少开"（用户要的语义）✓ ；池子加进来 ⇒ 上限**自动跟着长** ✓
+    非 auto ⇒ 直接用 `--max_parallel`（显式指定，一动不动）✓
+
+    ⚠ 它只决定"**要不要起新引擎**"；**已经在跑的绝不因上限变小而被杀**（宁慢不炸）✓
+    """
+    if not auto_parallel:
+        return max_parallel
+    runnable = len([p for p in en if p not in st])
+    free = avail_gb()
+    if free is None:
+        return max(1, min(runnable, max_parallel))
+    cap = int(max(1, (free - MIN_FREE_GB) // max(mem_per_engine, 0.5)))
+    return max(1, min(runnable, cap))
+
+
 def _running_brief(running, now):
     return ' | '.join('%s gen%d(%.0fmin)' % (t['pool'], t['gen'], (now - t['t0']) / 60.0)
                       for t in running) or '无'
 
 
 def run(pools, rounds, n, l2, extra, inject_spec, no_global,
-        max_parallel=3, mem_per_engine=3.0, panel_cache='off', dry=False):
+        max_parallel=3, mem_per_engine=3.0, panel_cache='off', dry=False,
+        auto_parallel=False):
     """有界并行跑 `rounds` 轮；返回进程退出码。"""
     plan = []
     for p in pools:
         g0, done = RT.next_gen(p)
         plan.append((p, g0, done))
     RT.log('=' * 76)
-    RT.log('★★ 并行模式: 池={} 每池 {} 轮 | 并行上限={} | 每引擎预算={:.1f} GB | '
-           '面板缓存={}'.format(pools, rounds, max_parallel, mem_per_engine, panel_cache))
+    RT.log('★★ 并行模式: 池={} 每池 {} 轮 | 并行上限={}{} | 每引擎预算={:.1f} GB | '
+           '面板缓存={}'.format(pools, rounds, max_parallel,
+                            '（**自动**：按可用内存与启用池数动态定）' if auto_parallel else '',
+                            mem_per_engine, panel_cache))
+    if auto_parallel:
+        RT.log('   ★ 上限会自动放宽：**你随时点「启动本池」加池，只要有内存就会立刻并行开起来** ✓'
+               '（加池不需要重启调度器）')
     RT.log('   可用内存 {:.1f} GB'.format(avail_gb()))
     if panel_cache == 'off':
         RT.log('   [!] 面板缓存关着：每个引擎会**各建一份 4.42 GB 面板** ⇒ '
@@ -196,8 +225,10 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                 break
             RT.log('')
             RT.log('#' * 76)
-            RT.log('## 第 {} / {} 轮   启用池={}   本轮停={}   并行上限={}'.format(
-                rnd, rounds, sorted(en), sorted(st) or '无', max_parallel))
+            RT.log('## 第 {} / {} 轮   启用池={}   本轮停={}   并行上限={}{}'.format(
+                rnd, rounds, sorted(en), sorted(st) or '无',
+                _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine),
+                '(自动)' if auto_parallel else ''))
             RT.log('#' * 76)
             # ---- ★★ 本轮状态：**动态队列**（不是"轮初拍死的列表"）----
             #   ★ 2026-09-16 二次修订（用户实测："我停止一个池然后重新启动，怎么没马上开挖？"）：
@@ -216,10 +247,18 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                     stopped_by_user = True
                     RT.log('[CTL] ★ 收到「全部停止」⇒ 不再补新任务，等在跑的 {} 个自然结束'.format(
                         len(running)))
+                # ★ 启用集/剔除集**每轮迭代重读**（用户随时可能加/停池）—— 放在最前面，下面都要用
+                en = set(ctl.get('enabled') or [p for p, _, _ in plan])
+                st = set(ctl.get('stopped') or [])
+                # ★★★ 有效并行上限：`--auto_parallel` 时**每次都按"当前启用池数 + 可用内存"重算**
+                #   2026-09-16 用户实测：「点一个启动、再点一个池子，怎么是加入轮转而不是并行？」
+                #   ⇒ 真因之二：并行数是**启动那一刻按 `len(pools)` 算死的**（1 个池 ⇒ `--max_parallel=1`）
+                #     ⇒ 后来加的池**永远只能排队**（哪怕内存富余）✗ ⇒ 现在 auto 模式下**动态放宽** ✓
+                eff_max = _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine)
                 if stopped_by_user:
-                    for p, _, _ in plan:
+                    for p in en:
                         if p not in launched:
-                            deferred[p] = set(RT.read_ctl().get('stopped') or [])
+                            deferred[p] = set(st)
                 # ---- 收割已结束的 ----
                 for t in list(running):
                     if t['pr'].poll() is not None:
@@ -228,7 +267,7 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                             dirty = True
                         if t.get('killed') and len(deferred) == 0 and not stopped_by_user:
                             _st0 = set(RT.read_ctl().get('stopped') or [])
-                            for p, _, _ in plan:
+                            for p in en:
                                 if p not in launched:
                                     deferred[p] = set(_st0)
                             RT.log('[CTL] ★ 检测到「单独停止」⇒ **本轮不再自动补位**：'
@@ -236,21 +275,25 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                                    '（「启动本池」的那个会**马上**开挖）✓'.format(len(running) - 1))
                         running.remove(t)
                 # ---- 动态候选（★ 每次迭代重算）----
-                en = set(ctl.get('enabled') or [p for p, _, _ in plan])
-                st = set(ctl.get('stopped') or [])
-                cand = [(p, g, d) for (p, g, d) in plan
-                        if p not in launched and p in en and p not in st
+                # ★★★ 候选来自**当前启用集**，不是启动时的 `--pools` 快照！
+                #   2026-09-16 用户实测「点了一个启动、再点一个池子启动，怎么是加入轮转而不是并行？」
+                #   ⇒ 真因：`plan` 是**启动时 `--pools=300` 拍死的** ⇒ 后来加的池**既不在候选、也不在队列**
+                #     ⇒ **永远不会**在这个调度器里跑（连下一轮都不会）✗✗（我上一版只在"重启路径"测过，
+                #     漏了"已有调度器在跑时加池"，测试盲区）
+                #   ⇒ 现在：候选 = `en - stopped - 本轮已启动`（顺序按 `enabled` 列表，稳定）✓
+                cand = [p for p in en
+                        if p not in launched and p not in st
                         and (p not in deferred
                              or (p in deferred[p] and p not in st))]   # ★ 你放回来的 ⇒ 允许马上上
                 if not running and not cand:
-                    _left = [p for p, _, _ in plan if p not in launched]
+                    _left = [p for p in en if p not in launched]
                     if _left:
                         RT.log('[CTL] 本轮剩余 {} 个池未启动（{}）⇒ 留到下一轮'
                                '（下一轮按你保留的启用集重新组队）'.format(len(_left), ' '.join(_left)))
                     break
-                # ---- 启动（能开几个开几个）----
-                while cand and len(running) < max_parallel and not stopped_by_user:
-                    p, _g0, _done = cand[0]
+                # ---- 启动（能开几个开几个；上限 = `eff_max`）----
+                while cand and len(running) < eff_max and not stopped_by_user:
+                    p = cand[0]
                     ctl = RT.read_ctl()
                     if ctl.get('stopAll'):
                         stopped_by_user = True
@@ -275,16 +318,18 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                     t = _launch(p, gen, n, l2, extra, inject_spec, pools, panel_cache)
                     t['done'] = done
                     running.append(t)
+                    # ★ auto 模式下把**当前有效上限**写进控制文件 ⇒ 看板显示的是"真话"（不是启动时的旧值）✓
+                    _kw = {} if not auto_parallel else {'maxParallel': eff_max}
                     RT.write_ctl(round=rnd, curPool=p, curGen=gen, phase='mine',
                                  active=[{'pool': x['pool'], 'gen': x['gen'], 'pid': x['pr'].pid}
-                                         for x in running])
+                                         for x in running], **_kw)
                 if running or cand:
                     now = time.time()
                     if now - last_brief > 60:         # 每分钟一条进度（别刷屏）
                         last_brief = now
-                        RT.log('[RUN] 第 {} 轮 | 在跑 {} 个: {} | 待启动 {} | 可用 {:.1f} GB'.format(
-                            rnd, len(running), _running_brief(running, now), len(cand),
-                            avail_gb()))
+                        RT.log('[RUN] 第 {} 轮 | 在跑 {} 个: {} | 待启动 {} | 上限 {}{} | 可用 {:.1f} GB'.format(
+                            rnd, len(running), _running_brief(running, now), len(cand), eff_max,
+                            '(自动)' if auto_parallel else '', avail_gb()))
                     time.sleep(5)
             # ---- 一轮结束 ⇒ 自动收尾（**必须等本轮全部跑完**：跨池审查要求"无人在写 docs/"）----
             #   ⚠ 走到这里保证"没有在跑的、也没有待启动的"（上面 `break` 的条件）⇒ 不必再判 queue ✓

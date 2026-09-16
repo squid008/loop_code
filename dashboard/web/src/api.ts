@@ -241,6 +241,8 @@ export interface MineStateDto {
   // ★★★ 调度模式 / 面板共享（2026-09-16；**以真实进程命令行为准**）
   execMode: string                 // rotate | parallel
   maxParallel: number
+  /** ★ 并行上限是"自动"的（按可用内存与启用池数动态重算；加池会立刻放宽） */
+  autoParallel: boolean
   memPerEngine: number
   panelCache: string               // off | use | build
   execModes: string[]

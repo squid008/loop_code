@@ -87,6 +87,8 @@ def main():
         #   ⇒ 看板侧默认 = **并行 + 面板共享**（`rotate` 仍保留在 CLI/API，随时可切回来）✓
         chk('含 --exec_mode=parallel（默认并行，20GB 可用只 1 个池 ⇒ 自动并行 1）',
             '--exec_mode=parallel' in a and '--max_parallel=1' in a, str(a))
+        chk('含 --auto_parallel=1（★ 上限**动态重算**：后来加池不用重启调度器）',
+            '--auto_parallel=1' in a, str(a))
         chk('含 --panel_cache=use（共享默认开）', '--panel_cache=use' in a, str(a))
         chk('返回体 execMode=parallel / panelCache=use',
             r.get('execMode') == 'parallel' and r.get('panelCache') == 'use')
@@ -101,6 +103,8 @@ def main():
         a = FakeProc.last
         chk('含 --exec_mode=parallel', '--exec_mode=parallel' in a, str(a[2:]))
         chk('含 --max_parallel=3（显式传入时按传入值）', '--max_parallel=3' in a)
+        chk('显式指定并行数 ⇒ **不带** --auto_parallel（用户的明确指定不被自动覆盖）',
+            '--auto_parallel=1' not in a, str(a))
         chk('含 --mem_per_engine=2.5', '--mem_per_engine=2.5' in a)
         if pc == 'use':
             chk('含 --panel_cache=use', '--panel_cache=use' in a)

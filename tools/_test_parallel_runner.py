@@ -95,14 +95,20 @@ def main():
         "if panel_cache and panel_cache != 'off':" in pr)
     chk('A10 run_tracks 支持 --engine_arg=（追加，避免 --extra 整体替换的陷阱）',
         re.search(r"a\.startswith\('--engine_arg='\)", rt) is not None)
-    # ★★ 2026-09-16 v1.10.1（用户："停止一个池然后重新启动，怎么没马上开挖？"）
-    chk('A11 ★ **动态队列**：每轮迭代重算候选（不是"轮初拍死的列表"）',
-        'cand = [(p, g, d) for (p, g, d) in plan' in pr and 'p not in launched' in pr,
-        '拍死的队列 ⇒ 运行期「启动本池」只能等下一轮（用户实测抱怨的点）✗')
+    # ★★ 2026-09-16 v1.10.1/v1.12.0（用户："停止一个池然后重新启动，怎么没马上开挖？" +
+    #   "点了一个启动、再点一个池子启动，怎么是加入轮转而不是并行？"）
+    chk('A11 ★★ 动态候选来自**当前启用集**（不是启动时 `--pools` 快照）',
+        re.search(r'cand = \[p for p in en', pr) is not None and 'p not in launched' in pr,
+        '用 `plan` ⇒ 后来加的池**永远不会**跑（连下一轮都不跑）✗ —— 用户实测到的点')
     chk('A12 ★ 顺延池「被重新启用 ⇒ 允许马上上」（既不自顶、又能手动加）',
         'deferred[p]' in pr and 'p in deferred[p] and p not in st' in pr)
     chk('A13 ★ 「启动本池」马上生效：真正启动才记 `launched`',
         'launched.add(p)' in pr and 'RT.next_gen(p)' in pr)
+    chk('A14 ★★ `--auto_parallel`：上限按"当前启用池数 + 可用内存"**动态重算**',
+        '_eff_max(' in pr and 'auto_parallel' in pr,
+        '启动时按 len(pools) 算死 ⇒ 1 个池启动后加的池只能排队 ✗（用户实测到的点）')
+    chk('A15 ★ auto 时把**有效上限**写回控制文件（看板显示的是真话，不是启动时的旧值）',
+        "'maxParallel': eff_max" in pr)
 
     print()
     print('=' * 88)

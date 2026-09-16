@@ -269,13 +269,17 @@ def state():
     _mp = _flag(_cmd, 'max_parallel', int, c.get('maxParallel') or 3)
     _mpe = _flag(_cmd, 'mem_per_engine', float, c.get('memPerEngine') or MEM_DEFAULT)
     _pc = _flag(_cmd, 'panel_cache', str, c.get('panelCache') or 'off')
+    # ★ 并行上限是不是"自动"的（看板没显式指定 ⇒ 调度器按内存动态重算）⇒ 界面上要标注清楚 ✓
+    _auto = str(_flag(_cmd, 'auto_parallel', str, c.get('autoParallel') or '') or ''
+                ).strip().lower() in ('1', 'true', 'yes', 'on')
     _pcinfo = panel_cache_info()
     if free is None:
         _mnote = ''
     elif _mode == 'parallel':
-        _mnote = ('★ **并行模式**：同时最多 %d 个引擎（跑完一个立刻补一个，其余排队）· 面板共享=%s ⇒ %s'
+        _mnote = ('★ **并行模式**：同时最多 %d 个引擎%s（跑完一个立刻补一个，其余排队）· 面板共享=%s ⇒ %s'
                   '；可用 %.1f GB ✓' % (
-                      _mp, _pc,
+                      _mp, '（**自动**：按可用内存与启用池数动态定，'
+                           '你随时点「启动本池」加池都会立刻开起来）' if _auto else '', _pc,
                       ('4.6 GB 面板只占**一份物理页**，每进程私有 ≈ %.1f GB ✓' % _mpe)
                       if _pc != 'off' else
                       '⚠ 面板缓存**关着** ⇒ 每个引擎各建一份 4.42 GB 面板（N 份！）✗ 强烈建议开「面板共享」',
@@ -308,7 +312,8 @@ def state():
         'freeGB': (round(free, 1) if free is not None else None),
         'gbPerEngine': GB_PER_ENGINE,
         # ★★★ 调度模式 / 内存设置（2026-09-16）：**以真实进程的命令行为准**（那才是"现在到底怎么跑的"）
-        'execMode': _mode, 'maxParallel': _mp, 'memPerEngine': _mpe, 'panelCache': _pc,
+        'execMode': _mode, 'maxParallel': _mp, 'memPerEngine': _mpe,         'panelCache': _pc,
+        'autoParallel': _auto,
         'panelCacheInfo': _pcinfo,
         'execModes': list(EXEC_MODES),
         'parallelRange': list(PARALLEL_RANGE),
@@ -463,7 +468,8 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
               round=0, curPool=None, curGen=None, phase='mine', tailAt=None,
               # ★ 记下本次启动参数（`start_pool()` 自动重启时**照抄**，不会退回轮转 ✗）
               execMode=exec_mode, maxParallel=max_parallel,
-              memPerEngine=mem_per_engine, panelCache=panel_cache)
+              memPerEngine=mem_per_engine, panelCache=panel_cache,
+              autoParallel=('1' if _mp_auto else ''))
     if reset_stopped:
         kw['stopped'] = []
     _write_ctl(**kw)
@@ -476,6 +482,11 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
     if exec_mode != 'rotate':
         args += ['--exec_mode=%s' % exec_mode, '--max_parallel=%d' % max_parallel,
                  '--mem_per_engine=%.1f' % mem_per_engine]
+        # ★★★ 2026-09-16：`_mp_auto`（看板没显式指定并行数）⇒ 让调度器**动态重算上限**
+        #   —— 否则并行数在**启动那一刻就按池数算死**，后来点「启动本池」加的池**永远只能排队** ✗
+        #   （用户实测："点一个启动，再点一个池子，怎么是加入轮转而不是并行？"）
+        if _mp_auto:
+            args.append('--auto_parallel=1')
     if panel_cache != 'off':
         args.append('--panel_cache=%s' % panel_cache)
     log = os.path.join(LOGD, '_ui_scheduler.log')
