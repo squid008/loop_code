@@ -458,8 +458,15 @@ def main():
             _inj = inject_for(p, pools, inject_spec)
             if _inj:
                 cmd.append('--inject_pools={}'.format(','.join(_inj)))
-            if p != 'all':
-                cmd.append('--mine_pool={}'.format(p))
+            # ★★★ 2026-09-16 修 BUG G：**所有池都显式传 `--mine_pool`（含 `all`）**。
+            #   ⚠ 原来 `if p != 'all'` 才传 ⇒ **`all` 的引擎命令行里没有 `--mine_pool`** ✗
+            #     ⇒ 看板**无法把该进程归属到 `all`**（`classify_proc` 解析不到）
+            #     ⇒ 后果（用户实测）：
+            #       ① 点「停止本池(all)」⇒ `engine_of('all')` 返回空 ⇒ **杀不掉它的引擎** ✗
+            #       ② 该引擎当时还带着 `--inject_pools=300,500,1000,50`
+            #          ⇒ 被旧正则**误认成"在跑 4 个池"**（BUG H，已在 `pools.py` 修）
+            #   ⇒ 修：统一传参。`set_mine_pool('all')` 是**幂等**的（等于不动）⇒ 行为不变 ✓
+            cmd.append('--mine_pool={}'.format(p))
             log('[START] pool={} gen={} seed={} -> {}'.format(
                 p, gen, seed, os.path.basename(logf)))
             t0 = time.time()

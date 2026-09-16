@@ -30,8 +30,17 @@ PS_PROCS = (
     "mem=[math]::Round($_.WorkingSetSize/1MB,0) } } | ConvertTo-Json -Compress -Depth 3"
 )
 
-_MINE_POOL_RE = re.compile(r'--mine_pool[= ]([A-Za-z0-9,]+)')
-_POOLS_RE = re.compile(r'--pools[= ]([A-Za-z0-9,]+)')
+# ★★★★ 2026-09-16 修 BUG H：**必须加"参数边界"断言** `(?<![\w-])`。
+#   原写法 `--pools[= ]` 会**误匹配 `--inject_pools=300,500,1000,50`**（它里面也含 `pools=`）✗
+#   ⇒ 后果（用户实测）：
+#     · `all` 池的引擎命令行含 `--inject_pools=300,500,1000,50`
+#       ⇒ 被解析成"这个进程在跑 300/500/1000/50 四个池" ✗✗
+#     ⇒ 于是 **`byPool` 里同一个 PID 出现在 4 个池**、**停 300 会误杀 all 的引擎**、
+#       **「在跑的池」计数虚高（显示 5 个）** ✗
+#   ⇒ 修：要求 `--pools` 前面**不是字母/下划线/横线**（即它是独立参数）✓
+#   同理 `--mine_pool` 也加（避免将来出现 `--xxx_mine_pool`）✓
+_MINE_POOL_RE = re.compile(r'(?<![\w-])--mine_pool[= ]([A-Za-z0-9,]+)')
+_POOLS_RE = re.compile(r'(?<![\w-])--pools[= ]([A-Za-z0-9,]+)')
 
 
 def list_processes():
@@ -57,14 +66,6 @@ def classify_proc(p):
     cmd = (p.get('cmd') or '').replace('/', '\\')
     base = os.path.basename(cmd.split('"')[1] if cmd.startswith('"') else
                             (cmd.split(' ')[0] if ' ' in cmd else cmd)).lower()
-    pools = []
-    m = _MINE_POOL_RE.search(cmd)
-    if m:
-        pools = [x for x in m.group(1).split(',') if x]
-    else:
-        m2 = _POOLS_RE.search(cmd)
-        if m2:
-            pools = [x for x in m2.group(1).split(',') if x]
     if 'run_tracks' in cmd:
         kind = 'driver'
     elif 'loop_engine' in cmd:
@@ -73,6 +74,29 @@ def classify_proc(p):
         kind = 'watcher'
     else:
         kind = 'other'
+
+    # ★★★★★ 2026-09-16 修 BUG（用户实测："停了全A还显示在跑 5 池"）：
+    #   **归属必须按 `kind` 分开解析 —— 引擎【只认 `--mine_pool`，绝不 fallback 到 `--pools`】** ✗
+    #
+    #   为什么（**这是真凶**）：`run_tracks.py` 给引擎透传的固定参数组 `extra` 里
+    #   **硬编码了 `--pools=300,500,1000`**（配合 `--pool_obs`，"额外算这几个池的指标"，
+    #   用于给因子打池内标签）—— ★ 它**不代表"这个引擎在跑那几个池"** ✗
+    #   而原实现"先找 `--mine_pool`，没有就退到 `--pools`" ⇒
+    #     · `all` 池的引擎**当时没传 `--mine_pool`**（BUG G，已在 `run_tracks.py` 修）
+    #       ⇒ 退到 `--pools=300,500,1000` ⇒ **被当成"在跑 300/500/1000"** ✗✗
+    #     · 于是：`stop('all')` 找不到它的引擎 ⇒ **杀不掉，用户以为操作无效** ✗
+    #             `byPool` 里同一个 PID 出现在 3 个池 ⇒ **「在跑的池」虚高** ✗
+    #   ⇒ 修：**driver 用 `--pools=`（它确实用）；engine/watcher 只用 `--mine_pool=`** ✓
+    #     （配合 BUG G 的修复：所有池的引擎都会带 `--mine_pool` ✓）
+    pools = []
+    if kind == 'driver':
+        m2 = _POOLS_RE.search(cmd)
+        if m2:
+            pools = [x for x in m2.group(1).split(',') if x]
+    else:
+        m = _MINE_POOL_RE.search(cmd)
+        if m:
+            pools = [x for x in m.group(1).split(',') if x]
     return {'pid': p.get('pid'), 'kind': kind, 'script': base,
             'pools': pools, 'start': p.get('start'), 'memMB': p.get('mem'),
             'cmd': (p.get('cmd') or '')[:400]}

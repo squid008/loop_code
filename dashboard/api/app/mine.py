@@ -181,11 +181,17 @@ def state():
     st = [p for p in (c.get('stopped') or []) if p in known]
     by_pool = {}
     for k in known:
+        # ★★★★ 2026-09-16 修 BUG I：`mining` 必须**以"真的有它的引擎在跑"为准**，
+        #   不能只看调度器的 `curPool` —— 否则会出现
+        #   `{stopped: True, mining: True, engine: []}` 这种**自相矛盾**的状态
+        #   ⇒ 前端「启动本池」「停止本池」**两个按钮同时可点** ✗（用户实测）
+        #   （根因在 `classify_proc` 把 `all` 的引擎归属丢了 —— 已在 `pools.py` 修）
+        _eng = [p['pid'] for p in engs if k in (p.get('pools') or [])]
         by_pool[k] = {
             'enabled': k in en,
             'stopped': k in st,
-            'mining': bool(c.get('curPool') == k and engs),
-            'engine': [p['pid'] for p in engs if k in (p.get('pools') or [])],
+            'mining': bool(_eng),                    # ★ 有引擎 = 正在跑 ✓
+            'engine': _eng,
         }
     phase = c.get('phase') or 'idle'
     if not running_now and phase in ('mine',):
@@ -297,14 +303,26 @@ def stop(pool=None, **kw):
         st = sorted(set(list(c.get('stopped') or []) + [pool]))
         _write_ctl(stopped=st)
         killed = []
-        for p in engine_of(pool):
+        # ★★★★ 2026-09-16 兜底（用户实测"停止了全A，它还在跑"）：
+        #   若控制文件里 **`curPool == pool`**（调度器正在跑它），
+        #   那就把**当前这个引擎**也算进来一起杀 —— **不依赖命令行归属解析** ✓
+        #   为什么需要：命令行归属可能因历史原因失配（如旧进程没传 `--mine_pool`），
+        #   而"调度器正在跑哪个池"是**确定的事实** ⇒ 用它兜底最可靠 ✓
+        _targets = list(engine_of(pool))
+        if c.get('curPool') == pool:
+            _seen = {x['pid'] for x in _targets}
+            _targets += [x for x in engines() if x['pid'] not in _seen]
+        for p in _targets:
             r = subprocess.run(['taskkill', '/PID', str(p['pid']), '/T', '/F'],
                                capture_output=True, text=True, encoding='utf-8', errors='replace',
                                creationflags=_NO_WIN)
             killed.append({'pid': p['pid'], 'kind': 'engine', 'pools': p.get('pools'),
                            'rc': r.returncode, 'out': (r.stdout or r.stderr or '').strip()[:160]})
         time.sleep(1)
-        left = engine_of(pool)
+        # ★ 残留检查同样要兜底：归属解析不到、但调度器仍指向该池 ⇒ 也算"没杀干净" ✓
+        left = list(engine_of(pool))
+        if ctl().get('curPool') == pool:
+            left += [x for x in engines() if x['pid'] not in {y['pid'] for y in left}]
         en = [x for x in (c.get('enabled') or core.POOL_KEYS) if x != pool]
         return {'ok': not left, 'scope': 'pool:%s' % pool, 'killed': killed,
                 'stillRunning': [{'pid': p['pid'], 'kind': 'engine', 'pools': p.get('pools')} for p in left],
