@@ -2,6 +2,10 @@
 __pycache__/
 *.py[cod]
 
+# ★ 2026-09-16：临时「提交信息」文件（`git commit -F` 写出来的）不该进仓库
+_cmsg*.txt
+_commit_msg.txt
+
 # 大二进制数据（*.h5/*.pkl 可由 build_*.py 从 E:\rq 重建）
 *.h5
 *.npy
