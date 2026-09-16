@@ -49,8 +49,12 @@ COLS = ['name', 'pool', 'gen', 'expr', 'sign', 'ic', 'ic_doc', 'ic_ir', 'ic_win'
         'ann_ex', 'dd', 'calmar', 'sharpe',
         # —— 组合自身口径（2026-09-16 引擎新增字段）——
         'ann_top', 'dd_top', 'calmar_top', 'sharpe_top',
-        # —— 日频打点（风险不被低估）——
+        # —— 日频打点（风险不被低估；⚠ 与上面两组的**配对关系**见 COLS 注释）——
+        #   `dd_d/calmar_d/sharpe_d`            = **超额**口径的日频（与 ann_ex/dd/calmar/sharpe 配对）
+        #   `dd_top_d/calmar_top_d/sharpe_top_d` = **组合自身**口径的日频（与 ann_top/dd_top/… 配对）
+        #   ★ 恒等式：`dd_d <= dd` 与 `dd_top_d <= dd_top`；**不能**拿 `dd_d` 与 `dd_top` 比 ✗
         'dd_d', 'calmar_d', 'sharpe_d',
+        'dd_top_d', 'calmar_top_d', 'sharpe_top_d',
         # —— 其他 ——
         'last_yr', 'turn', 'neg_yr', 'n_rebal']
 
@@ -153,6 +157,8 @@ def main():
             ann_top=rr.get('ann_top'), dd_top=rr.get('dd_top'),
             calmar_top=rr.get('calmar_top'), sharpe_top=rr.get('sharpe_top'),
             dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'), sharpe_d=rr.get('sharpe_d'),
+            dd_top_d=rr.get('dd_top_d'), calmar_top_d=rr.get('calmar_top_d'),
+            sharpe_top_d=rr.get('sharpe_top_d'),
             last_yr=rr.get('last_yr'), turn=rr.get('turn'),
             neg_yr=sum(1 for x in yr.values() if x <= 0), n_rebal=rr.get('n_rebal')))
         print('  [{:<10s}] {:.0f}s  超额 {:+6.2f}%/Cal {:.3f}/夏普 {:.2f}  自身 {:+6.2f}%/Cal {:.3f}'

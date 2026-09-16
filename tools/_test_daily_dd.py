@@ -139,6 +139,34 @@ def main():
     chk(n_pts >= 10 and ok_pts == n_pts,
         '逐点抽查 {}/{} 个期频点与日频曲线重合（段长 {}）'.format(ok_pts, n_pts, seglen))
 
+    print('\n[8] ★★ 组合自身日频（2026-09-16 新增：`dd_top_d/calmar_top_d/sharpe_top_d`）')
+    #   起因：用户看到「组合自身最大回撤 −34.7%」与「日频打点最大回撤 −13.1%」并列，直觉认为后者不可能更浅 ✗
+    #   ★ 真因是**口径不同**（`dd_d` 是**超额**口径的日频）⇒ 本次把"组合自身的日频"也补上，
+    #     让「期频 vs 日频」在**同一口径内**可比 ✓
+    for k in ('dd_top_d', 'calmar_top_d', 'sharpe_top_d'):
+        chk(k in rex and np.isfinite(rex[k]), '{} 存在且有限（= {:.4f}）'.format(
+            k, rex.get(k, float('nan'))))
+    chk(rex['dd_top_d'] <= rex['dd_top'] + 1e-12,
+        '★ 恒等式 dd_top_d {:.4f} <= dd_top {:.4f}（组合日频只能更深）'.format(
+            rex['dd_top_d'], rex['dd_top']))
+    _cal_td = rex['ann_top'] / abs(rex['dd_top_d'])
+    chk(abs(rex['calmar_top_d'] - _cal_td) < 1e-6,
+        'calmar_top_d == ann_top/|dd_top_d| = {:.4f}'.format(_cal_td))
+    # ★ 口径不可混：`dd_d` 与 `dd` 配对；把它和 `dd_top` 比就是错的口径
+    chk(abs(rex['dd_d'] - rex['dd']) > 1e-6,
+        'dd_d {:.4f} 与 dd {:.4f} 是一对（同口径）；**不要**拿 dd_d 和 dd_top {:.4f} 比 ✗'.format(
+            rex['dd_d'], rex['dd'], rex['dd_top']))
+
+    print('\n[9] 组合腿的锚定也要成立（期频 nav_t == 日频 nav_t 在每个期末）')
+    td = rex['tr_d']
+    nav_td = (1 + td).cumprod()
+    nav_t_end = float((1 + rex['tr']).cumprod().iloc[-1])
+    chk(abs(float(nav_td.iloc[-1]) - nav_t_end) / abs(nav_t_end) < 1e-9,
+        '组合日频终值 {:.6f} == 组合期频终值 {:.6f}'.format(float(nav_td.iloc[-1]), nav_t_end))
+    chk(abs(100 * (rex['dd_top'] - rex['dd_top_d'])) > 1e-6,
+        '组合期频/日频回撤**确实不同**（差 {:.2f}pp）⇒ 真的算了日频，不是复读'.format(
+            100 * (rex['dd_top'] - rex['dd_top_d'])))
+
     print('\n' + '=' * 96)
     print('通过 {}/{}'.format(OK[0] - OK[1], OK[0]) + ('' if OK[1] else '  ✓ 全部通过'))
     return 1 if OK[1] else 0

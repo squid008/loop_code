@@ -256,3 +256,24 @@ tr.outbank .fcode { color: var(--mut); }
 
 .orph { margin: 6px 0 4px; padding-left: 18px; }
 .orph li { font-size: 12px; line-height: 1.8; color: var(--mut); word-break: break-all; }
+
+/* ---------------- 顶栏控件：统一高度（2026-09-16 用户："胖的胖、扁的扁，搞成跟一键启动全部一样高度"）-------
+   原先 `.ctrls` 里各元素自己定 padding（按钮 8px、状态条 4px、内存条还是**两行** flex-column）
+   ⇒ 一排控件高度参差不齐 ✗ ⇒ 统一成 **34px 一行**（与「一键启动全部」同高）✓ */
+.ctrls > * { height: 34px; box-sizing: border-box; }
+.ctrls .btn, .ctrls .sel { padding: 0 14px; }
+.ctrls .rounds input { height: 34px; padding: 0 8px; }
+/* 内存条改**单行**（原来 flex-column 两行 ⇒ 最高那个）*/
+.ctrls .res { flex-direction: row; align-items: center; gap: 7px; padding: 0 10px; line-height: 1; }
+.ctrls .res small { white-space: nowrap; }
+.ctrls .phase { padding: 0 12px; }
+.ctrls .chk { padding: 0 2px; }
+
+/* 「历史」行的状态标签：**不要绿色**（绿=正常入库），历史/已移出用**琥珀色** ✓ */
+.status.hist { color: #fcd34d; background: #3a2a06; border-color: #6b4a0f; }
+
+/* 详情面板里的口径提醒 */
+.dt-note { margin: 10px 0 2px; padding: 9px 12px; border-radius: 9px; font-size: 12px;
+           line-height: 1.75; color: var(--mut); background: #0b1020; border: 1px dashed var(--bd); }
+.dt-note b { color: var(--fg); }
+.sel-h .det { margin-left: auto; }

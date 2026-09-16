@@ -118,6 +118,10 @@ export interface LibraryDto {
 
 export interface SelectedFactor {
   code: string; pool: string; grade: string; stripCalmar: string; expr: string
+  /** ★ 2026-09-16：精选池也能「点开看详情」—— 与库表同一套字段（联表自各池库文档 + 指标表） */
+  detail?: LibraryFactor['detail']
+  metrics?: Record<string, number | null>
+  inBank?: boolean | null
 }
 
 export interface SelectedDto {

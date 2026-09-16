@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
   type LibraryDto, type LibraryFactor, type MetaDto, type MineStateDto, type PoolStatus,
-  type SelectedDto, type StatusDto,
+  type SelectedDto, type SelectedFactor, type StatusDto,
 } from './api'
 
 type TabKey = 'pools' | 'library' | 'selected' | 'process' | 'meta'
@@ -477,7 +477,7 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
               <td className="mono">{f.gen}</td>
               <td>{f.family}</td>
               <td className="sum">{f.summary}</td>
-              <td><span className="status">{f.status}</span></td>
+              <td><span className={f.inBank === false ? 'status hist' : 'status'}>{f.status}</span></td>
               <td><button className="btn sm" onClick={() => setSel(f)}>详情</button></td>
             </tr>
           ))}
@@ -490,19 +490,29 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
   )
 }
 
-/** 指标定义：`[字段, 名称, 类型, 说明]` —— 分「超额口径 / 组合自身口径 / 日频 / 其他」四组展示 */
+/** 指标定义：`[字段, 名称, 类型]`。
+ *
+ * ★★ 2026-09-16 重新分组（用户指出「组合自身最大回撤 −34.7% 与日频 −13.1% 并列，后者不可能更浅」）：
+ *   真因是**口径** —— `dd_d/calmar_d/sharpe_d` 一直是「**超额**」口径的日频（与 `dd/calmar/sharpe` 配对），
+ *   却被放在「组合自身」旁边 ⇒ 看起来像同一口径的两个数（其实恒等式是 `dd_d <= dd`，**不是** `dd_d <= dd_top`）✗
+ *   ⇒ 现在**按「超额 / 组合自身」× 「期频 / 日频」四个格子摆**，同格才能比 ✓
+ */
 const METRIC_GROUPS: Array<[string, Array<[string, string, 'pct' | 'num' | 'int']>]> = [
-  ['超额口径（组合 − 池内等权基准）', [
-    ['ann_ex', '超额年化', 'pct'], ['calmar', '超额卡玛', 'num'],
-    ['sharpe', '超额夏普', 'num'], ['dd', '超额最大回撤', 'pct'],
+  ['超额口径 · 期频打点（组合 − 池内等权基准）', [
+    ['ann_ex', '超额年化', 'pct'], ['dd', '超额最大回撤', 'pct'],
+    ['calmar', '超额卡玛', 'num'], ['sharpe', '超额夏普', 'num'],
   ]],
-  ['组合自身口径（Top10% 等权那一腿）', [
-    ['ann_top', '年化', 'pct'], ['calmar_top', '卡玛', 'num'],
-    ['sharpe_top', '夏普', 'num'], ['dd_top', '最大回撤', 'pct'],
+  ['超额口径 · 日频打点（同一策略逐日 mark）', [
+    ['dd_d', '超额最大回撤', 'pct'], ['calmar_d', '超额卡玛', 'num'],
+    ['sharpe_d', '超额夏普', 'num'],
   ]],
-  ['日频打点（同一策略，风险不被低估）', [
-    ['calmar_d', '卡玛（日频）', 'num'], ['dd_d', '最大回撤（日频）', 'pct'],
-    ['sharpe_d', '夏普（日频）', 'num'],
+  ['组合自身口径 · 期频打点（Top10% 等权）', [
+    ['ann_top', '年化', 'pct'], ['dd_top', '最大回撤', 'pct'],
+    ['calmar_top', '卡玛', 'num'], ['sharpe_top', '夏普', 'num'],
+  ]],
+  ['组合自身口径 · 日频打点（同一策略逐日 mark）', [
+    ['dd_top_d', '最大回撤', 'pct'], ['calmar_top_d', '卡玛', 'num'],
+    ['sharpe_top_d', '夏普', 'num'],
   ]],
   ['其他', [
     ['last_yr', '最近一年超额', 'pct'], ['turn', '单期换手', 'pct'],
@@ -517,14 +527,22 @@ const fmtM = (v: number | null | undefined, kind: 'pct' | 'num' | 'int') => {
   return v.toFixed(3)
 }
 
+/** 详情面板能接受的"最小因子形状" —— 库表与精选池卡片都能喂给它（同一套展示 ✓） */
+type FactorLike = Pick<LibraryFactor, 'code' | 'expr' | 'detail' | 'metrics'> & {
+  family?: string
+  summary?: string
+  /** ★ 三态：true 在库 / false 已移出 / null|undefined 未知（指标表不完整） */
+  inBank?: boolean | null
+}
+
 /** 因子详情：完整公式（可复制）+ 池标签 + 各项费后指标 */
 function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
-  { f: LibraryFactor; metricsInfo?: LibraryDto['metricsInfo']
+  { f: FactorLike; metricsInfo?: LibraryDto['metricsInfo']
     metricsMtime?: string | null; onClose: () => void }) {
   const [copied, setCopied] = useState(false)
   const m = f.metrics ?? {}
   const d = f.detail ?? ({} as NonNullable<LibraryFactor['detail']>)
-  const expr = f.expr || f.summary
+  const expr = f.expr || f.summary || ''
   const doCopy = async () => {
     try {
       await navigator.clipboard.writeText(expr)
@@ -585,10 +603,15 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
           <div className="dt-sec">
             <span>费后指标</span>
             <em className="mut">
-              {metricsInfo?.found
-                ? `统一口径重算（成本 0.004 往返 · 5 日调仓 · 全A 面板）${metricsMtime ? ` · 更新于 ${metricsMtime}` : ''}`
-                : '指标表未生成：先跑 python tools/factor_metrics.py'}
+              {metricsInfo && !metricsInfo.found
+                ? '指标表未生成：先跑 python tools/factor_metrics.py'
+                : `统一口径重算（成本 0.004 往返 · 5 日调仓 · 全A 面板）${metricsMtime ? ` · 更新于 ${metricsMtime}` : ''}`}
             </em>
+          </div>
+          <div className="dt-note">
+            「日频打点」= 同一策略在持有期内<b>逐日</b>记净值（所以回撤不会被低估，只会更深）。
+            同口径内可比（超额日频 vs 超额期频、组合日频 vs 组合期频）；
+            <b>超额口径与组合自身口径不能互相比较</b>（前者要减掉基准腿）。
           </div>
           {METRIC_GROUPS.map(([title, defs]) => (
             <div key={title} className="dt-grp">
@@ -620,6 +643,7 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
 }
 
 function SelectedPanel({ s }: { s: SelectedDto }) {
+  const [sel, setSel] = useState<SelectedFactor | null>(null)
   return (
     <section className="panel">
       <div className="sec-h">
@@ -627,7 +651,7 @@ function SelectedPanel({ s }: { s: SelectedDto }) {
         <span className="mut">{s.count ?? 0} 个 · 来源 <code>{s.path}</code></span>
       </div>
       {s.gates.length > 0 && (
-        <ol className="gates">{s.gates.map((g, i) => <li key={i}>{g.replace(/\*\*/g, '')}</li>)}</ol>
+        <ul className="gates">{s.gates.map((g, i) => <li key={i}>{g.replace(/\*\*/g, '')}</li>)}</ul>
       )}
       <div className="selgrid">
         {s.factors.map((f, i) => (
@@ -636,6 +660,7 @@ function SelectedPanel({ s }: { s: SelectedDto }) {
               <b className="mono">{f.code}</b>
               <span className="grade">{f.grade}</span>
               <span className="sc">剥Calmar <b>{f.stripCalmar.replace(/\*/g, '')}</b></span>
+              <button className="btn sm det" onClick={() => setSel(f)}>详情</button>
             </div>
             <code className="expr">{f.expr || '—'}</code>
           </div>
@@ -643,9 +668,14 @@ function SelectedPanel({ s }: { s: SelectedDto }) {
       </div>
       {s.notes.length > 0 && (
         <details className="notes">
-          <summary>⚠ 下游使用须知</summary>
+          <summary>下游使用须知</summary>
           <ul>{s.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
         </details>
+      )}
+      {sel && (
+        <FactorDetail f={{ code: sel.code, expr: sel.expr, detail: sel.detail,
+                           metrics: sel.metrics, inBank: sel.inBank }}
+                      onClose={() => setSel(null)} />
       )}
     </section>
   )

@@ -229,7 +229,8 @@ def library(pool):
     # ★★ 「**在库里、但库文档没有编号**」的因子（2026-09-16 实证：1000 池有 1 个，gen11 入库）
     #   ⇒ 成因 = §8.44 那个 `_lib_sync` 静默跳过的 bug 期间留下的缺口 ⇒ **如实展示，不隐藏** ✓
     orphans = [{'name': nm, 'expr': (v.get('expr') or ''),
-                'ann_ex': (v.get('_num') or {}).get('ann_ex')}
+                'ann_ex': (v.get('_num') or {}).get('ann_ex'),
+                'metrics': (v.get('_num') or {})}
                for nm, v in sorted(_mt_pool.items()) if nm not in _names]
     for f in factors:
         code = f['code']
@@ -333,6 +334,29 @@ def selected():
             'stripCalmar': (r[i_sc].strip() if i_sc is not None and len(r) > i_sc else ''),
             'expr': (re.sub(r'[`*]', '', r[i_expr]).strip() if i_expr is not None and len(r) > i_expr else ''),
         })
+    # ★★ 2026-09-16（用户要求「**精选池也要加详情按钮**」）：把各池库文档的**明细**（完整公式/池标签/sign/叶子）
+    #   与**统一口径指标表**按因子名 join 进精选条目 ⇒ 前端可复用同一个「因子详情」弹层 ✓
+    idx = {}
+    for pk in core.POOL_KEYS:
+        try:
+            lb = library(pk)
+        except Exception:
+            continue
+        for f2 in lb.get('factors') or []:
+            nm = f2['code'] if pk == 'all' else '%s_%s' % (f2['code'], pk)
+            idx[nm] = f2
+        for o in lb.get('orphans') or []:          # 库里在、文档无编号的因子也放进来（可查详情）
+            idx.setdefault(o['name'], {'code': o['name'], 'pool': pk, 'gen': '',
+                                       'family': '', 'summary': '', 'status': '',
+                                       'expr': o.get('expr') or '', 'detail': {},
+                                       'metrics': o.get('metrics') or {}, 'inBank': True})
+    for f in factors:
+        f2 = idx.get(f['code']) or {}
+        f['expr'] = f2.get('expr') or f['expr']          # ★ 用**完整公式**（精选表里本来就完整，双保险）
+        f['detail'] = f2.get('detail') or {}
+        f['metrics'] = f2.get('metrics') or {}
+        f['inBank'] = f2.get('inBank')
+        f['pool'] = f2.get('pool') or f['pool']
     return {
         'found': True,
         'path': os.path.relpath(p, core.ROOT),

@@ -247,6 +247,12 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
     mc_ = None if mcap is None else np.asarray(mcap, dtype='float64')   # 市值面板(可选, 见 docstring 7)
     top_r, mkt_r, mkt_cw, dates_l, turns = [], [], [], [], []
     ex_d_parts = []          # ★ 日频超额(§1.19, with_daily 时才填): 持有期内逐日 mark
+    # ★ 2026-09-16 新增「**组合自身**的日频序列」—— 起因：用户看到明细里「组合自身最大回撤 −34.7%」
+    #   与「日频打点最大回撤 −13.1%」并列，直觉认为后者**不可能更浅**。
+    #   ★★ 真因是**口径不同**：`dd_d` 一直是**超额**口径的日频（与 `dd` 对应），而 `dd_top` 是**组合自身**口径
+    #     ⇒ 两者本来就不可比（`dd_d ≤ dd` 才是恒等式）。这里把**组合自身**的日频也补上，
+    #     让「期频 vs 日频」在同一口径内可比 ⇒ 用户想问的那个数（组合日频回撤）终于有地方看 ✓
+    tr_d_parts = []
     prev_top = None
     for d in idx[::FWD][:-1]:
         u = U.loc[d]
@@ -287,14 +293,17 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
         #   ⚠ 不能用 set_fwd(1) 代替：那会变成每天调仓（换手 x5）= 另一个策略。
         if with_daily:
             seg = []
+            seg_t = []                        # ★ 组合自身（Top 组等权）的逐日收益
             for t in range(i1, i2):
                 _r = cv[t + 1] / cv[t] - 1.0
                 _t = np.nanmean(_r[keep_top])
                 _m = np.nanmean(_r[keep_all])
                 if np.isfinite(_t) and np.isfinite(_m):
                     seg.append((_t - _m) * cash)
+                    seg_t.append(_t * cash)
             if seg:
                 seg[0] -= turn * cost        # 调仓成本在买入日一次性扣（与期频口径一致）
+                seg_t[0] -= turn * cost      # 组合同样在买入日扣成本（与期频 `tr` 口径一致）
                 # ★★ **锚定到期频值**（关键！否则两条净值路径不是子采样关系，dd 不可比）
                 #   期频 ex_e 是该期的"真实"超额（含复利）；日频只是把它**摊到每一天**。
                 #   强制 `prod(1+seg) == 1+ex_e` ⇒ **期频净值 = 日频净值在每个期末的取值**
@@ -305,6 +314,13 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
                     _adj = (_target / _got) ** (1.0 / len(seg))
                     seg = [((1.0 + _s) * _adj - 1.0) for _s in seg]
                 ex_d_parts.extend(seg)
+                # ★ 组合自身日频：**同样锚定到期频的 `tr`**（期末取值 = 期频净值 ⇒ 两条路径是子采样关系）
+                _tt = 1.0 + (rt * cash - turn * cost)
+                _gt = float(np.prod(1.0 + np.asarray(seg_t, dtype='float64')))
+                if _gt > 0 and np.isfinite(_tt) and _tt > 0:
+                    _adjt = (_tt / _gt) ** (1.0 / len(seg_t))
+                    seg_t = [((1.0 + _s) * _adjt - 1.0) for _s in seg_t]
+                tr_d_parts.extend(seg_t)
         if mc_ is not None:
             # 市值加权基准(≈真实指数): 同一批 keep_all, 按市值加权平均。
             # ⚠ 分子分母**必须用同一组有限值掩码** —— 否则 NaN 收益/NaN 市值两者口径不一致:
@@ -400,8 +416,25 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
             sharpe_d=(ex_d.mean() / ex_d.std() * np.sqrt(243.0)
                       if ex_d.std() > 0 else np.nan),
         )
+        # ⚠ 口径提醒：`dd_d / calmar_d / sharpe_d` 是「**超额**」的日频（与 `dd / calmar / sharpe` 配对），
+        #   与 `dd_top / calmar_top / sharpe_top`（**组合自身**）**不可比** ——
+        #   恒等式是 `dd_d <= dd` 与 `dd_top_d <= dd_top`，**不是** `dd_d <= dd_top` ✗
         if with_ex:
             res['ex_d'] = ex_d
+    # ★★ 组合自身的**日频**风险（2026-09-16 新增；口径与 `dd_top/calmar_top/sharpe_top` 配对）：
+    #   恒等式 `dd_top_d <= dd_top`（日频是期频的子采样 ⇒ 只能看到更深的回撤）⇒ 可被测试钉死 ✓
+    if with_daily and tr_d_parts:
+        tr_d = pd.Series(tr_d_parts, dtype='float64')
+        nav_td = (1 + tr_d).cumprod()
+        dd_td = float((nav_td / nav_td.cummax() - 1).min())
+        res.update(
+            dd_top_d=dd_td,
+            calmar_top_d=(ann_t / abs(dd_td) if (dd_td < 0 and np.isfinite(ann_t)) else np.nan),
+            sharpe_top_d=(tr_d.mean() / tr_d.std() * np.sqrt(243.0)
+                          if tr_d.std() > 0 else np.nan),
+        )
+        if with_ex:
+            res['tr_d'] = tr_d
     return res
 
 
