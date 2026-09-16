@@ -35,8 +35,11 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 /* ★★ 2026-09-16（用户："点并行后按钮都变两行了，这个不行"）：
    根因 = `.ctrls > *` **默认可收缩**且没 `nowrap` ⇒ 空间不够时**逐个字符竖排** ✗
    ⇒ ① 每个控件 `flex: 0 0 auto`（**不收缩**）② `white-space: nowrap`（**永不断行**）
-      ③ 整排 `flex-wrap: nowrap` + `overflow-x: auto`（窗口太窄就**横向滚动**，不再挤成两行）✓ */
-.ctrls { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; overflow-x: auto; }
+      ③ 整排**不许换行**（后来改成 `flex-wrap: wrap` 整块换行 —— 见下一条注释：滚动条比换行更难看 ✗）✓ */
+/* ⚠ 2026-09-16（用户："开始挖后顶栏咋出现滚动条了"）：`overflow-x: auto` 会在**内容变宽时冒出横条**
+   ⇒ 去掉它；改为**整块换行**（`flex-wrap: wrap` + 行距）—— 单个控件**永不断行**（见下），
+   实在放不下就整排挪到第二行，**不会再出现滚动条** ✓ */
+.ctrls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; row-gap: 8px; }
 .ctrls > * { flex: 0 0 auto; }
 .ctrls .btn, .ctrls .seg, .ctrls .rounds, .ctrls .num, .ctrls .chk, .ctrls .res { white-space: nowrap; }
 /* 并行数 / 预算：紧凑的行内数字框（省地方，避免把这一排挤爆） */

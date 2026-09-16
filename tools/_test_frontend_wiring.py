@@ -118,8 +118,22 @@ minepy = io.open(MINE, encoding='utf-8').read()
 chk('模式分段控件存在（轮转 / 并行）',
     "setExecMode('parallel')" in src and "setExecMode('rotate')" in src)
 # ⚠ 断言里的字面量**别带引号** —— TSX 里是 `mine?.parallelRange`（不带引号），带引号就永远不匹配 ✗
-chk('并行数 / 每引擎预算 只在 parallel 时出现',
-    'parallelRange' in src and 'memPerEngine' in src and "execMode === 'parallel'" in src)
+chk('并行数只在 parallel 时出现', 'parallelRange' in src and "execMode === 'parallel'" in src)
+# ★ 2026-09-16（用户："预算改了跟 3 没区别，还不如去掉"）——实测它是**闸门**不是**上限** ⇒ 撤掉 ✓
+chk('★「预算」输入框已撤（避免误导：它只决定"要不要排队等"，不决定引擎吃多少内存）',
+    '每个引擎的内存预算' not in src)
+# ★★ 用户实测"停完再启动变成了轮转"⇒ 根因是 UI 控件与后端"上次设置"脱钩（页面刷新回默认）⇒ 从状态同步 ✓
+CSS = io.open(r'D:\loop_code\dashboard\web\src\styles.css', encoding='utf-8').read()
+chk('★ 控件从**后端状态**同步（没在跑时才对，且只在值变了才覆盖）',
+    'lastSync' in src and 'setExecMode(mine.execMode' in src and 'mine.running) return' in src)
+# ⚠ 必须**先剔注释**再断言 —— 注释里就写着 `overflow-x: auto` 这几个字（解释它为何被去掉）✗
+_CSS_NC = re.sub(r'/\*.*?\*/', '', CSS, flags=re.S)
+_m = re.search(r'\.ctrls \{[^}]*\}', _CSS_NC)
+chk('★ 顶栏 `.ctrls` 不再用 overflow-x（否则内容一变宽就冒出横向滚动条），改为整块换行',
+    _m is not None and 'overflow-x' not in _m.group(0) and 'flex-wrap: wrap' in _m.group(0),
+    '实际规则：%s' % (_m.group(0).replace('\n', ' ') if _m else '(没匹配到 .ctrls 规则)'))
+chk('★ 状态条文案已缩短（免得把顶栏挤爆）', '池在跑' in src)
+chk('★ 调度器活着但没池可跑 ⇒ 不再谎报「挖掘中」（`_runnable` 判定）', '_runnable' in minepy)
 chk('面板共享复选框存在（勾选 ⇒ panel_cache=use）', "panelCache ? 'use' : 'off'" in src)
 chk('doStart 把模式参数**真的**发给接口', 'api.mineStart(pools, rounds, {' in src)
 chk('api.mineStart 支持 opts 透传（含 execMode/panelCache）',

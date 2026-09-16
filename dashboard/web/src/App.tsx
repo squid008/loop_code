@@ -45,6 +45,22 @@ export default function App() {
   const [maxParallel, setMaxParallel] = useState(3)
   const [memPerEngine, setMemPerEngine] = useState(3)
   const [panelCache, setPanelCache] = useState(false)          // 勾选 ⇒ --panel_cache=use
+  // ★★ 2026-09-16（用户实测"停完再点启动，怎么变成轮转了？"）：
+  //   真因 = **UI 的控件状态和后端"上次用的设置"没关系** —— 页面一刷新，控件回到默认（轮转 + 不共享），
+  //   而这时只要没有调度器在跑，点启动就会**按 UI 的默认值**起一个轮转调度器 ✗（用户明明上次用的并行）
+  //   ⇒ 修：**从后端状态同步控件**（后端以**真实进程命令行/控制文件**为准，是唯一真话来源）✓
+  //   ⚠ 只在"没在跑"时同步，且**只在后端值真的变了**时覆盖 —— 免得每次轮询把用户正在改的输入冲掉 ✗
+  const lastSync = useRef('')
+  useEffect(() => {
+    if (!mine || mine.running) return
+    const sig = `${mine.execMode}|${mine.maxParallel}|${mine.memPerEngine}|${mine.panelCache}`
+    if (sig === lastSync.current) return
+    lastSync.current = sig
+    setExecMode(mine.execMode === 'parallel' ? 'parallel' : 'rotate')
+    setMaxParallel(mine.maxParallel ?? 3)
+    setMemPerEngine(mine.memPerEngine ?? 3)
+    setPanelCache(mine.panelCache === 'use')
+  }, [mine])
   const [mineBusy, setMineBusy] = useState(false)
   const [toast, setToast] = useState<{ kind: 'ok' | 'err' | 'info'; msg: string } | null>(null)
   // ★★★ 2026-09-16 修：**不用 `window.confirm`** ——
@@ -188,12 +204,11 @@ export default function App() {
                 {mine.panelCache !== 'off' ? ' · 共享' : ''}
               </em>
             )}
-            {/* 区分“正在轮转”与“只是配置了但调度器没跑” */}
+            {/* 区分“正在轮转”与“只是配置了但调度器没跑”（★ 文字缩短，免得把顶栏挤出一条滚动条 ✗） */}
             <small>{mine?.running
-              ? `${(mine?.enabled ?? []).length} 个池正在${
-                   mine.execMode === 'parallel' ? '并行' : '轮转'}`
+              ? `${(mine?.runningPools ?? []).length}/${(mine?.enabled ?? []).length} 池在跑`
               : ((mine?.enabled ?? []).length
-                ? `${(mine?.enabled ?? []).length} 个池已配置，未运行`
+                ? `${(mine?.enabled ?? []).length} 池已配置`
                 : '未配置')}</small>
           </span>
           <span className="rounds" title={`每个池要跑的轮数，范围 1~${mine?.roundsRange?.[1] ?? 200}。一轮 = 每个参与的池各跑 1 代`}>
@@ -223,12 +238,11 @@ export default function App() {
                        value={maxParallel} disabled={mineBusy || !!mine?.running}
                        onChange={e => setMaxParallel(Math.max(1, Math.min(6, Number(e.target.value) || 1)))} />
               </span>
-              <span className="num" title="每个引擎的内存预算（GB）：可用内存不够就等 15 秒重试">
-                预算
-                <input type="number" min={0.5} max={32} step={0.5}
-                       value={memPerEngine} disabled={mineBusy || !!mine?.running}
-                       onChange={e => setMemPerEngine(Math.max(0.5, Math.min(32, Number(e.target.value) || 3)))} />
-              </span>
+              {/* ★ 2026-09-16（用户："预算跟 3 变化不大，还不如去掉"）：
+                  实测确认 —— `--mem_per_engine` 是**闸门**（"可用内存不足就排队等"），
+                  **不是内存上限**（不会让引擎少吃内存）✗ ⇒ 改它当然没用
+                  ⇒ 从界面撤掉（后端仍用默认 3.0；真要压内存得调每进程私有缓存
+                    `--lru_max/--cache2_max/--vreuse_cap_mb`，用 `--engine_arg=` 追加）✓ */}
             </>
           )}
           {/* ★ 2026-09-16（用户要求）：提示里**删掉最后那行**"缓存过期/缺失会报错 + 重建命令"

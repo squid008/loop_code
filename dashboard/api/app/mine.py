@@ -250,6 +250,15 @@ def state():
     phase = c.get('phase') or 'idle'
     if not running_now and phase in ('mine',):
         phase = 'idle'                    # 调度器已死但文件没更新 ⇒ 兜底
+    # ★★ 2026-09-16（用户实测："我把池都停了，它还显示挖掘中，但 0/5 在跑"）：
+    #   调度器**还活着**但**没有任何引擎在跑**、且**没有池可跑**（启用池全在 stopped 里）⇒
+    #   这不是"挖掘中"，是**空转待命**（并行模式下它要等各个引擎退出、再复位控制文件）
+    #   ⇒ 明确标成「待命」，别让状态说谎 ✗（另：**收尾审查**只在"本轮有进展"时才跑，
+    #     5 个引擎全被中途杀掉 ⇒ `dirty=False` ⇒ **不会**收尾 ✓ 见 `_ui_scheduler.log`）
+    if phase == 'mine' and sched and not engs:
+        _runnable = [p for p in en if p not in st]
+        if not _runnable:
+            phase = 'idle'
     label = {'idle': '空闲', 'mine': '挖掘中', 'tail': '收尾审查中'}.get(phase, phase)
     cur = c.get('curPool')
     # ---- ★★★ 调度模式 / 内存设置：**以真实进程命令行为准**（"现在到底怎么跑的"只有它有发言权）----
