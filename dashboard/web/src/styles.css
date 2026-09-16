@@ -253,3 +253,6 @@ tr.outbank .fcode { color: var(--mut); }
 .dt-warn { margin-top: 12px; padding: 9px 12px; border-radius: 9px; font-size: 12.5px;
            background: #f59e0b1a; border: 1px solid #f59e0b44; color: #fcd34d; }
 .dt-doc { margin-top: 10px; color: var(--mut); font-size: 12px; line-height: 1.7; }
+
+.orph { margin: 6px 0 4px; padding-left: 18px; }
+.orph li { font-size: 12px; line-height: 1.8; color: var(--mut); word-break: break-all; }

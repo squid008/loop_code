@@ -14,7 +14,7 @@
 import os
 import re
 
-from . import core
+from . import core   # noqa: F401
 
 # 统一字段（面向"因子看板/PG 表"的列）
 FACTOR_FIELDS = [
@@ -213,6 +213,24 @@ def library(pool):
     # ★★ 2026-09-16：把**明细段**（完整公式/池标签/符号/骨架）与**统一口径指标表**接到每个因子上
     det = _detail_blocks(txt)
     mtab, mt_mtime, mt_info = _metrics_table()
+    st = core.load_state(pool)
+    bank_n = (st or {}).get('bank_n')
+    _names = {f['code'] if pool == 'all' else '%s_%s' % (f['code'], pool) for f in factors}
+    # ★ 指标表里**属于本池**的条目（按 CSV 的 `pool` 列统计 —— 比按名字匹配更稳：
+    #   库里可能有"没进库文档、因而没有 F 编号"的因子，它叫 `X<hash>`，名字对不上但确实属于本池）✓
+    _mt_pool = {nm: v for nm, v in mtab.items() if (v.get('pool') or 'all') == pool}
+    _measured = sum(1 for nm in _names if nm in mtab)
+    # ★★ `inBankKnown` = 「指标表对本池**条数恰好等于当前有效库**」——
+    #   只有这时才敢用"不在表里"推断"已移出库"。
+    #   ⚠⚠ 否则会**误判**：表还没跑完（或只跑了一部分）时，**所有行都会被标成「历史」** ✗
+    #   （2026-09-16 实测：表里只有 2 条全A 记录时，`/api/library/1000` 的 10 行全变「历史」）
+    inbank_known = (bool(mt_info.get('found')) and bank_n is not None
+                    and len(_mt_pool) == bank_n)
+    # ★★ 「**在库里、但库文档没有编号**」的因子（2026-09-16 实证：1000 池有 1 个，gen11 入库）
+    #   ⇒ 成因 = §8.44 那个 `_lib_sync` 静默跳过的 bug 期间留下的缺口 ⇒ **如实展示，不隐藏** ✓
+    orphans = [{'name': nm, 'expr': (v.get('expr') or ''),
+                'ann_ex': (v.get('_num') or {}).get('ann_ex')}
+               for nm, v in sorted(_mt_pool.items()) if nm not in _names]
     for f in factors:
         code = f['code']
         nm = code if pool == 'all' else '%s_%s' % (code, pool)
@@ -223,9 +241,7 @@ def library(pool):
         for k in ('poolTagNote', 'strip', 'metricsDocText'):     # 散文类 ⇒ 出口处清洗
             f['detail'][k] = _plain(d.get(k, ''))
         f['metrics'] = (mtab.get(nm) or {}).get('_num') or {}
-        # ★ `inBank`：指标表是**按 state.bank 生成**的 ⇒ 不在表里 = 已移出当前库（仅剩历史编号）
-        f['inBank'] = nm in mtab
-    st = core.load_state(pool)
+        f['inBank'] = ((nm in mtab) if inbank_known else None)   # 三态：True/False/None(未知)
     return {
         'pool': pool, 'label': core.pool_label(pool), 'found': True,
         'declaredCount': int(m.group(1)) if m else None,   # md 声明（可能落后）
@@ -236,7 +252,9 @@ def library(pool):
         'metricsFound': mt_info.get('found'),
         'metricsInfo': mt_info,
         'metricsMtime': mt_mtime,
-        'metricsMeasured': sum(1 for f in factors if f.get('inBank')),
+        'metricsMeasured': len(_mt_pool),
+        'inBankKnown': inbank_known,
+        'orphans': orphans,
         'caliber': {
             'authoritative': 'stateBank',
             'mdTableRows': len(factors),

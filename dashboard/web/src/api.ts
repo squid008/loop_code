@@ -104,6 +104,10 @@ export interface LibraryDto {
   metricsInfo?: { found: boolean; path?: string; rows?: number }
   metricsMtime?: string | null
   metricsMeasured?: number
+  /** ★ 只有当指标表对本池**条数恰好等于当前有效库**时才为 true —— 这时才敢标「历史」行 */
+  inBankKnown?: boolean
+  /** ★ 「在库里、但库文档没有编号」的因子（文档同步漏记的历史缺口，如实展示） */
+  orphans?: Array<{ name: string; expr: string; ann_ex: number | null }>
   caliber?: {
     authoritative: string; mdTableRows: number; mdTableMeans: string
     mdDeclared: number | null; mdDeclaredMeans: string

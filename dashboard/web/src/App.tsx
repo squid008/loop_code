@@ -418,32 +418,60 @@ function Field({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
 function LibraryTable({ lib }: { lib: LibraryDto }) {
   const c = lib.caliber
   const [sel, setSel] = useState<LibraryFactor | null>(null)
-  const nIn = lib.factors.filter(f => f.inBank).length
+  const known = lib.inBankKnown === true
+  const nIn = known ? lib.factors.filter(f => f.inBank === true).length : null
+  const stale = !known && (lib.metricsMeasured ?? 0) > 0
   return (
     <div className="libwrap">
       <div className="caliber">
         <b>口径说明</b>（这里三个数字不一样，以第一个为准）：
         <ul>
           <li><b>当前有效库 = {fmt(lib.stateBank)}</b> —— <span>权威：引擎实际在用的对照集，来自 <code>loop_state_{lib.pool}.pkl</code></span></li>
-          <li>本表行数 = {fmt(lib.count)} —— <span>累计入库编号，该文件只增不改（<b>其中 {nIn} 个仍在当前库</b>）</span></li>
+          <li>本表行数 = {fmt(lib.count)} —— <span>累计入库编号，该文件只增不改{known ? <>（<b>其中 {nIn} 个仍在当前库</b>）</> : null}</span></li>
           <li>文件声明 = {fmt(lib.declaredCount)} —— <span>引擎同步的快照，可能落后</span></li>
         </ul>
         <div className="note">
           行数比「当前有效库」多的原因：编号是累计的，而因子会被移出库（比如剥风格后发现它只是纯风格因子）。
           带「历史」标记的行就是已不在当前库的编号；点编号可以看完整公式和各项指标。
         </div>
+        {(lib.orphans ?? []).length > 0 && (
+          <div className="note">
+            另有 {(lib.orphans ?? []).length} 个因子在当前库里，但库文档没有它们的编号（当年同步漏记的历史缺口）：
+            <ul className="orph">
+              {(lib.orphans ?? []).map(o => (
+                <li key={o.name}>
+                  <code>{o.name}</code> · {o.expr || '（表达式待补）'}
+                  {o.ann_ex !== null && o.ann_ex !== undefined ? ` · 超额年化 ${(o.ann_ex * 100).toFixed(2)}%` : ''}
+                </li>
+              ))}
+            </ul>
+            所以「有效库」比「本表里在库的行数」多 {lib.orphans?.length} 个。
+          </div>
+        )}
+        {stale && (
+          <div className="note">
+            指标表还没跑完（本池 {lib.metricsMeasured} / 有效库 {fmt(lib.stateBank)} 条），
+            所以暂时不标「历史」。跑完 python tools/factor_metrics.py 即可对齐。
+          </div>
+        )}
+        {!known && !stale && (
+          <div className="note">
+            还没有指标表，所以暂不知道哪些编号仍在当前库（也不会标「历史」）。
+            跑一次 python tools/factor_metrics.py 生成后即可。
+          </div>
+        )}
       </div>
       <table className="tbl">
         <thead><tr><th>编号</th><th>入库代数</th><th>家族</th><th>一句话（公式可能被截断）</th><th>状态</th><th>详情</th></tr></thead>
         <tbody>
           {lib.factors.map((f, i) => (
-            <tr key={`${f.code}-${i}`} className={f.inBank ? '' : 'outbank'}>
+            <tr key={`${f.code}-${i}`} className={f.inBank === false ? 'outbank' : ''}>
               <td className="mono strong">
                 <button className="fcode" onClick={() => setSel(f)}
-                        title={f.inBank
-                          ? '点开看完整公式（可复制）、池标签与各项费后指标'
-                          : '该编号已不在当前有效库，只剩历史编号（文件只增不改）。点开仍能看到公式与指标'}>
-                  {f.code}{f.inBank ? '' : ' · 历史'}
+                        title={f.inBank === false
+                          ? '该编号已不在当前有效库，只剩历史编号（文件只增不改）。点开仍能看到公式与指标'
+                          : '点开看完整公式（可复制）、池标签与各项费后指标'}>
+                  {f.code}{f.inBank === false ? ' · 历史' : ''}
                 </button>
               </td>
               <td className="mono">{f.gen}</td>
