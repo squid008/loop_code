@@ -206,7 +206,6 @@ export default function App() {
           <span className="seg" title={'调度模式：\n· 轮转 = 单调度器依次跑各池，同一时刻只 1 个引擎（最省内存，旧行为）\n' +
             '· 并行 = 同时最多 N 个引擎（跑完一个立刻补一个，快池不等慢池）\n' +
             '★ 实测单引擎只吃 ≈1 个核（瓶颈是内存、不是 CPU）⇒ 并行要靠「面板共享」才放得下'}>
-            模式
             <button className={`segbtn${execMode === 'rotate' ? ' on' : ''}`}
                     disabled={mineBusy || !!mine?.running}
                     title="轮转：同一时刻只 1 个引擎（内存 1 份）。这是以前的行为"
@@ -218,14 +217,14 @@ export default function App() {
           </span>
           {execMode === 'parallel' && (
             <>
-              <span className="rounds" title="并行上限：同时最多几个引擎（内存不够就排队等，宁慢不炸）">
-                并行数
+              <span className="num" title="并行上限：同时最多几个引擎（内存不够就排队等，宁慢不炸）">
+                并行
                 <input type="number" min={mine?.parallelRange?.[0] ?? 1} max={mine?.parallelRange?.[1] ?? 6}
                        value={maxParallel} disabled={mineBusy || !!mine?.running}
                        onChange={e => setMaxParallel(Math.max(1, Math.min(6, Number(e.target.value) || 1)))} />
               </span>
-              <span className="rounds" title="每个引擎的内存预算（GB）：可用内存不够就等 15 秒重试">
-                预算GB
+              <span className="num" title="每个引擎的内存预算（GB）：可用内存不够就等 15 秒重试">
+                预算
                 <input type="number" min={0.5} max={32} step={0.5}
                        value={memPerEngine} disabled={mineBusy || !!mine?.running}
                        onChange={e => setMemPerEngine(Math.max(0.5, Math.min(32, Number(e.target.value) || 3)))} />
@@ -239,12 +238,12 @@ export default function App() {
             '· 并行：N 个引擎只占 1 份面板内存（不开就是 N 份）'}>
             <input type="checkbox" checked={panelCache} disabled={mineBusy || !!mine?.running}
                    onChange={e => setPanelCache(e.target.checked)} />
-            面板共享
+            共享
             {panelCache && mine?.panelCacheInfo && (
               <small>
                 {!mine.panelCacheInfo.exists ? '⚠ 未构建'
                   : (mine.panelCacheInfo.sourceOk === false ? '⚠ 已过期'
-                    : ` ✓ ${mine.panelCacheInfo.gb ?? '?'}GB`)}
+                    : `✓ ${mine.panelCacheInfo.gb ?? '?'}GB`)}
               </small>
             )}
           </label>

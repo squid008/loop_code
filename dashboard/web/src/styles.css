@@ -32,7 +32,21 @@ code, .mono { font-family: var(--mono); }
 .logo { width: 12px; height: 44px; border-radius: 7px; box-shadow: 0 0 22px currentColor; }
 h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .sub { color: var(--mut); font-size: 12.5px; margin-top: 2px; }
-.ctrls { display: flex; align-items: center; gap: 10px; }
+/* ★★ 2026-09-16（用户："点并行后按钮都变两行了，这个不行"）：
+   根因 = `.ctrls > *` **默认可收缩**且没 `nowrap` ⇒ 空间不够时**逐个字符竖排** ✗
+   ⇒ ① 每个控件 `flex: 0 0 auto`（**不收缩**）② `white-space: nowrap`（**永不断行**）
+      ③ 整排 `flex-wrap: nowrap` + `overflow-x: auto`（窗口太窄就**横向滚动**，不再挤成两行）✓ */
+.ctrls { display: flex; align-items: center; gap: 8px; flex-wrap: nowrap; overflow-x: auto; }
+.ctrls > * { flex: 0 0 auto; }
+.ctrls .btn, .ctrls .seg, .ctrls .rounds, .ctrls .num, .ctrls .chk, .ctrls .res { white-space: nowrap; }
+/* 并行数 / 预算：紧凑的行内数字框（省地方，避免把这一排挤爆） */
+.ctrls .num { display: inline-flex; align-items: center; gap: 4px;
+              color: var(--mut); font-size: 12.5px; }
+.ctrls .num input {
+  width: 48px; height: 34px; padding: 0 6px; text-align: center;
+  background: var(--card2); color: var(--fg); border: 1px solid var(--bd);
+  border-radius: 8px; font-family: var(--mono); font-size: 13px;
+}
 .btn, .sel {
   background: var(--card2); color: var(--fg); border: 1px solid var(--bd);
   border-radius: 9px; padding: 8px 14px; cursor: pointer; font-size: 13px;
