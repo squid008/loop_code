@@ -13,6 +13,7 @@
   ③ 页面用到的 `api.mine*` 必须在 `api.ts` 里有定义（防拼错 endpoint）。
 """
 import io
+import os
 import re
 import sys
 
@@ -109,6 +110,33 @@ chk('表里同时有 **校正 t 与朴素 t**，且用 tAdj', '>t朴素<' in src
 chk('未生成时给可执行提示（不是空白）', '--stage=style+strip2' in src)
 chk('新增两个剥法（剥流通市值 / 剥总市值+限售）已接进图例',
     all(k in src for k in ('floatcap', 'caplimit')))
+
+print()
+print('【7】★ 调度模式 / 面板共享：UI 控件必须接到位（2026-09-16 用户之问「前端还没把并行切换加上」）')
+MINE = r'D:\loop_code\dashboard\api\app\mine.py'
+minepy = io.open(MINE, encoding='utf-8').read()
+chk('模式分段控件存在（轮转 / 并行）',
+    "setExecMode('parallel')" in src and "setExecMode('rotate')" in src)
+# ⚠ 断言里的字面量**别带引号** —— TSX 里是 `mine?.parallelRange`（不带引号），带引号就永远不匹配 ✗
+chk('并行数 / 每引擎预算 只在 parallel 时出现',
+    'parallelRange' in src and 'memPerEngine' in src and "execMode === 'parallel'" in src)
+chk('面板共享复选框存在（勾选 ⇒ panel_cache=use）', "panelCache ? 'use' : 'off'" in src)
+chk('doStart 把模式参数**真的**发给接口', 'api.mineStart(pools, rounds, {' in src)
+chk('api.mineStart 支持 opts 透传（含 execMode/panelCache）',
+    'opts?' in api and 'execMode?: string' in api and 'panelCache?: string' in api)
+chk('状态区显示**实际**在跑的模式（不是 UI 上选的那个）',
+    'mine.execMode === ' in src and "'execMode': _mode" in minepy,
+    '必须**以真实进程命令行为准** —— UI 选择 ≠ 实际运行 ✗')
+chk('mine.py：**非默认才追加开关**（默认命令行逐字不变）',
+    "if exec_mode != 'rotate':" in minepy and "if panel_cache != 'off':" in minepy)
+chk('mine.py：启动参数不可热改 ⇒ 409 拒绝（不静默 no-op）',
+    '不能热改' in minepy and 'e.code == 409' in open(r'D:\loop_code\tools\_test_mine_launch.py',
+                                                  encoding='utf-8').read())
+chk('mine.py：内存护栏**分档**（面板共享后按 GB_PER_ENGINE_SHARED 算）',
+    'GB_PER_ENGINE_SHARED' in minepy)
+chk('启动参数回归测试在册（假 Popen + 快照还原 ctl）',
+    os.path.isfile(r'D:\loop_code\tools\_test_mine_launch.py')
+    and '_control.json' in open(r'D:\loop_code\tools\_test_mine_launch.py', encoding='utf-8').read())
 
 print()
 if FAIL:

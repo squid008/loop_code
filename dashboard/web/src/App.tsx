@@ -38,6 +38,13 @@ export default function App() {
   // ★ 挖掘控制
   const [mine, setMine] = useState<MineStateDto | null>(null)
   const [rounds, setRounds] = useState(50)
+  // ★★★ 2026-09-16（用户之问「前端还没把并行切换加上是吧？」）：把 `run_tracks.py` **v1.4.0 就有**的
+  //   「调度模式 + 面板共享」暴露出来。★ **默认 = 现状**（轮转 + 面板缓存关）⇒ 不碰这些控件时，
+  //   发出的命令与改造前**逐字一致**（旧行为一行不改）✓
+  const [execMode, setExecMode] = useState<'rotate' | 'parallel'>('rotate')
+  const [maxParallel, setMaxParallel] = useState(3)
+  const [memPerEngine, setMemPerEngine] = useState(3)
+  const [panelCache, setPanelCache] = useState(false)          // 勾选 ⇒ --panel_cache=use
   const [mineBusy, setMineBusy] = useState(false)
   const [toast, setToast] = useState<{ kind: 'ok' | 'err' | 'info'; msg: string } | null>(null)
   // ★★★ 2026-09-16 修：**不用 `window.confirm`** ——
@@ -80,7 +87,10 @@ export default function App() {
   const doStart = useCallback(async (pools: string[]) => {
     setMineBusy(true)
     try {
-      const r = await api.mineStart(pools, rounds)
+      // ★ 调度模式/面板共享一起传（默认值 = 现状 ⇒ 与改造前等价）
+      const r = await api.mineStart(pools, rounds, {
+        execMode, maxParallel, memPerEngine, panelCache: panelCache ? 'use' : 'off',
+      })
       if (r.reused) {
         say('ok', `调度器已在运行（PID ${(r.schedulerPids ?? []).join(',')}），已更新设置：启用池 ${(r.enabled ?? []).join(',')}，${r.rounds} 轮（没有重复启动）`)
       } else {
@@ -92,7 +102,7 @@ export default function App() {
       say('err', `启动失败：${e instanceof Error ? e.message : String(e)}`)
       await loadAll(true)
     } finally { setMineBusy(false) }
-  }, [rounds, loadAll])
+  }, [rounds, loadAll, execMode, maxParallel, memPerEngine, panelCache])
 
   const doStop = useCallback(async (pool?: string) => {
     setMineBusy(true)
@@ -167,15 +177,21 @@ export default function App() {
             {mine?.curText && <em>{mine.curText}</em>}
             {mine?.roundText && <small>{mine.roundText}/{mine?.rounds ?? '?'}</small>}
           </span>
-          <span className="res" title={
-            `始终只有一个引擎在跑，约占 ${mine?.gbPerEngine ?? 9} GB。\n` +
-            `当前可用内存 ${mine?.freeGB ?? '?'} GB。`}>
+          <span className="res" title={mine?.memNote || ''}>
             <b className={mine && mine.freeGB !== null && mine.freeGB < 6 ? 'warn' : ''}>
               {mine?.freeGB !== null && mine?.freeGB !== undefined ? `${mine.freeGB} GB` : '—'}
             </b>
+            {/* ★ 当前**实际**在跑的模式（以进程命令行为准，不是 UI 上选的那个） */}
+            {mine?.running && (
+              <em className="mode">
+                {mine.execMode === 'parallel' ? `并行×${mine.maxParallel}` : '轮转'}
+                {mine.panelCache !== 'off' ? ' · 共享' : ''}
+              </em>
+            )}
             {/* 区分“正在轮转”与“只是配置了但调度器没跑” */}
             <small>{mine?.running
-              ? `${(mine?.enabled ?? []).length} 个池正在轮转`
+              ? `${(mine?.enabled ?? []).length} 个池正在${
+                   mine.execMode === 'parallel' ? '并行' : '轮转'}`
               : ((mine?.enabled ?? []).length
                 ? `${(mine?.enabled ?? []).length} 个池已配置，未运行`
                 : '未配置')}</small>
@@ -186,10 +202,58 @@ export default function App() {
                    value={rounds} disabled={mineBusy}
                    onChange={e => setRounds(Math.max(1, Math.min(200, Number(e.target.value) || 1)))} />
           </span>
+          {/* ★★★ 调度模式（2026-09-16）：轮转 / 并行。⚠ 都是**启动参数** ⇒ 跑起来后不能热改（要改先全部停止） */}
+          <span className="seg" title={'调度模式：\n· 轮转 = 单调度器依次跑各池，同一时刻只 1 个引擎（最省内存，旧行为）\n' +
+            '· 并行 = 同时最多 N 个引擎（跑完一个立刻补一个，快池不等慢池）\n' +
+            '★ 实测单引擎只吃 ≈1 个核（瓶颈是内存、不是 CPU）⇒ 并行要靠「面板共享」才放得下'}>
+            模式
+            <button className={`segbtn${execMode === 'rotate' ? ' on' : ''}`}
+                    disabled={mineBusy || !!mine?.running}
+                    title="轮转：同一时刻只 1 个引擎（内存 1 份）。这是以前的行为"
+                    onClick={() => setExecMode('rotate')}>轮转</button>
+            <button className={`segbtn${execMode === 'parallel' ? ' on' : ''}`}
+                    disabled={mineBusy || !!mine?.running}
+                    title="并行：同时最多 N 个引擎。⚠ 先勾上「面板共享」，否则每个引擎各建一份 4.42 GB 面板 ⇒ N 份 ✗"
+                    onClick={() => setExecMode('parallel')}>并行</button>
+          </span>
+          {execMode === 'parallel' && (
+            <>
+              <span className="rounds" title="并行上限：同时最多几个引擎（内存不够就排队等，宁慢不炸）">
+                并行数
+                <input type="number" min={mine?.parallelRange?.[0] ?? 1} max={mine?.parallelRange?.[1] ?? 6}
+                       value={maxParallel} disabled={mineBusy || !!mine?.running}
+                       onChange={e => setMaxParallel(Math.max(1, Math.min(6, Number(e.target.value) || 1)))} />
+              </span>
+              <span className="rounds" title="每个引擎的内存预算（GB）：可用内存不够就等 15 秒重试">
+                预算GB
+                <input type="number" min={0.5} max={32} step={0.5}
+                       value={memPerEngine} disabled={mineBusy || !!mine?.running}
+                       onChange={e => setMemPerEngine(Math.max(0.5, Math.min(32, Number(e.target.value) || 3)))} />
+              </span>
+            </>
+          )}
+          <label className="chk" title={'面板共享（--panel_cache=use）：把 4.42 GB 面板落成只读 memmap ⇒ ' +
+            '多进程共享同一批物理页。\n· 单进程：载入 28.6s → 1.8s、内存更低\n' +
+            '· 并行：N 个引擎只占 1 份面板内存（不开就是 N 份）\n' +
+            '⚠ 缓存过期/缺失时引擎会**直接报错**（绝不偷偷重建）；重建：python tools/build_panel_cache.py'}>
+            <input type="checkbox" checked={panelCache} disabled={mineBusy || !!mine?.running}
+                   onChange={e => setPanelCache(e.target.checked)} />
+            面板共享
+            {panelCache && mine?.panelCacheInfo && (
+              <small>
+                {!mine.panelCacheInfo.exists ? '⚠ 未构建'
+                  : (mine.panelCacheInfo.sourceOk === false ? '⚠ 已过期'
+                    : ` ✓ ${mine.panelCacheInfo.gb ?? '?'}GB`)}
+              </small>
+            )}
+          </label>
           <button className="btn start" disabled={mineBusy || !!mine?.running} onClick={() => doStart([])}
                   title={mine?.running
-                    ? '调度器已经在运行了。要改设置的话，先全部停止再重新启动'
-                    : '启动调度器，让所有池参与轮转。之前单独停止过的池也会重新加入。已经在跑的话就地更新设置，不会重复启动'}>
+                    ? `调度器已经在运行了（${mine.execMode === 'parallel' ? `并行×${mine.maxParallel}` : '轮转'}）。` +
+                      '要改**模式/内存设置**的话，先「全部停止」再启动（那些是启动参数、不能热改）'
+                    : `启动调度器（${execMode === 'parallel' ? `并行×${maxParallel}` : '轮转'}` +
+                      `${panelCache ? ' · 面板共享' : ''}），让所有池参与。` +
+                      '之前单独停止过的池也会重新加入；已经在跑的话就地更新设置，不会重复启动'}>
             {mine?.running ? '已在运行' : (mineBusy ? '处理中…' : '一键启动全部')}
           </button>
           <button className="btn stop" disabled={mineBusy || !mine?.running} onClick={() => doStop()}

@@ -44,6 +44,7 @@ import ctypes
 import io
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -58,7 +59,60 @@ CTL_FILE = os.path.join(LOGD, '_control.json')
 ROUNDS_MIN, ROUNDS_MAX = 1, 200
 DEFAULT_ROUNDS = 50
 GB_PER_ENGINE = 9.0          # 保守（实测 6~9 GB）
+GB_PER_ENGINE_SHARED = 3.0   # ★ 面板共享后的每引擎私有内存（面板不再各建一份；实测 3 并行 ≈ 8.1 GB）
 MIN_FREE_GB = 3.0
+
+# ★★★ 2026-09-16（用户之问「前端还没把并行切换加上是吧？」）：把 `run_tracks.py` **v1.4.0 就有的**
+#   调度模式开关与面板共享**暴露到看板**（能力全在 CLI，缺的只是这一层）。
+#   ★ 原则不变：**默认 = 现状**（`rotate` + `panel_cache=off`）⇒ 不加参数时命令行与改造前**逐字一致** ✓
+EXEC_MODES = ('rotate', 'parallel')
+PANEL_CACHES = ('off', 'use', 'build')
+PARALLEL_RANGE = (1, 6)
+MEM_DEFAULT = 3.0            # 每引擎内存预算 GB（仅 parallel 用）
+PANEL_CACHE_DIR = os.path.join(settings.PROJECT_ROOT, 'engine', '_panel_cache')
+
+
+def panel_cache_info():
+    """读面板缓存 manifest（**纯文件系统**，不需要引擎进程）⇒ 给看板显示"共享面板就绪没有"。
+
+    ⚠ 只校验**来源数据指纹**（size+mtime_ns）；**构造代码指纹**要引擎才算
+      ⇒ 这里不冒充"完全有效"，真校验由引擎在 `--panel_cache=use` 时自己做强校验（过期即报错）✓
+    """
+    p = os.path.join(PANEL_CACHE_DIR, 'manifest.json')
+    if not os.path.isfile(p):
+        return {'exists': False,
+                'hint': '未构建 ⇒ 跑 python tools/build_panel_cache.py（约 1~2 分钟，与池无关、所有池共用）'}
+    try:
+        with io.open(p, encoding='utf-8') as f:
+            man = json.load(f)
+        bad = []
+        for fn, fp in (man.get('src') or {}).items():
+            try:
+                st = os.stat(os.path.join(settings.PROJECT_ROOT, 'engine', fn))
+                cur = [int(st.st_size), int(st.st_mtime_ns)]
+            except OSError:
+                cur = None
+            if fp != cur:
+                bad.append(fn)
+        return {'exists': True, 'gb': man.get('total_gb'), 'builtAt': man.get('created'),
+                'fields': len(man.get('fields') or {}), 'sourceOk': not bad, 'staleSources': bad,
+                'codeSha': man.get('code_sha1'),
+                'hint': ('数据指纹已变（%s）⇒ 缓存**已过期**，要重建否则引擎会拒绝加载 ✗'
+                         % ', '.join(bad)) if bad else
+                        '数据指纹一致 ✓（构造代码指纹由引擎在启动时校验）'}
+    except Exception as e:
+        return {'exists': False, 'err': repr(e)}
+
+
+def _flag(cmd, name, cast=str, default=None):
+    """从命令行里取 `--name=value`（**以真实进程的命令行为准** —— 那才是"现在到底怎么跑的"）。"""
+    m = re.search(r'--%s=(\S+)' % re.escape(name), cmd or '')
+    if not m:
+        return default
+    try:
+        return cast(m.group(1))
+    except Exception:
+        return default
 
 # ★★★ 2026-09-16：起子进程**一律不弹黑窗**（用户要求「启动不要开 python 窗口，审查之类的都后台静默」）。
 #   ⚠ 为什么用 `CREATE_NO_WINDOW` 而**不是 `DETACHED_PROCESS`**（这个区别很关键）：
@@ -198,6 +252,27 @@ def state():
         phase = 'idle'                    # 调度器已死但文件没更新 ⇒ 兜底
     label = {'idle': '空闲', 'mine': '挖掘中', 'tail': '收尾审查中'}.get(phase, phase)
     cur = c.get('curPool')
+    # ---- ★★★ 调度模式 / 内存设置：**以真实进程命令行为准**（"现在到底怎么跑的"只有它有发言权）----
+    _cmd = ((sched[0].get('cmd') if sched else (engs[0].get('cmd') if engs else '')) or '')
+    _mode = _flag(_cmd, 'exec_mode', str, c.get('execMode') or 'rotate')
+    _mp = _flag(_cmd, 'max_parallel', int, c.get('maxParallel') or 3)
+    _mpe = _flag(_cmd, 'mem_per_engine', float, c.get('memPerEngine') or MEM_DEFAULT)
+    _pc = _flag(_cmd, 'panel_cache', str, c.get('panelCache') or 'off')
+    _pcinfo = panel_cache_info()
+    if free is None:
+        _mnote = ''
+    elif _mode == 'parallel':
+        _mnote = ('★ **并行模式**：同时最多 %d 个引擎（跑完一个立刻补一个，其余排队）· 面板共享=%s ⇒ %s'
+                  '；可用 %.1f GB ✓' % (
+                      _mp, _pc,
+                      ('4.6 GB 面板只占**一份物理页**，每进程私有 ≈ %.1f GB ✓' % _mpe)
+                      if _pc != 'off' else
+                      '⚠ 面板缓存**关着** ⇒ 每个引擎各建一份 4.42 GB 面板（N 份！）✗ 强烈建议开「面板共享」',
+                      free))
+    else:
+        _mnote = ('★ 单调度器 + **池轮转** ⇒ 同一时刻只有 1 个引擎（约 %.0f GB）%s；可用 %.1f GB ✓' % (
+            GB_PER_ENGINE,
+            '；面板共享=on ⇒ 载入 28.6s→1.8s、内存更低 ✓' if _pc != 'off' else '', free))
     return {
         'mode': 'scheduler',              # ★ 模式标识：单调度器 + 池轮转
         'phase': phase,
@@ -221,9 +296,13 @@ def state():
         'runningPools': [k for k in known if by_pool[k]['mining']],
         'freeGB': (round(free, 1) if free is not None else None),
         'gbPerEngine': GB_PER_ENGINE,
-        'memNote': ('★ 单调度器 + 池轮转 ⇒ **同一时刻只有 1 个引擎**（约 %.0f GB），'
-                    '不再"每池一份内存"✗；可用 %.1f GB ✓' % (GB_PER_ENGINE, free or 0))
-                   if free is not None else '',
+        # ★★★ 调度模式 / 内存设置（2026-09-16）：**以真实进程的命令行为准**（那才是"现在到底怎么跑的"）
+        'execMode': _mode, 'maxParallel': _mp, 'memPerEngine': _mpe, 'panelCache': _pc,
+        'panelCacheInfo': _pcinfo,
+        'execModes': list(EXEC_MODES),
+        'parallelRange': list(PARALLEL_RANGE),
+        'memDefault': MEM_DEFAULT,
+        'memNote': _mnote,
         'defaultRounds': DEFAULT_ROUNDS,
         'roundsRange': [ROUNDS_MIN, ROUNDS_MAX],
         'script': os.path.relpath(RUN_TRACKS, settings.PROJECT_ROOT),
@@ -234,8 +313,9 @@ def state():
 
 
 # ---------------------------------------------------------------- 启动
-def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True):
-    """启动（或调整）轮转调度器。**已在跑 ⇒ 只更新启用集合/轮数**，不重复起进程 ✓
+def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
+          exec_mode=None, max_parallel=None, mem_per_engine=None, panel_cache=None):
+    """启动（或调整）调度器。**已在跑 ⇒ 只更新启用集合/轮数**，不重复起进程 ✓
 
     :param reset_stopped: ★★★ 2026-09-16 新增（修用户报的"启动一个池，**其它池的剔除全被取消**"）：
         · `True`（默认，**"一键启动全部"用**）⇒ **清空 `stopped`** ✓
@@ -244,6 +324,13 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True):
           —— 否则"启动 500"会把用户刚停掉的 all/1000 **又拉回来** ✗✗
         ⚠ 原实现**无条件 `stopped=[]`** ⇒ 所以 `start_pool` 里"先 start() 再写 stopped"
           会被 start() 覆盖**一半**，且**清掉了其它池的剔除** ✗
+    :param exec_mode / max_parallel / mem_per_engine / panel_cache: ★★★ 2026-09-16 新增
+        —— 把 `run_tracks.py`（**v1.4.0 就有**）的「调度模式 + 面板共享」暴露到看板。
+        · 传 `None` ⇒ **沿用 `_control.json` 里上次的设置**（`start_pool()` 自动重启走这条 ⇒
+          不会把用户选的并行模式**悄悄退回轮转** ✗）；文件里也没有 ⇒ 历史默认 `rotate`/`off` ✓
+        · ⚠ **这四个都不能"热改"**（它们是**子进程启动参数**）⇒ 已在跑且与请求不同 ⇒ **409 拒绝**
+          并提示"先全部停止"（**绝不静默 no-op** —— 那会让用户以为切了模式其实没切 ✗）
+        · 内存护栏按模式算：parallel ⇒ `max_parallel × 每引擎预算`；面板缓存关着时**按整份面板抬价** ✓
     """
     rounds = int(rounds)
     if not (ROUNDS_MIN <= rounds <= ROUNDS_MAX):
@@ -257,10 +344,56 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True):
     if not os.path.exists(RUN_TRACKS):
         raise MineError('找不到 %s' % os.path.relpath(RUN_TRACKS, settings.PROJECT_ROOT), 500)
 
+    # ---- ★ 调度模式参数：校验 + 缺省继承（`None` ⇒ 沿用上次设置）----
+    c0 = ctl()
+    exec_mode = (exec_mode if exec_mode is not None else c0.get('execMode') or 'rotate')
+    panel_cache = (panel_cache if panel_cache is not None else c0.get('panelCache') or 'off')
+    exec_mode = str(exec_mode).strip().lower()
+    panel_cache = str(panel_cache).strip().lower()
+    max_parallel = int(max_parallel if max_parallel is not None else (c0.get('maxParallel') or 3))
+    mem_per_engine = float(mem_per_engine if mem_per_engine is not None
+                           else (c0.get('memPerEngine') or MEM_DEFAULT))
+    if exec_mode not in EXEC_MODES:
+        raise MineError('调度模式只能是 %s（收到 %s）' % (list(EXEC_MODES), exec_mode))
+    if panel_cache not in PANEL_CACHES:
+        raise MineError('面板缓存只能是 %s（收到 %s）' % (list(PANEL_CACHES), panel_cache))
+    if not (PARALLEL_RANGE[0] <= max_parallel <= PARALLEL_RANGE[1]):
+        raise MineError('并行上限要在 %d~%d 之间（收到 %s）' % (PARALLEL_RANGE[0], PARALLEL_RANGE[1],
+                                                          max_parallel))
+    if not (0.5 <= mem_per_engine <= 32.0):
+        raise MineError('每引擎预算要在 0.5~32 GB 之间（收到 %s）' % mem_per_engine)
+    _pcinfo = panel_cache_info()
+    if panel_cache == 'use' and (not _pcinfo.get('exists') or not _pcinfo.get('sourceOk')):
+        # ★ 提前拒绝：否则要等 N 个引擎各自启动后才报错（还白起一堆进程）✗
+        raise MineError('「面板共享」选了 use，但缓存不可用：%s\n  ⇒ 修复：python tools/build_panel_cache.py'
+                        % (_pcinfo.get('hint') or _pcinfo.get('err') or '未知原因'), 409)
+
     sched = scheduler()
     if sched:
-        # ★ 已在跑 ⇒ 只更新控制文件（启用集合、轮数、清 stopAll；stopped 视 reset_stopped 而定）
-        kw = dict(enabled=pool_list, stopAll=False, rounds=rounds, running=True)
+        # ★★ 已在跑：**启动参数不能热改** ⇒ 与真实命令行不一致就 409（不静默 no-op）✗
+        _cmd = ((sched[0].get('cmd') if sched else '') or '')
+        _cur = dict(execMode=_flag(_cmd, 'exec_mode', str, c0.get('execMode') or 'rotate'),
+                    maxParallel=_flag(_cmd, 'max_parallel', int, c0.get('maxParallel') or 3),
+                    memPerEngine=_flag(_cmd, 'mem_per_engine', float,
+                                       c0.get('memPerEngine') or MEM_DEFAULT),
+                    panelCache=_flag(_cmd, 'panel_cache', str, c0.get('panelCache') or 'off'))
+        _want = dict(execMode=exec_mode, maxParallel=max_parallel,
+                     memPerEngine=mem_per_engine, panelCache=panel_cache)
+
+        def _differs(k):
+            a, b = _want[k], _cur[k]
+            return abs(a - b) > 1e-9 if isinstance(b, float) else a != b
+        _d = [k for k in _want if _differs(k)]
+        if _d:
+            raise MineError(
+                '调度器已在运行（当前 %s）；而 %s 是**启动参数、不能热改** ✗\n'
+                '  ⇒ 想换：先点「全部停止」，再用新设置启动 ✓'
+                % (' '.join('%s=%s' % (k, _cur[k]) for k in _want),
+                   ' / '.join('%s=%s' % (k, _want[k]) for k in _d)), 409)
+        # 一致 ⇒ 只更新控制文件（启用集合、轮数、清 stopAll；stopped 视 reset_stopped 而定）✓
+        kw = dict(enabled=pool_list, stopAll=False, rounds=rounds, running=True,
+                  execMode=exec_mode, maxParallel=max_parallel,
+                  memPerEngine=mem_per_engine, panelCache=panel_cache)
         if reset_stopped:
             kw['stopped'] = []
         _write_ctl(**kw)
@@ -268,18 +401,37 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True):
                 'schedulerPids': [p['pid'] for p in sched],
                 'enabled': pool_list, 'rounds': rounds,
                 'resetStopped': reset_stopped,
+                'execMode': exec_mode, 'maxParallel': max_parallel,
+                'memPerEngine': mem_per_engine, 'panelCache': panel_cache,
                 'note': ('调度器已在运行（PID %s）⇒ 已就地更新：启用池=%s、轮数=%d%s（未重复起进程）'
                          % ([p['pid'] for p in sched], pool_list, rounds,
                             '、并清除「停止」标记' if reset_stopped else '、**保留**已有的「停止」标记'))}
 
+    # ---- 内存护栏（**按模式 + 面板共享**算）----
+    # ★ 面板共享开着时，4.42 GB 面板**只占一份物理页**，每进程私有只剩 L1 子面板+缓存 ≈ 3 GB
+    #   ⇒ 护栏必须分档，否则"面板共享"这个开关**永远解锁不了低内存启动**（白做）✗
     free = avail_gb()
-    if free is not None and free < GB_PER_ENGINE + MIN_FREE_GB:
-        raise MineError('内存不足：可用 %.1f GB，单引擎约需 %.0f GB（留 %.0f GB 余量）✗'
-                        % (free, GB_PER_ENGINE, MIN_FREE_GB), 409)
+    _eff1 = GB_PER_ENGINE if panel_cache == 'off' else GB_PER_ENGINE_SHARED
+    if exec_mode == 'parallel':
+        _eff = _eff1 if panel_cache == 'off' else max(mem_per_engine, GB_PER_ENGINE_SHARED)
+        _need = max_parallel * _eff + MIN_FREE_GB
+        _hint = ('（%s ⇒ 每引擎按 %.1f GB 算）' % (
+            '面板缓存**关着**、每个引擎各建一份 4.42 GB 面板' if panel_cache == 'off'
+            else '面板共享=on', _eff))
+    else:
+        _need = _eff1 + MIN_FREE_GB
+        _hint = ('（面板共享=on ⇒ 按 %.1f GB 算）' % GB_PER_ENGINE_SHARED
+                 if panel_cache != 'off' else '')
+    if free is not None and free < _need:
+        raise MineError('内存不足：可用 %.1f GB，本次需要约 %.1f GB%s ✗'
+                        % (free, _need, _hint), 409)
 
     os.makedirs(LOGD, exist_ok=True)
     kw = dict(running=True, enabled=pool_list, stopAll=False, rounds=rounds,
-              round=0, curPool=None, curGen=None, phase='mine', tailAt=None)
+              round=0, curPool=None, curGen=None, phase='mine', tailAt=None,
+              # ★ 记下本次启动参数（`start_pool()` 自动重启时**照抄**，不会退回轮转 ✗）
+              execMode=exec_mode, maxParallel=max_parallel,
+              memPerEngine=mem_per_engine, panelCache=panel_cache)
     if reset_stopped:
         kw['stopped'] = []
     _write_ctl(**kw)
@@ -288,6 +440,12 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True):
     flags = _NO_WIN
     args = [sys.executable, RUN_TRACKS, '--pools=%s' % ','.join(pool_list),
             '--rounds=%d' % rounds]
+    # ★★ 只在**非默认**时追加 ⇒ 默认命令与改造前**逐字一致**（旧行为一行不改 ✓）
+    if exec_mode != 'rotate':
+        args += ['--exec_mode=%s' % exec_mode, '--max_parallel=%d' % max_parallel,
+                 '--mem_per_engine=%.1f' % mem_per_engine]
+    if panel_cache != 'off':
+        args.append('--panel_cache=%s' % panel_cache)
     log = os.path.join(LOGD, '_ui_scheduler.log')
     proc = subprocess.Popen(args, cwd=settings.PROJECT_ROOT, env=env, stdout=open(log, 'ab'),
                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
@@ -297,10 +455,15 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True):
                                      'alive': _alive(proc.pid), 'cmd': ' '.join(args[1:]),
                                      'log': os.path.relpath(log, settings.PROJECT_ROOT)}],
             'enabled': pool_list, 'rounds': rounds, 'resetStopped': reset_stopped,
+            'execMode': exec_mode, 'maxParallel': max_parallel,
+            'memPerEngine': mem_per_engine, 'panelCache': panel_cache,
             'freeGB': (round(free, 1) if free is not None else None),
-            'note': ('已启动轮转调度器（PID %d）：启用池=%s、每池 %d 轮 ⇒ '
-                     '同一时刻只 1 个引擎（内存 1 份）✓ 每轮结束自动收尾 ✓'
-                     % (proc.pid, pool_list, rounds))}
+            'note': ('已启动%s（PID %d）：启用池=%s、每池 %d 轮 ⇒ %s 每轮结束自动收尾 ✓'
+                     % ('**并行**调度器' if exec_mode == 'parallel' else '轮转调度器',
+                        proc.pid, pool_list, rounds,
+                        ('**同时最多 %d 个引擎**（其余排队）· 面板共享=%s ✓ '
+                         % (max_parallel, panel_cache)) if exec_mode == 'parallel'
+                        else '同一时刻只 1 个引擎（内存 1 份）· 面板共享=%s ✓ ' % panel_cache))}
 
 
 # ---------------------------------------------------------------- 停止

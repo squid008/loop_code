@@ -238,6 +238,24 @@ export interface MineStateDto {
   roundsRange: [number, number]
   script: string
   note: string
+  // ★★★ 调度模式 / 面板共享（2026-09-16；**以真实进程命令行为准**）
+  execMode: string                 // rotate | parallel
+  maxParallel: number
+  memPerEngine: number
+  panelCache: string               // off | use | build
+  execModes: string[]
+  parallelRange: [number, number]
+  memDefault: number
+  panelCacheInfo: {
+    exists: boolean
+    gb?: number
+    builtAt?: string
+    fields?: number
+    sourceOk?: boolean
+    staleSources?: string[]
+    hint?: string
+    err?: string
+  }
 }
 
 export interface MineStartResp {
@@ -284,8 +302,11 @@ export const api = {
     get<{ found: boolean; columns: string[]; rows: Record<string, string>[] }>(`/pool-obs/${pool}?limit=${limit}`),
   // ★ 挖掘控制（单调度器 + 池轮转）
   mineState: () => get<MineStateDto>('/mine/state', 40000),
-  mineStart: (pools: string[], rounds: number) =>
-    post<MineStartResp>('/mine/start', { pools, rounds }),
+  // ★ 调度模式 / 面板共享（2026-09-16）：不传 ⇒ 沿用上次设置 ⇒ 再没有就是历史默认（rotate/off）✓
+  mineStart: (pools: string[], rounds: number,
+              opts?: { execMode?: string; maxParallel?: number; memPerEngine?: number;
+                       panelCache?: string }) =>
+    post<MineStartResp>('/mine/start', { pools, rounds, ...(opts ?? {}) }),
   mineStop: (pool?: string) =>
     post<MineStopResp>('/mine/stop', pool ? { scope: 'pool', pool } : { scope: 'all' }),
   mineStartPool: (pool: string) =>

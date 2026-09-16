@@ -278,6 +278,18 @@ tr.outbank .fcode { color: var(--mut); }
 .dt-note b { color: var(--fg); }
 .sel-h .det { margin-left: auto; }
 
+/* ★ 调度模式分段控件（轮转 / 并行）+ 当前实际模式标记（2026-09-16） */
+.seg { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--mut); }
+.seg .segbtn {
+  font: inherit; font-size: 12px; padding: 3px 9px; cursor: pointer;
+  background: var(--card2); color: var(--mut); border: 1px solid var(--bd); border-radius: 999px;
+}
+.seg .segbtn:hover:not(:disabled) { color: var(--fg); border-color: #3c4a72; }
+.seg .segbtn.on { background: #23305a; color: #dfe7ff; border-color: #3d4d7d; }
+.seg .segbtn:disabled { opacity: .5; cursor: not-allowed; }
+.res .mode { font-style: normal; font-size: 11.5px; color: #8fb2ff; margin-left: 4px; }
+.chk small { margin-left: 4px; }
+
 /* ---------------- 详情页曲线（手写 SVG，零依赖） ---------------- */
 .chwrap { margin-top: 6px; }
 .ch-t { margin: 14px 0 4px; font-size: 12.5px; color: var(--mut); }

@@ -15,6 +15,51 @@
 
 ---
 
+## [1.9.0] — 2026-09-16
+
+> 主题：**看板上终于能切换到"并行 + 面板共享"了**（补上"最后一公里"）
+
+### 用户之问（原话）
+「对了，咱们现在前端还没把并行切换加上是吧？还不能共享缓存并行挖是吧？」
+
+### 先回答"现在的真实状态"（**查证过，不是凭记忆**）
+| 层 | 状态 |
+|---|---|
+| 面板只读共享（`engine/panel_cache.py` + `tools/build_panel_cache.py`） | ✅ **v1.4.0 就有**；缓存当前**有效**：62 字段 / **4.56 GB** / 构建于 2026-09-16 14:06 |
+| 有界并行（独立模块 `tools/parallel_runner.py` + `run_tracks --exec_mode=parallel`） | ✅ **v1.4.0 就有**（含内存护栏、队列化、控制面 `stopAll/enabled/stopped` 全对齐） |
+| 回归测试（`_test_panel_cache.py` / `_test_parallel_runner.py`） | ✅ 已在全量回归里（含"真并行"与"state/journal SHA 未变"） |
+| **从看板点"一键启动"** | ❌ **只传 `--pools/--rounds`** ⇒ 永远 rotate、且**不带面板共享** ✗ |
+| **前端 UI** | ❌ **没有**模式/并行数/面板共享控件 ✗ |
+
+⇒ 所以你的判断**是对的**：**能共享缓存并行挖（命令行层面），但从看板上还不能**。
+
+### 本次补的（`mine.py` + `main.py` + `App.tsx` + `api.ts` + `styles.css`）
+| 位置 | 改动 |
+|---|---|
+| 顶栏 | ★ 新增 **模式分段控件「轮转 / 并行」** + （并行时）**并行数**、**每引擎预算 GB** + **「面板共享」复选框**（带缓存有效期提示） |
+| `doStart` | 把 `execMode/maxParallel/memPerEngine/panelCache` 一起发给 `/api/mine/start` |
+| `mine.start()` | 新增四个**可选**参数：`None` ⇒ **沿用上次设置**（`start_pool()` 自动重启时不会把并行**悄悄退回轮转** ✗）；非法取值**直接报错** |
+| `mine.state()` | 新增 `execMode/maxParallel/memPerEngine/panelCache` —— ★ **以真实进程命令行为准**（"UI 上选的" ≠ "实际在跑的"）；另给 `panelCacheInfo`（纯文件系统读 manifest：字段数/GB/构建时间/数据指纹是否过期） |
+| 状态区 | 运行中显示「**并行×3 · 共享**」这类**实际**模式 |
+
+### ★★ 三条设计纪律（本轮全部落成断言）
+1. **默认行为一行不改**：不传参数时命令行 = `[python, run_tracks.py, --pools=…, --rounds=…]` **逐字一致**
+   ⇒ 只在**非默认**时才追加 `--exec_mode/--max_parallel/--mem_per_engine/--panel_cache` ✓
+2. **启动参数不能热改**：已在跑且与请求不同 ⇒ **409 拒绝 + 提示"先全部停止"**
+   （**绝不静默 no-op** —— 那会让用户以为切了模式其实没切 ✗）
+3. **内存护栏分模式分档**：`rotate` ⇒ 9+3 GB；`parallel` ⇒ `max_parallel × 每引擎预算 + 3`；
+   ★ **面板共享后每引擎只按 3 GB 算**（`GB_PER_ENGINE_SHARED`）⇒ 实测：**同样 8 GB 可用，
+   关面板时轮转都要拒绝，开面板共享就能直接跑** ✓（这才说明"面板共享"不是摆设）
+
+### 验证
+★ 新增 `tools/_test_mine_launch.py`（**假 `Popen` 抓命令行、不起真进程**；`_control.json` **快照→还原→逐字节校验**）：
+**6 节全过** —— ① 默认命令行逐字一致 ② 并行+共享参数真的透传 ③ 只共享不并行 ④ 非法取值 4 例全拒
+⑤ 热改模式 409 拒绝 / 参数一致则就地更新 ⑥ 内存护栏三档（含"共享后放行"）✓
+`tools/_test_frontend_wiring.py` **新增【7】10 条断言**全过 · `npx tsc --noEmit` **0 错** ·
+API 实测 `/api/mine/state` 返回 `execMode/maxParallel/memPerEngine/panelCache/panelCacheInfo` ✓
+
+---
+
 ## [1.8.1] — 2026-09-16
 
 > 主题：修 `--only-new` 的**完整性检查**（验收时抓到漏算 4 个）+ 全库风格画像结论

@@ -126,6 +126,12 @@ def flat():
 class StartBody(BaseModel):
     pools: list[str] = []
     rounds: int = 50
+    # ★★★ 2026-09-16：把「调度模式 + 面板共享」暴露到看板（能力早在 `run_tracks.py` v1.4.0 里）
+    #   ⚠ 全部**可选**；都不传 ⇒ 沿用上次设置；再没有 ⇒ 历史默认（rotate / off）⇒ **默认行为一行不改** ✓
+    execMode: str | None = None        # rotate | parallel
+    maxParallel: int | None = None     # 仅 parallel
+    memPerEngine: float | None = None  # 仅 parallel（GB）
+    panelCache: str | None = None      # off | use | build（rotate 也建议 use：载入 28.6s→1.8s）
 
 
 class StopBody(BaseModel):
@@ -138,10 +144,12 @@ def mine_state():
     return mine.state()
 
 
-@app.post('/api/mine/start', summary='★ 启动**轮转调度器**（已在跑 ⇒ 就地更新启用集合与轮数）')
+@app.post('/api/mine/start', summary='★ 启动调度器（轮转/并行；已在跑 ⇒ 就地更新启用集合与轮数）')
 def mine_start(body: StartBody):
     try:
-        return mine.start(body.pools, body.rounds)
+        return mine.start(body.pools, body.rounds, exec_mode=body.execMode,
+                          max_parallel=body.maxParallel, mem_per_engine=body.memPerEngine,
+                          panel_cache=body.panelCache)
     except mine.MineError as e:
         raise HTTPException(e.code, e.msg)
 
