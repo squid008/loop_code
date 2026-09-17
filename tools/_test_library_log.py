@@ -148,6 +148,24 @@ def main():
         'onClick={() => onDetail(e)}>详情</button>' in src_tsx and 'entrySel &&' in src_tsx
         and '<FactorDetail f={{ code: entrySel.code' in src_tsx)
     chk('默认取**最近 50 条**（用户要求的条数 ✓）', 'api.libraryEntries(50)' in src_tsx)
+    # ★★ 2026-09-17 用户追改三条：「年份也加上」「详情按钮不要贴着滚动条」「公式短一点没关系」
+    chk('★ 时间**带年份**（`slice(0, 16)` = `2026-09-17 02:24`；不能再截成 `MM-DD HH:mm` ✗）',
+        'e.ts.slice(0, 16)' in src_tsx and 'e.ts.slice(5, 16)' not in src_tsx,
+        '用户原话："入库日志把年份也加上吧"')
+    m3 = re.search(r'\.loglist \{([^}]*)\}', css)
+    chk('★ 滚动条**不贴内容**：`.loglist` 有 `padding-right`（用户："详情按钮不要贴着滚动条"）',
+        bool(m3) and 'padding-right' in m3.group(1),
+        '不预留的话按钮会紧贴滚动条，看着挤 ✗')
+    chk('★ `scrollbar-gutter: stable`（滚动条出现/消失时内容不左右跳 ✓）',
+        bool(m3) and 'scrollbar-gutter: stable' in m3.group(1))
+    # ⚠ 断言里**别把 CSS 的 `.` 前缀**带进 TSX 检查（TSX 里是 `className="logr1"`）✗ —— 实测踩到
+    chk('行改为**两行式**（时间/池/编号/详情 一行 · 公式另一行整行宽 ⇒ 公式不再被挤没 ✓）',
+        'className="logr1"' in src_tsx
+        and re.search(r'\.logrow \{[^}]*flex-direction: column', css) is not None
+        and re.search(r'\.logr1 \{', css) is not None,
+        '一行里塞 年份+池+编号+按钮 ⇒ 公式只剩十几像素（用户允诺"公式可以短一点"= 让位 ✓）')
+    chk('详情按钮**靠右**（`margin-left: auto`）且公式那行**跨整行**',
+        re.search(r'\.logrow \.btn\.sm \{[^}]*margin-left: auto', css) is not None)
 
     print('\n' + '=' * 96)
     print('通过 {}/{}'.format(OK[0] - OK[1], OK[0]) + ('' if OK[1] else '  ✓ 全部通过'))

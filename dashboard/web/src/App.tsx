@@ -546,17 +546,23 @@ function EntryLogCard({ d, onDetail }:
       </div>
       <div className="loglist">
         {rows.map((e, i) => (
+          // ★★ 2026-09-17 用户要求「年份也加上」「详情按钮不要贴着滚动条」「公式短一点没关系」
+          //   ⇒ 改成**两行式**：第一行 = 时间（含年份）· 池 · 编号 ·（右）详情；第二行 = 一句话/公式
+          //     为什么必须两行：`2026-09-17 02:24` 就要 ~106px，一行里再塞池/编号/按钮 ⇒
+          //     公式只剩十几个像素，等于没显示 ✗（用户允诺"公式可以短一点"= 它该让位 ✓）
           <div className="logrow" key={`${e.pool}-${e.code ?? 'x'}-${e.ts ?? i}-${i}`}>
-            <span className="lt"
-                  title={e.ts ? `${e.ts}（${e.tsNote || e.tsSource || ''}）` : (e.tsNote || '时间未知')}>
-              {e.ts ? e.ts.slice(5, 16) : '时间未知'}
-            </span>
-            <span className="lp">{e.pool === 'all' ? '全A' : e.pool}</span>
-            <span className="lc">{e.code ?? '无编号'}</span>
-            <span className="ls" title={e.expr || e.summary || ''}>
+            <div className="logr1">
+              <span className="lt"
+                    title={e.ts ? `${e.ts}（${e.tsNote || e.tsSource || ''}）` : (e.tsNote || '时间未知')}>
+                {e.ts ? e.ts.slice(0, 16) : '时间未知'}
+              </span>
+              <span className="lp">{e.pool === 'all' ? '全A' : e.pool}</span>
+              <span className="lc">{e.code ?? '无编号'}</span>
+              <button className="btn sm" onClick={() => onDetail(e)}>详情</button>
+            </div>
+            <div className="ls" title={e.expr || e.summary || ''}>
               {e.summary || e.oneLiner || e.expr || '—'}
-            </span>
-            <button className="btn sm" onClick={() => onDetail(e)}>详情</button>
+            </div>
           </div>
         ))}
         {!rows.length && <div className="empty">还没有入库记录（跑一次挖掘后就有了）</div>}
