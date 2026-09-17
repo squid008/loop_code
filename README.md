@@ -1,6 +1,7 @@
 # loop_code — Loop 式因子自动挖掘引擎
 
-> **当前版本 `v1.17.3`**（2026-09-17）— ★★ **相位卡收窄**（撤掉"定宽 218px"那段空白：用户"空闲跟 1/50 之间隔太宽了" ⇒ 改成**贴合内容** + **轮次槽定宽 52px**（`9999/9999` 也放得下）⇒ 空闲时约 **120px**（原 218px），且数字变化**卡宽不变** ✓）· ★★ 顺带修掉两个**回归**（端到端测试当场抓到）：① **`--pools` 被无视**（v1.12.0 为支持运行期加池把候选池改成"以 ctl 为准"⇒ 命令行直跑会继承上次残留的 `stopped`，实测 `--pools=300,500` 只起一个池 ✗）⇒ 新增 **`--from_ctl=1`**：看板启动必带（尊重 ctl 里的用户意图 ✓）、命令行直跑不带（**命令行即事实**：播种 enabled、清 stopped ✓）；② 修完后该测试 **两个池均退出码=0** ⇒ 同时是 **v1.17.2「引擎秒崩」已修好的端到端证据** ✓
+> **当前版本 `v1.18.0`**（2026-09-17）— ★★★ **换机器（家里 pull）也能重建库/因子值/曲线**：清单（`docs/factor_library*.md`：编号·代数·家族·一句话·公式）**早就在 git 里** ✓，但重建工具全都要 `loop_state*.pkl`（**被 .gitignore 忽略**）⇒ 家里**一个因子都建不出来** ✗ ⇒ 新增 **`docs/factor_registry.json`**（机器可读 + **node 结构**，`tools/export_factor_registry.py` 生成、收尾管线每轮自动重建）⇒ `build_facs.load_bank_nodes` 改为 **JSON ∪ pkl**（家里全靠 JSON ✓）· ★ 存结构而非文本的原因：文本重解析会被 `parse_expr` 的尺寸上限**静默判 None**（F01 中过招）· ★ 新守门 `tools/_test_registry.py` 第一次运行就抓到**真漂移**：1000 池 `bank` 里有个已入库因子**md 从没记过** ⇒ 已按"仅 bank"收录并吼出来 ✓ · README 增「换机器四步重建」+ ⚠"继续挖仍需 pkl" · CI：**暂不加**（理由见 change_log，避免为一个锦上添花引入长期维护面）
+> 上一版 `v1.17.3` — ★★ **相位卡收窄**（撤掉"定宽 218px"那段空白：用户"空闲跟 1/50 之间隔太宽了" ⇒ 改成**贴合内容** + **轮次槽定宽 52px**（`9999/9999` 也放得下）⇒ 空闲时约 **120px**（原 218px），且数字变化**卡宽不变** ✓）· ★★ 顺带修掉两个**回归**（端到端测试当场抓到）：① **`--pools` 被无视**（v1.12.0 为支持运行期加池把候选池改成"以 ctl 为准"⇒ 命令行直跑会继承上次残留的 `stopped`，实测 `--pools=300,500` 只起一个池 ✗）⇒ 新增 **`--from_ctl=1`**：看板启动必带（尊重 ctl 里的用户意图 ✓）、命令行直跑不带（**命令行即事实**：播种 enabled、清 stopped ✓）；② 修完后该测试 **两个池均退出码=0** ⇒ 同时是 **v1.17.2「引擎秒崩」已修好的端到端证据** ✓
 > 上一版 `v1.17.2` — ★★★ **「池子又变轮转了？」真相：500/1000/50 的引擎每代秒崩** —— 不是轮转（调度器确实 `--exec_mode=parallel --auto_parallel=1`、日志"上限 3(自动)"、真同时跑 2 个引擎）；真因是**参数棘轮把 `None` 当值写回**：`_get_param` 取不到返回 `None` 表示"该键不存在"，回退时 `_set_param(p, None)` 却把 `None` 塞进 `cfg['leaf_w']` ⇒ 下一代 `_mix_weights` 里 `None * float` ⇒ **TypeError 秒崩**（`pool_500_gen20` 退出码=1、0.2min）⇒ 那三个池永远等不到绿点 ⇒ 看着像"排队/轮转" ✗ · 修法：`None` ⇒ **删键** + 三层加固（`_wt` 抽样兜底 / `_clean_cfg` 洗旧 state / 0 权重仍保留）+ **崩溃可见**（写进 `crashes`、卡片红字"启动即崩 ×N"）+ **本轮就重试** + 收割后**立刻重写 `active`** 且后端再按活进程过滤 + ★ `write_ctl` 加**跨进程文件锁**（read-modify-write 会丢更新，实录 `active` 被后端旧快照吞掉）· 验证：探针真复现（旧写法确实抛、修复后真跑通）+ 回归 42/42、锁真跑（等待/超时兜底/陈旧锁清理）+ 全量 **23/23** ✓
 > 上一版 `v1.17.1` — ★★ **去极值/标准化口径澄清**：我们**全程秩基**（算子表的"标准化"= `cs_rank`/`cs_scale`=秩×2−1/`cs_demean` · 引擎 IC = rank-rank Pearson · 组合腿 Top10% **等权** · 风格与行业暴露 = 截面 Spearman · 剥市值+行业 = 秩空间 FWL）⇒ 任何**单调变换**（MAD/log/z-score）**不改变排序** ⇒ 做与不做**逐位相同**，所以不做是对的；且合成体因子**判不出类型** ⇒ 按类型分支不可行 ✓ · ⚠ 两处**值空间**例外：① 看板 `IC（Pearson）` 的**收益侧是原始值**（会被涨跌停/重组肥尾拉偏）⇒ **以 RankIC 为准**（已加图下说明）② 将来做**值加权/线性合成/机器学习**时必须先 MAD/winsorize（**只在一处统一做**）· 顺手给 `cs_zscore`（值空间、全仓无引用）加了反面示例注释
 > 上一版 `v1.17.0` — ★★ **相位卡不再被误读成"只跑一个池"**：并行时可见部分只显示 `挖掘中 1/50`（**不再显示某一个池名** —— 那只是最后启动的那个），逐池明细进鼠标提示（`正在跑：300 · gen 54` 每池一行 + `第 1 轮，共 50 轮`，后端新增透传控制文件 `active`）· 内存卡文案简化为 `并行 · 共享`（并行数/自动移到配置页）⇒ 定宽 292→**236px** · ⚠ 诚实性：提示以**活进程表**为权威（控制文件的 `active` 会残留已停掉的池）
@@ -126,6 +127,38 @@ Get-Content D:\loop_code\docs\loop_journal.md -Tail 30      # B角每代诊断 +
 cd D:\loop_code\strategies\all04
 D:\miniconda3\envs\rqdata\python.exe all04.py
 ```
+
+## 换机器：pull 之后怎么把「库 / facs / 曲线」重建出来（2026-09-17）
+
+`git clone` 之后，**清单类文件都在仓库里** ✓：
+`docs/factor_library*.md`（人读：编号 · 入库代数 · 家族 · 一句话 · 完整公式 · sign · 池标签 · 费后指标）、
+**`docs/factor_registry.json`**（**机器可读**：同一批字段 + **node 结构**，`tools/export_factor_registry.py` 生成，
+收尾管线每轮自动重建）。
+但 `.gitignore` 忽略 `*.pkl` / `*.h5` ⇒ **数据与因子值必须自己重建**：
+
+```bash
+# ① 数据面板（按需：缺哪个字段就补哪个；各脚本头部注释写了数据源要求）
+python engine/build_panel.py          # → engine/panel.h5
+python engine/build_barra.py          # → engine/barra.h5（11 个 Barra 风格因子）
+python engine/build_fa_pit.py         # → engine/fa_pit.h5（财报，PIT）
+python engine/build_universe.py       # → engine/universe.h5（股票池/可交易）
+python tools/build_industry.py        # → engine/industry.h5（申万一级：看板风格/行业暴露要用）
+# ② 因子值 → facs/
+python tools/build_facs.py --only-new
+# ③ 指标表 → docs/factor_metrics.csv
+python tools/factor_metrics.py --only-new
+# ④ 曲线 → docs/factor_curves/*.json（看板详情页的图；两段跑，别一次等太久）
+python tools/factor_curves.py --only-new --stage=core
+python tools/factor_curves.py --only-new --stage=strip
+```
+
+★ 关键：②③④ **都优先读 `docs/factor_registry.json`**（不必有 `engine/loop_state*.pkl`）⇒
+**全部已入库因子的值 / 指标 / 曲线都能重建** ✓（`tools/_test_registry.py` 专门守这条：
+"本机 pkl 里的每个入库因子 ⊆ JSON" ⇒ 换机器不会**悄悄少算** ✗）
+
+⚠ 但**"继续往外挖"仍然需要 pkl**：`engine/loop_state{_pool}.pkl` 里还存着**挖掘的记忆**
+（种子 / 失败模式库 / FSA 冻结骨架 / 收益流库 / B角策略 cfg）⇒ 想接着挖，请从原机器拷这些 pkl；
+否则只能**从零重挖** ✓
 
 ## 说明
 - 引擎所有文件读写都相对 `engine/` 定位，`loop_code` 可整体搬移；唯一外部依赖是 `E:\rq` 数据盘。

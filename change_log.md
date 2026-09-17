@@ -15,6 +15,60 @@
 
 ---
 
+## [1.18.0] — 2026-09-17
+
+> 主题：**换机器（家里 pull）也能重建库/因子值/曲线** —— 因子登记表 `docs/factor_registry.json`
+
+### 用户之问
+「是不是搞个 json 文件，把各池已入库/丢弃因子的 **编号 · 入库代数 · 家族 · 一句话 · 具体公式** 记在一个文件里，
+我**家里 pull**（库是空的）也能自动识别、把因子重跑一遍生成 facs 和各种曲线图？还是不用加？」
+
+### 核查（先钉事实）
+| 问题 | 事实 |
+|---|---|
+| 清单缺不缺？ | **不缺** ✓ 各池 `docs/factor_library{_pool}.md` 的「因子总览」表就是 `编号\|入库代数\|家族\|一句话\|状态`，每因子块还有**完整公式** + `sign` + 池标签 + 费后指标 ⇒ **早在 git 里** ✓ |
+| "pull 后跑一遍就自动有"？ | **不成立** ✗ —— `build_facs` / `factor_metrics` / `factor_curves` 全都要 **`engine/loop_state*.pkl` 里的 `bank`**（入库 Node 的**权威口径**），而 `.gitignore` 忽略 `*.pkl` ⇒ 家里**一个因子都重建不出来** ✗✗ |
+| 结论 | ⇒ 要补的**不是"又一份清单"**，而是**这一环**：把入库 Node 导出成 git 里的小 JSON ✓ |
+
+### 改动
+| # | 改动 | 说明 |
+|---|---|---|
+| ① | ★ 新增 **`tools/export_factor_registry.py`** ⇒ `docs/factor_registry.json`（约 75 KB，**进 git**） | 每条含 `pool/no/gen/family/oneLiner/status/expr/sign/poolTag/指标` + **`node`（结构）** ✓ |
+| ② | **存结构、不只存文本** | 文本重解析走 `parse_expr` 会被 `LLM_MAX_SIZE` **静默判 None**（全A F01 就中过招 ✗）⇒ 结构可**精确重建** ✓ |
+| ③ | `loop_engine` 新增 `node_to_dict / node_from_dict`（**单一事实源**） | 导出器 / `build_facs` / 测试共用，免得各写一份将来漂移 ✗ |
+| ④ | `parse_expr(text, max_size=None)` | **默认行为一行不改**；只为"重建**已入库**公式"这类可信来源放开尺寸上限 ✓ |
+| ⑤ | ★★ `build_facs.load_bank_nodes` ⇒ **JSON ∪ pkl** | 家里（无 pkl）全靠 JSON ✓；本机取**并集**（JSON 可能比 pkl 旧 ⇒ 新因子仍从 pkl 拿 ✓） |
+| ⑥ | 收尾管线 `do_global_tail` **⓪ 步**先重建登记表 | **必须排在 `build_facs` 之前**（它现在会读 JSON）⇒ 永远用的是新表 ✓ |
+| ⑦ | README 增「换机器怎么重建」一节 | 四步命令（`build_panel/barra/fa_pit/universe/industry` → `build_facs` → `factor_metrics` → `factor_curves`）+ ⚠ "**继续挖**仍需 pkl"✓ |
+
+### ★ 顺带抓到一个**真漂移**（新守门第一次运行就报出来）
+`tools/_test_registry.py` 的"等价性"检查发现：**池 1000 的 `state.bank` 里有一个已入库因子，
+库文档 md 里从没记过** ✗（`ts_mean150(corr100(ts_mean5(div(mf_m_bqty, hl_ratio)), ts_mean60(ts_mean5(turn_ratio))))`）
+⇒ 若清单只信 md，"家里重建"就会**悄悄少算**它 ✗✗
+⇒ 导出器现在**必须**把这种"**仅 bank**"条目也收进来（编号/家族/一句话 如实留空 ✓，并**吼出来**：
+md 头部写明"引擎入库时自动追加"，这次没追加 ⇒ 值得查 ✗）
+
+### 守门 `tools/_test_registry.py`（进全量回归）
+1. **清单完整**：JSON ⊇ 各池 md 总览表的每个编号（60 ⊇ 60 ✓）
+2. **能精确重建**：每条 `node_from_dict(node)` 的 `str()` **逐字等于** `expr`（60/60 ✓）
+3. ★★ **等价性**：本机 pkl 里**每个**入库因子都在 JSON 里 ⇒ 证明"**没有 pkl 也能重建本机全部**" ✓
+4. **同步**：与当前 md/pkl 一致（忘重导出会当场红；收尾管线每轮自动重导 ✓）
+5. `mdDrift`（md 漏记）**只吼不判失败**——避免用**人工精炼**的活阻塞与它无关的工作 ✓
+
+### 关于 CI（用户第二问）—— 结论：**暂不加**，理由记录在案
+· 现状：**没有 `.github/`**；remote = `github.com/squid008/loop_code.git`（技术上能上 Actions）
+· 但**增量价值有限**：本机已有 `ai_test/_run_all_tests.py`（**24/24 一条命令**）✓
+· 上 CI 的**真实成本/坑**（不是"写个 yaml"就完）：① 多处**硬编码 `D:\loop_code`**
+  （`ai_test/_run_all_tests.py`、部分守门）⇒ Linux runner 直接红 ✗ ② 依赖 numpy/pandas/pytables
+  ③ 重型测试（要 `panel.h5` 1.2 GB）必须 `--quick` 跳过 ④ 前端要 `npm ci` + `tsc`（需先有 lock 文件）
+· ⇒ **建议**：真要上就上"**瘦身版**"（纯静态/纯函数守门 + `tsc --noEmit`，不碰数据），
+  先修硬编码路径；等确实需要"提交前自动挡一道"时再做 ✓（本次不做，避免为一个"锦上添花"引入长期维护面 ✗）
+
+### 验证
+`tsc` 0 错 · 全量回归 **24/24**（新增登记表守门）· 导出器自带**负向自检**（结构往返恒等，含 40 层深树）✓
+
+---
+
 ## [1.17.3] — 2026-09-17
 
 > 主题：**相位卡收窄**（撤掉"定宽 218px"带来的那段空白 —— 用户："空闲跟 1/50 之间隔太宽了"）

@@ -557,6 +557,35 @@ class Node(object):
         return 1 + sum(a.size() for a in self.args if isinstance(a, Node))
 
 
+def _jscalar(v):
+    """Node 的非 Node 参数 ⇒ **JSON 安全标量**（numpy 标量/自定义类一律降级，别让 `json.dump` 炸）✓"""
+    if v is None or isinstance(v, (bool, int, str)):
+        return v
+    try:
+        return float(v)
+    except Exception:
+        return str(v)
+
+
+def node_to_dict(nd):
+    """`Node` ⇒ **纯 JSON 树**（`Node.__slots__ = ('op','args')`）。
+
+    ★ 2026-09-17（用户之问："家里 pull 库是空的，怎么自动识别并重跑出 facs/曲线？"）：
+      `state.pkl` **不进 git** ⇒ 换机器就没有"入库 Node"这个权威口径 ✗
+      ⇒ 把它导出成**结构**（而不是只存公式文本）：
+        文本重解析走 `parse_expr`，会被 `LLM_MAX_SIZE` 尺寸上限**静默判 None**（全A F01 就中过招 ✗）；
+        结构则**精确重建**、不受任何生成侧护栏影响 ✓
+    """
+    return {'op': str(nd.op), 'args': [node_to_dict(a) if isinstance(a, Node) else _jscalar(a)
+                                       for a in (nd.args or [])]}
+
+
+def node_from_dict(d):
+    """JSON 树 ⇒ `Node`（**精确重建**；与 `node_to_dict` 往返恒等 ✓ 见 `tools/_test_registry.py`）"""
+    return Node(d['op'], [node_from_dict(a) if isinstance(a, dict) else a
+                          for a in (d.get('args') or [])])
+
+
 def norm_op(op):
     """算子族归一化: ts_mean20 -> ts_mean / corr60 -> corr (剥窗口数字, 保留算子族)"""
     for p in ('ts_mean', 'ts_std', 'ts_sum', 'ts_max', 'ts_min',
@@ -2873,10 +2902,18 @@ def _parse_sexp(toks, i):
     return Node(name, []), i
 
 
-def parse_expr(text):
+def parse_expr(text, max_size=None):
     """LLM 表达式文本 -> Node(与 Node.__str__ 前缀式 op(a, b) 严格对齐)。
-    校验: 叶子名∈LEAVES / 函数名∈UNARY∪BINARY / 参数个数匹配 / size≤LLM_MAX_SIZE;
-    任一不合规返回 None, 由调用方静默丢弃(不修复不猜测)。"""
+    校验: 叶子名∈LEAVES / 函数名∈UNARY∪BINARY / 参数个数匹配 / size≤上限;
+    任一不合规返回 None, 由调用方静默丢弃(不修复不猜测)。
+
+    :param max_size: ★ 2026-09-17 新增（**默认 `None` = 沿用 `LLM_MAX_SIZE`，行为一行不改**）——
+      只为"**重建已经入库的因子**"这类**可信来源**放开上限：库里的公式是**已经过全部门槛**的，
+      尺寸上限（本来是防 LLM 生成超大式子的护栏）对它没有意义，却会让**合法公式静默返回 None** ✗
+      实测：全A `F01`（5 层嵌套）就因此解析不出来，下游报的是"'NoneType' has no attribute 'key'"
+      （报错点离病根很远 —— 见 `tools/build_facs.load_bank_nodes` 的注释）⇒
+      现在 `tools/export_factor_registry.py` 会用 `max_size=10**9` 重建这些历史条目 ✓
+    """
     toks = tokenize_expr(text)
     if not toks:
         return None
@@ -2893,7 +2930,8 @@ def parse_expr(text):
                 return None
         elif x.op not in BINARY:          # len(x.args)==2
             return None
-    if nd.size() > LLM_MAX_SIZE:
+    _cap = LLM_MAX_SIZE if max_size is None else int(max_size)
+    if nd.size() > _cap:
         return None
     return nd
 

@@ -292,6 +292,20 @@ def do_global_tail(tag=''):
     log('[收尾] ★ {}（facs 落地 → 跨池审查 → 精选池）'.format(tag or '全局收尾'))
     log('=' * 76)
     write_ctl(phase='tail', tailAt=_ltime())
+    log('  [收尾 ⓪] ★ 重建因子登记表 `docs/factor_registry.json`（**换机器重建的唯一入口**）')
+    try:
+        # ★★ 为什么**必须排在最前**（2026-09-17）：`build_facs` 现在**会读**这个 JSON
+        #   （pkl 在就取并集、pkl 不在就全靠它）⇒ 先导出再落地，才不会用到上一轮的旧清单 ✓
+        r = subprocess.run([PY, '-u', 'tools/export_factor_registry.py'],
+                           cwd=ROOT, capture_output=True, text=True,
+                           encoding='utf-8', errors='replace', timeout=600,
+                           creationflags=NO_WIN)
+        for ln in (r.stdout or '').splitlines()[-3:]:
+            log('      ' + ln[:150])
+        if r.returncode != 0:
+            log('      [!] 登记表导出非零退出={} -> 仍继续收尾（用旧表）'.format(r.returncode))
+    except Exception as e:
+        log('      [!] 登记表导出失败({}) -> 仍继续收尾'.format(type(e).__name__))
     log('  [收尾 ①] 因子值落地到 facs/（新入库的必须落，否则审查看不到）')
     try:
         # ★ `--only-new`（增量落地）：52 个全就绪 ⇒ **4.0s**（全量 ~21min）✓

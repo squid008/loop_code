@@ -28,6 +28,7 @@
 import argparse
 import csv
 import io
+import json
 import os
 import pickle
 import re
@@ -97,7 +98,7 @@ def _prep_main():
 
 
 def load_bank_nodes(pool):
-    """从 `loop_state{_pool}.pkl` 读 **真正入库的 Node 列表**（唯一权威口径）。
+    """从 `loop_state{_pool}.pkl` + `docs/factor_registry.json` 读 **入库 Node 列表**。
 
     ★★ 为什么不 `parse_expr(库里的表达式文本)`（2026-09-14 实测踩到）：
       `parse_expr` 有一道 **`nd.size() > LLM_MAX_SIZE` 的尺寸上限**，超限时
@@ -105,17 +106,55 @@ def load_bank_nodes(pool):
       实测：全A 库 **F01** 的式子合法（5 层嵌套）却因超限返回 `None` ⇒ 下游
       `eval_expr(None)` 才炸出 `'NoneType' object has no attribute 'key'`（**报错点离病根很远**）。
       ⇒ 入库因子**已经在 state 里存着 Node**，直接用它最准（无解析歧义、不受 LLM 生成限制）。
+
+    ★★★★ 2026-09-17（用户之问："我家里 pull 项目，库是空的，能不能自动把因子重跑一遍
+      生成 facs/各种曲线？"）：**这条路径原先在"家里"是断的** ✗ ——
+      `.gitignore` 忽略 `*.pkl` ⇒ 家里没有 `loop_state*.pkl` ⇒ 本函数返回空 ⇒
+      `build_facs` / `factor_metrics` / `factor_curves` **全部无从下手**（一个因子都建不出来）✗✗
+      ⇒ 现在**优先并合并 `docs/factor_registry.json`**（**进 git**，见 `tools/export_factor_registry.py`）：
+        · 家里：pkl 缺失 ⇒ 直接用 JSON 里的 **node 结构**精确重建 ✓
+        · 本机：两边都有 ⇒ **取并集**（JSON 可能比 pkl 旧 ⇒ 新入库的因子仍从 pkl 拿到 ✓）
     """
+    out = {}
+    # ---- ① registry（进 git；换机器时是**唯一**来源 ✓）----
+    rp = os.path.join(DOCS, 'factor_registry.json')
+    if os.path.exists(rp):
+        try:
+            js = json.load(io.open(rp, encoding='utf-8'))
+            for f in (js.get('factors') or []):
+                if f.get('pool') != pool or not f.get('node') or not f.get('expr'):
+                    continue
+                try:
+                    out[str(f['expr'])] = _LE().node_from_dict(f['node'])
+                except Exception:
+                    continue
+        except Exception as e:
+            print('  [!] 读 {} 失败: {}: {}'.format(os.path.basename(rp), type(e).__name__, e))
+    n_reg = len(out)
+    # ---- ② pkl（本机才有；补上 registry 里还没有的新因子 ✓）----
     sfx = '' if pool == 'all' else '_' + pool
     sf = os.path.join(ENG, 'loop_state{}.pkl'.format(sfx))
     if not os.path.exists(sf):
-        return {}
+        print('  [{}] 无 state pkl ⇒ 用 registry 里的 {} 个入库因子（换机器场景 ✓）'.format(pool, n_reg))
+        return out
     try:
         st = pickle.load(open(sf, 'rb'))
     except Exception as e:
         print('  [!] 读 {} 失败: {}: {}'.format(sf, type(e).__name__, e))
-        return {}
-    return {str(x): x for x in (st.get('bank', []) or [])}
+        return out
+    n0 = len(out)
+    for x in (st.get('bank', []) or []):
+        out.setdefault(str(x), x)
+    if len(out) > n0:
+        print('  [{}] registry {} 个 + state 新增 {} 个 ⇒ 共 {} 个入库因子'
+              .format(pool, n_reg, len(out) - n0, len(out)))
+    return out
+
+
+def _LE():
+    """拿 `loop_engine`（**延迟 import**：本模块在 `_prep_main()` 之前就要用它建 Node ✓）"""
+    import loop_engine
+    return loop_engine
 
 
 def load_archive_ic(pool):
