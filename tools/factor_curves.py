@@ -792,6 +792,14 @@ def main():
                 cur = json.load(io.open(p, encoding='utf-8'))
             except Exception:
                 cur = {}
+        # ★ 2026-09-17 修（**别名副本会丢掉"只有它自己有的段"** ✗）：
+        #   同一公式可能挂多个编号（实测 `F01_1000` / `F01_500` / `F02_300` 同一个 expr ✓）⇒
+        #   计算只做一次、但**每个编号各写一份文件**（省时间 ✓）。
+        #   ⚠ 原实现写副本用 `dict(cur, name=nm_o)` —— 而 `cur` 是从**规范名那份文件**读的 ✗
+        #   ⇒ 别名文件里"只属于它自己"的段会被**覆盖掉**（实测：`--stage=strip` 跑完，
+        #     `F01_1000.json` 原有的 `style` 段消失了 ✗；因为同公式的另两个编号没有 style）
+        #   ⇒ 修法：只把**本次真正算过的键**（`touched`）合并进"**它自己那份**旧文件" ✓
+        _pre = dict(cur)
         try:
             fac, rr, sign = _aligned(it, B, dates, cols, close, a.cost, a.window)
             if rr is None:
@@ -829,10 +837,26 @@ def main():
             cur.setdefault('expr', it['expr'])
             cur.setdefault('sign', sign)
             # ★ 每个名字各写一份（别名副本把 `name` 改成**它自己的编号**，免得详情页显示别人的名字）✓
+            # ★★ 2026-09-17 修：**别名副本只合并"本次算过的键"**（`touched`），其余用"它自己那份"旧文件 ✓
+            #    （原实现整份照抄规范名那份 ⇒ 别名独有的段被覆盖掉 ✗，见上面 `_pre` 的说明）
+            touched = {k: v for k, v in cur.items() if k not in _pre or _pre[k] is not v}
             for nm_o in (alias.get(it['expr']) or [nm]):
-                cc = cur if nm_o == nm else dict(cur, name=nm_o)
+                _po = _path(nm_o)
+                if nm_o == nm:
+                    cc = cur
+                else:
+                    cc = {}
+                    if os.path.exists(_po):
+                        try:
+                            cc = json.load(io.open(_po, encoding='utf-8'))
+                        except Exception:
+                            cc = {}
+                    cc.update(touched)
+                    for _k in ('pool', 'expr', 'sign'):
+                        cc.setdefault(_k, cur.get(_k))
+                    cc['name'] = nm_o
                 cc.setdefault('name', nm_o)
-                with io.open(_path(nm_o), 'w', encoding='utf-8') as f:
+                with io.open(_po, 'w', encoding='utf-8') as f:
                     json.dump(cc, f, ensure_ascii=False, separators=(',', ':'))
             ok += 1
         except Exception as e:

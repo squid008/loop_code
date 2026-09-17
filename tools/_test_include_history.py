@@ -99,6 +99,15 @@ chk('★ 库文档写"未记录"的 sign ⇒ **退回指标表**（真值，语�
     '否则用户看到 — 会以为出错（其实真值就在指标表里 ✓）')
 chk('★★ 退回时**标出来路**（不是冒充"库文档记录" ✗），且详情页把它显示出来',
     'signFrom' in api and 'signFrom' in _appc and '库文档当时没记' in _appc)
+# ★★ 2026-09-17 修（实测踩到）：**别名副本会丢掉"只有它自己有的段"** ✗
+#   同一公式挂多个编号（实测 `F01_1000`/`F01_500`/`F02_300` 同一 expr）⇒ 写副本时若整份照抄
+#   "规范名那份文件"的 `cur`，别名独有的段（如 `F01_1000` 的 `style`）就会被覆盖消失 ✗
+_fc = io.open(os.path.join(ROOT, 'tools', 'factor_curves.py'), encoding='utf-8').read()
+chk('★★ 别名副本**只合并本次算过的键**（`touched`），其余读"它自己那份"旧文件 ✓',
+    'touched = {k: v for k, v in cur.items()' in _fc
+    and "cc = json.load(io.open(_po, encoding='utf-8'))" in _fc
+    and "cc.update(touched)" in _fc,
+    '原来 `dict(cur, name=nm_o)` ⇒ 别名独有的段被规范名那份覆盖 ✗（实测 F01_1000 丢 strip/style 之一）')
 
 print()
 print('=' * 96)
