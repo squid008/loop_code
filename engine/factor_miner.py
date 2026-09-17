@@ -88,6 +88,14 @@ def cs_rank(df):
 
 
 def cs_zscore(df):
+    """⚠⚠ **未被使用**（2026-09-17 全仓库 grep：只有这里一处定义，无任何引用）—— 保留仅作**反面示例**。
+
+    ★ 为什么不要用它：这是**值空间**的 z-score，**会被极值主导**（一个 1e4 的极端值就能把均值/标准差
+      带跑）；而本项目**整条链路都是秩基**的（`cs_rank` / `cs_scale` / `cs_demean` + 引擎 IC 用
+      rank-rank Pearson + 组合腿 Top10% 等权 + 风格/行业暴露用截面 Spearman）⇒ 极值天然免疫 ✓
+    ★ 若将来真要在**值空间**工作（线性合成 / 加权 / 机器学习），**先 MAD/winsorize 再用它**，
+      并且**只在一处统一做**，不要按因子类型分支（合成体因子里财务类与量价类混在一起，判不出类型 ✗）✓
+    """
     mu = df.mean(axis=1)
     sd = df.std(axis=1)
     return df.sub(mu, axis=0).div(sd + 1e-12, axis=0)

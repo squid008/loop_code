@@ -144,6 +144,9 @@ chk('★ 并行时相位卡**不显示单个池名**（只显示 轮次；否则
     'mine.execMode !== ' in src and 'mine?.running && mine.execMode !== ' in src)
 chk('★ 相位卡鼠标提示**逐池列出**"正在跑：<池> · gen <代数>"',
     '正在跑：${x.pool}' in src and 'runningList' in src)
+# ★ 2026-09-17（用户问"要不要 MAD 去极值"引出）：两条 IC 的口径差必须写在图上
+chk('★ IC 图下说明**以 RankIC 为准**（Pearson 的收益侧是原始值 ⇒ 会被肥尾拉偏）',
+    '以 RankIC 为准' in src and '肥尾' in src)
 chk('★ 内存卡的"模式"格**永远渲染**（未运行时显示占位 ⇒ 卡宽恒定且不留空白）',
     "'mode' + (mine?.running ? '' : ' off')" in src and '未运行' in src)
 chk('相位卡文案**压缩**（218px 塞得下；完整信息留在鼠标提示里）',

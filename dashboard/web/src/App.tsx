@@ -895,6 +895,13 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
             { label: 'RankIC（Spearman，引擎口径）', color: CPAL[0], data: pd.rankIc },
             { label: 'IC（Pearson）', color: CPAL[3], data: pd.ic },
           ]} />
+          {/* ★ 2026-09-17（用户问"要不要做 MAD 去极值" ⇒ 顺手把两条 IC 的口径差说清）：
+              因子那侧两边都是秩（安全）；差别在**收益那侧** —— RankIC 也取了秩，而 Pearson IC 用的是
+              **原始收益** ⇒ 会被涨跌停/重组这种肥尾拉偏 ⇒ **以 RankIC 为准** ✓ */}
+          <div className="ch-note">
+            以 RankIC 为准（两侧都取截面秩，与引擎入库判据同口径）
+            —— IC（Pearson）那一侧的收益用的是原始值，会被涨跌停或重组这类肥尾拉偏，仅作参考。
+          </div>
           <div className="ch-t">十分位分组累计净值（费前；第 10 档 = 因子值最高）</div>
           <Chart dates={pd.dates} yFmt={v => v.toFixed(1)}
                  series={pd.decile.map((d, i) => ({
