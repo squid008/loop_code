@@ -2780,3 +2780,50 @@ leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 
 > (2)交叉+15%对症但过头:同源叶子交叉难出增量,反易放大共线性;深度加深会加剧过拟合与negyear(已0.85)。护栏把交叉提到0.4、变异压到0.1,与"需新信息"矛盾;扰动/引导/随机固定值属拍脑袋,无诊断支撑。min_stab=0.75偏松,会放噪声。
 > 
 > (3)mix=[0.25,0.2,0.15,0.25,0.15],depth=[2,3,3],min_stab=0.9,decorr=0.5。理由:提变异与引导换新字段、压交叉与深度控过拟合,decorr收紧保多样。
+
+## 第 76 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 8 | 0.021 | 0.029 | 0.994 | 0.000 | 0.375 | 1.000 | 20 | 0.125 | 8 | 0 | 0.057 | 0.000 | 0.150 | 0.000 | 0.000 | 0.875 | 0.000 | 1.000 | 0.625 | 0.375 | 0.125 | 0.259 | 0.274 | 0.130 | 0.213 | 0.259 | 0.274 | 0.130 | 0.213 |
+
+叶子使用: {'mf_l_sell': 3, 'low': 2, 'mf_x_bqty': 2, 'mf_s_bqty': 2, 'barra_non_linear_size': 1, 'fa_rev_yoy': 1}
+
+**B角建议(下一代策略)**:
+- 【r5_calmar_cross】L2中88%因Calmar不足[池口径: 任一池 Calmar > 0.15] -> 交叉+15%, 深度加深
+- 配比护栏: 变异/交叉各≥10%且合计50%重归一化, 扰动/引导/随机固定15/20/15(中金规格) -> mix=[0.1, 0.4, 0.15, 0.2, 0.15]
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={'volume': 0.25, 'turn_ratio': 0.25, 'turnover': 0.25, 'intraday': 0.25, 'overnight': 0.25, 'up_shadow': 0.25, 'barra_residual_volatility': 0.25, 'fa_np_yoy': 0.25, 'barra_leverage': 0.25}
+```
+
+**规则动作留痕**:
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77] 代
+
+**LLM 引导(A角 76代)**: 调用3次, 解析通过48条, 引导位使用48条
+> 在隔夜跳空与日内收益之间，短期相对长期的跳空溢价衰减/反转，配合资金流失衡与风格暴露的背离，能预测未来5日截面收益。
+
+
+**LLM 候选审查(B角 76代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ts_rank200(ts_mean60(corr60(mf_l_buy, mf_l_sell)))`
+  > 理由: mf_l_buy与mf_l_sell同源资金流字段相减再相关，含义拼凑且嵌套冗余，无清晰量价机制
+- KILL `corr200(volume, mf_x_bqty)`
+  > 理由: mf_x_bqty含义不明，与volume做200日相关无清晰量价机制，疑似拼凑
+- KILL `ema26(ts_std60(cs_demean(neg(low))))`
+  > 理由: 对负低价做截面去均值再时序波动，经济含义不明，纯数学拼凑
+- KILL `ts_min100(sub(div(ts_delta60(corr100(neg(low), barra_leverage)), ts_min100(corr60(amplitude, mf_l_sqty))), corr200(ts_mean5(cs_rank(ln_mktcap)), ts_delta120(mf_l_bqty))))`
+  > 理由: 多层嵌套同源相关算子，窗口参数堆砌，经济含义拼凑难解释，过拟合嫌疑
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1)病根:IC天花板太低(中位0.021、最大0.029),L2全军覆没于负年份(100%)与近一年失效(62.5%),是信号本身弱且不稳,不是Calmar门槛问题。
+> 
+> (2)r5_calmar_cross不对症:Calmar低是弱IC的结果而非原因,加交叉+加深只会放大过拟合;且mix交叉0.4挤压变异到0.1,探索多样性下降,与"深度加深"叠加更易过拟合。护栏本身自洽,但方向错。
+> 
+> (3)建议 mix=[0.25,0.2,0.15,0.25,0.15],depth=[2,3,3],min_stab=0.85,decorr=0.7:先保探索与去相关,压深度防过拟合,提稳定性门槛筛真信号。
+> 
+> 否决: r5_calmar_cross
+
+**⚖️ 规则动作否决（机器读取）**: `r5_calmar_cross`（L2 多因 Calmar 不足 -> 交叉+15% / 深度加深）
