@@ -104,12 +104,14 @@ chk('★ 顶部内存数字的鼠标提示已**按用户要求删掉**（不要�
     'title={mine?.memNote' not in src)
 # ★★ 2026-09-17（用户："中证500 的 F01·历史因子，详情里指标都是 - ，正常吗？"）：
 #   正常（指标表/曲线都以 state.bank = 当前有效库为准），但**必须说明原因**，别甩一个 — 让人以为出错 ✗
-chk('★ 没有指标时**要说明原因**（历史编号已移出当前库），并给出补数据的命令',
-    '这个编号还没有统一口径指标' in src and '已移出当前库' in src
-    and 'factor_metrics.py --include_history' in src,
-    '⚠ 文案改过一轮（v1.15.0 起还给出 `--include_history` 命令）⇒ 断言别绑死旧措辞')
-chk('★ 指标表/曲线的取数口径写明是 **state.bank（当前有效库）**',
-    'state.bank' in src)
+chk('★ 没有指标时**要说明原因**，并**分两种情况**给出补数据的命令',
+    ('没有统一口径指标' in src or '表比库旧' in src)
+    and '已移出当前库' in src and 'factor_metrics.py --include_history' in src
+    and 'factor_metrics.py --only-new' in src,
+    '⚠ 断言别绑死措辞（文案已改过几轮 ✗）；且**两种原因**（历史编号 / 表比库旧）'
+    '必须分别给对命令 —— 只甩一个 `—` 会让人以为出错 ✗')
+chk('★ 指标表/曲线的取数口径写明是 **当前有效库（state.bank）**',
+    'state.bank' in src or '当前有效库' in src)
 
 print()
 print('【7】★ 顶栏控件栏：**永远保持一行**（2026-09-17 用户："红框这行就干脆一直放在这一行吧，'
@@ -169,6 +171,12 @@ chk('★★ 吸顶表头有 `z-index`（否则 `opacity<1` 的单元格会盖住
     '`tr.outbank td` 的 opacity 新建层叠上下文 ⇒ "历史行"压住表头（用户实测的那个现象）✗')
 chk('★ 详情弹层的吸顶标题同样有 `z-index`（同类隐患，一并堵住）',
     re.search(r'\.dt-h \{[^}]*z-index:\s*\d+', css) is not None)
+# ★★★★ 2026-09-17 修（用户："新入库的 500 F06 为啥有曲线图，但超额年化那些指标都是 —？"）——
+#   根因不是指标，是**曲线取错文件**：`F06.json` 是全A 的 F06、`F06_500.json` 才是 500 的 ✗✗
+chk('★★ 详情页曲线**按池取对文件名**（`{code}_{pool}`；否则会拿到**全A 同名编号**的曲线 ✗✗）',
+    "const file = (pool && pool !== 'all') ? `${name}_${pool}` : name" in src
+    and "api.curves(pool || 'all', file)" in src,
+    '命名规则散落在两处（写盘在 factor_curves.py、读取在前端）⇒ 必须用同一条规则 ✓')
 chk('★ 内存卡的"模式"格**永远渲染**（未运行时显示占位 ⇒ 卡宽恒定且不留空白）',
     "'mode' + (mine?.running ? '' : ' off')" in src and '未运行' in src)
 chk('相位卡文案**压缩**（卡窄了更要压；完整信息留在鼠标提示里）',

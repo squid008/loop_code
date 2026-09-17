@@ -929,18 +929,32 @@ const STRIP_LABEL: Record<string, string> =
   { raw: '原', lncap: '剥市值', lnamt: '剥成交额', both: '剥两者',
     floatcap: '剥流通市值', caplimit: '剥总市值+限售' }
 
-/** 详情页图表区：打开时**才**拉曲线（离线预算好的），拉到前显示占位 ✓ */
+/** 详情页图表区：打开时**才**拉曲线（离线预算好的），拉到前显示占位 ✓
+ *
+ * ★★★★ 2026-09-17 修**真 BUG**（用户："新入库的 `500 F06` 为啥**有曲线图**，但超额年化那些
+ *   指标都是 `—`？"）—— 根因不在指标，在**曲线取错了文件** ✗✗：
+ *   · 曲线文件按 `factor_curves.py` 的命名落盘：`all` 池 = `F06.json`，**其它池 = `F06_500.json`**
+ *   · 而这里原来直接用 `f.code`（`F06`）+ `pool` 只是拼进 **URL**（后端**只按文件名读**，
+ *     URL 里的池名它不看 ✗）⇒ 500 池的 F06 读到了 `F06.json` = **全A 池的另一个因子**的曲线 ✗✗
+ *     （两者是完全不同的公式！用户看到的那张图根本不是这个因子的）
+ *   ⇒ 修：**在这里按同一规则补池后缀**（单一规则：`no` for `all` / `{no}_{pool}` 其它池 ✓），
+ *     并且**缺失时如实报"暂无曲线"**（而不是去拿别的池的图顶上 ✗）
+ *   ⚠ 这就是"命名规则散落在两处"的典型代价：写文件的地方在 `tools/factor_curves.py`，
+ *     读文件的地方在这里 —— 两处必须用同一个规则 ✓（已加守门 `_test_frontend_wiring`）
+ */
 function FactorCharts({ name, pool }: { name: string; pool?: string }) {
   const [c, setC] = useState<CurvesDto | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  // ★ 曲线文件名 = `tools/factor_curves.py::_name_of` 的同一条规则（all 不带后缀，其它池带 `_<池>`）
+  const file = (pool && pool !== 'all') ? `${name}_${pool}` : name
   useEffect(() => {
     let dead = false
     setC(null); setErr(null)
-    api.curves(pool || 'all', name)
+    api.curves(pool || 'all', file)
       .then(d => { if (!dead) setC(d) })
       .catch(e => { if (!dead) setErr(e instanceof Error ? e.message : String(e)) })
     return () => { dead = true }
-  }, [name, pool])
+  }, [name, pool, file])
   if (err) return <div className="ch-note">曲线读取失败：{err}</div>
   if (!c) return <div className="ch-note">曲线加载中…</div>
   if (!c.found) return <div className="ch-note">暂无曲线数据。{c.hint}</div>
@@ -1178,15 +1192,23 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
             </em>
           </div>
           {!metricsReady && (
-            // ★★ 2026-09-17（用户："中证500 的 F01·历史因子，详情里指标都是 - ，正常吗？"）：
-            //   **正常，但要说明白**：指标表以引擎的 `state.bank`（**当前有效库**）为准，
-            //   已移出的历史编号不在其中 ⇒ 没有费后指标（曲线同理，只覆盖当前库那 51 个）✓
-            //   ⚠ 别只甩一个 `—` 让人以为"出错了/数据丢了" ✗
+            // ★★ 2026-09-17（用户："中证500 的 F01·历史因子，详情里指标都是 - ，正常吗？"
+            //   + 后来："新入库的 500 F06 为啥有曲线图，但超额年化那些指标都是 —？"）：
+            //   **都是"正常但要说清"**，且**两种原因完全不同** ⇒ 必须分情况给命令 ✓：
+            //     · 历史编号（已移出当前库）⇒ 指标表默认不算它 ⇒ 要 `--include_history` ✓
+            //     · 在库但**表比库旧**（新入库还没重算）⇒ 跑 `--only-new` 即可 ✓
+            //   ⚠ 只甩一个 `—` 会让人以为"出错了/数据丢了" ✗（而且会误导去翻错的地方）
             <div className="dt-note">
-              这个编号还没有统一口径指标：默认只算<b>当前有效库</b>（引擎 state.bank 里的因子），
-              本编号带<b>历史</b>标签 = 已移出当前库。想看它的指标/曲线，跑一次
-              <code>python tools/factor_metrics.py --include_history</code> 与
-              <code>python tools/factor_curves.py --include_history --only-new</code> 即可补上。
+              {f.inBank === false ? (
+                <>这个编号已移出当前库（历史），而指标表默认只算<b>当前有效库</b> ⇒ 所以没有数。
+                  想补它：跑 <code>python tools/factor_metrics.py --include_history</code> 与
+                  <code>python tools/factor_curves.py --include_history --only-new</code> ✓</>
+              ) : (
+                <>指标表里还没有这个编号 —— 说明<b>表比库旧</b>（新入库的因子还没重算），
+                  不是出错。补一条命令即可：<code>python tools/factor_metrics.py --only-new</code>
+                  （约 8~12 分钟）；曲线是**另一套离线产物**，单独跑
+                  <code>python tools/factor_curves.py --only-new --stage=core</code> ✓</>
+              )}
             </div>
           )}
           <div className="dt-note">

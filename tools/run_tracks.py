@@ -289,7 +289,8 @@ def do_global_tail(tag=''):
     """
     log('')
     log('=' * 76)
-    log('[收尾] ★ {}（facs 落地 → 跨池审查 → 精选池）'.format(tag or '全局收尾'))
+    log('[收尾] ★ {}（登记表 → facs 落地 → 跨池审查/精选池 → **指标表 → 曲线**）'
+        .format(tag or '全局收尾'))
     log('=' * 76)
     write_ctl(phase='tail', tailAt=_ltime())
     log('  [收尾 ⓪] ★ 重建因子登记表 `docs/factor_registry.json`（**换机器重建的唯一入口**）')
@@ -332,6 +333,37 @@ def do_global_tail(tag=''):
     except Exception as e:
         log('      [!] 审查失败({}: {})'.format(type(e).__name__, e))
     log('  ⇒ 精选池见 docs/factor_pool_selected.md（比"入库数"更接近"能用几个"）')
+    # ★★★★ 2026-09-17（用户之问："新入库的 500 F06 为啥有曲线图，但超额年化那些指标都是 —？"）：
+    #   根因之一是**流程缺口** —— 收尾只跑了「facs 落地 + 跨池审查」，**没跑指标表与曲线** ✗
+    #   ⇒ 每次新因子入库后，看板里它的「超额年化/卡玛/夏普」全是 `—`、图也缺 ⇒ 用户以为出错 ✗✗
+    #   ⇒ 补上 ③④ 两步（都是 `--only-new` **增量**：没有新因子时各只要几秒 ✓；
+    #      有新因子时 ③ ≈ 25s/个、④ ≈ 25s/个 ✓ 代价可忽略，但省掉了"看板全是 —"的困惑 ✓）
+    #   ⚠ 顺序：③④ 必须在 ① 之后（要先有因子值/编号），且 ④ 要在 ③ 之后（曲线口径带符号对齐）✓
+    log('  [收尾 ③] 统一口径指标表（新入库的必须有数，否则详情页全是 —）')
+    try:
+        r = subprocess.run([PY, '-u', 'tools/factor_metrics.py', '--only-new', '--panel_cache=use'],
+                           cwd=ROOT, capture_output=True, text=True,
+                           encoding='utf-8', errors='replace', timeout=7200,
+                           creationflags=NO_WIN)
+        for ln in (r.stdout or '').splitlines()[-4:]:
+            log('      ' + ln[:150])
+        if r.returncode != 0:
+            log('      [!] 指标表非零退出={} -> 仍继续（看板该因子的指标会缺）'.format(r.returncode))
+    except Exception as e:
+        log('      [!] 指标表失败({}) -> 仍继续'.format(type(e).__name__))
+    log('  [收尾 ④] 看板曲线（详情页图表；缺了就点不开图）')
+    try:
+        r = subprocess.run([PY, '-u', 'tools/factor_curves.py', '--only-new', '--stage=core',
+                            '--panel_cache=use'],
+                           cwd=ROOT, capture_output=True, text=True,
+                           encoding='utf-8', errors='replace', timeout=7200,
+                           creationflags=NO_WIN)
+        for ln in (r.stdout or '').splitlines()[-4:]:
+            log('      ' + ln[:150])
+        if r.returncode != 0:
+            log('      [!] 曲线非零退出={} -> 仍继续（详情页图会缺）'.format(r.returncode))
+    except Exception as e:
+        log('      [!] 曲线失败({}) -> 仍继续'.format(type(e).__name__))
     log('=' * 76)
     # ★★ 2026-09-16 修 BUG E：收尾结束后**必须自己复位 phase** ——
     #   调用方（`main()`）的复位写在 `do_global_tail()` **之前** ⇒ 这里若不复位，

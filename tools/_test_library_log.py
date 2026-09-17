@@ -167,6 +167,18 @@ def main():
     chk('详情按钮**靠右**（`margin-left: auto`）且公式那行**跨整行**',
         re.search(r'\.logrow \.btn\.sm \{[^}]*margin-left: auto', css) is not None)
 
+    # ---- [6] ★★ 收尾管线必须把"入库之后的数据"也补齐（否则看板全是 —，用户以为出错）----
+    print('\n[6] ★★ 收尾管线：新入库后 指标表/曲线 要自动跟上')
+    rt = io.open(os.path.join(ROOT, 'tools', 'run_tracks.py'), encoding='utf-8').read()
+    chk('★ 收尾跑 `factor_metrics.py --only-new`（否则详情页"超额年化"等全是 — ✗）',
+        "tools/factor_metrics.py', '--only-new'" in rt,
+        '用户实测：新入库的 F06_500 指标全空，就是因为收尾没算指标 ✗')
+    chk('★ 收尾跑 `factor_curves.py --only-new --stage=core`（否则详情页图表缺、'
+        '而且**前端曾因此拿到全A 同名编号的曲线** ✗✗）',
+        "tools/factor_curves.py', '--only-new', '--stage=core'" in rt)
+    chk('两条都**只告警不中断**收尾（与其它步骤同一契约 ✓）',
+        rt.count('-> 仍继续') >= 2)
+
     print('\n' + '=' * 96)
     print('通过 {}/{}'.format(OK[0] - OK[1], OK[0]) + ('' if OK[1] else '  ✓ 全部通过'))
     return 1 if OK[1] else 0
