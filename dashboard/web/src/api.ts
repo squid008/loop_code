@@ -139,7 +139,10 @@ export interface LibraryEntryDto {
   family?: string | null
   summary?: string
   oneLiner?: string | null
-  inBank?: boolean
+  /** ★★ 2026-09-17（用户："把已入库、已移出的状态也加上，加在 F06 文字旁边"）：
+   *  **三态**（后端每条都显式给）：true 当前有效库 / false 已移出 / null 判不了（不猜 ✓）
+   *  判据与「因子库」页签同源：指标表 `in_bank` 列 → 库文档行 → 都没有就是 null ✓ */
+  inBank?: boolean | null
   inLibrary?: boolean
   detail?: LibraryFactor['detail']
   metrics?: Record<string, number | null>

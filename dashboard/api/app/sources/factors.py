@@ -227,14 +227,42 @@ def library_entries(limit=50):
             libs[pool] = {f['code']: f for f in (library(pool).get('factors') or [])}
         return libs[pool]
 
+    # ★★★ 2026-09-17（用户："新入库日志把那个**已入库、已移出的状态**也加上吧，加在 F06 文字旁边？"）：
+    #   三态口径必须与「因子库」页签**完全同源**（同一个 `inBank`）—— 否则同一条编号在两处
+    #   会出现两种说法（本项目最忌"一份数据两套口径"）✗
+    #   判据优先级：
+    #     ① 指标表 CSV 的 `in_bank` 列 —— `--include_history` 之后**连历史编号都写着** ⇒ 覆盖最全 ✓
+    #     ② 退回该池库文档那一行带来的 `inBank`（表是老格式 / 这条从没测过指标时）✓
+    #     ③ 都拿不到 ⇒ **None** —— "不知道"和"已移出"是两回事，**绝不猜** ✗
+    #        （用户看到的「状态未知」= 老实承认判不了，不是"已入库"也不是"已移出" ✓）
+    mtab, _mt_mtime, mt_info = _metrics_table()
+    _has_ib = bool(mt_info.get('inBankCol'))
+
+    def _inb_of(pool, code, f):
+        if not code:
+            return None
+        nm = code if pool == 'all' else '%s_%s' % (code, pool)
+        v = mtab.get(nm)
+        if _has_ib and isinstance(v, dict):
+            s = str(v.get('in_bank', '')).strip().lower()
+            if s in ('0', 'false'):
+                return False               # 表里明写"已移出当前库"✓
+            if s in ('1', 'true'):
+                return True
+        if isinstance(f, dict) and f.get('inBank') is not None:
+            return bool(f['inBank'])
+        return None
+
     out = []
     for e in reversed(tail):               # ★ 倒序：最新的在最上面 ✓
         pool = e.get('pool') or 'all'
         f = _lib(pool).get(e.get('code')) or {}
         row = dict(e)
-        for k in ('detail', 'metrics', 'inBank', 'status'):
+        for k in ('detail', 'metrics', 'status'):
             if k in f and k not in row:
                 row[k] = f[k]
+        # ★ 每条都**显式**给三态（True 在库 / False 已移出 / None 判不了），交给前端原样显示 ✓
+        row['inBank'] = _inb_of(pool, e.get('code'), f)
         # 库清单里的 `summary`（一句话，出口已清洗 ✓）优先；事件里的是入库时的原始值 ✓
         row['summary'] = f.get('summary') or _plain(e.get('oneLiner') or '')
         row['family'] = f.get('family') or _plain(e.get('family') or '')

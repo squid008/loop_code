@@ -36,6 +36,29 @@ def chk(desc, cond, hint=''):
         FAIL.append(desc + ('（%s）' % hint if hint else ''))
 
 
+def _real_mining():
+    """★ 现在**真有挖掘在跑**吗（调度器进程 / 引擎进程）—— 用来决定是否跳过本测试。
+
+    ★★★ 2026-09-17（同一天全量回归被误报**两次**，这次查清了）：
+      本测试**直接改写 `_control.json`**（`_set_ctl`，为了把 ctl 摆成确定状态），
+      而**真实挖掘调度器每一代都在写同一个文件**（`write_ctl(phase=…, curPool=…, active=…)`）✗
+      ⇒ 两边的写交错 ⇒ 断言读到的是**被覆盖后的现场** ⇒ 挂 ✗
+      （证据：单独跑本测试**全过**；一进全量就挂，且当时线上确有调度器 + 3 个引擎 ✓
+        ⇒ 与 metrics/curves **无关** —— 之前那条"因果"是错的，已更正 ✓）
+    ⚠ 判据用**真进程**（`mine.engines()`）而不是只看 ctl 里的 `running` —— 后者可能是脏值（见 v1.17.1 的 `active` 教训）✓
+    """
+    try:
+        if mine.scheduler() or mine.engines():
+            return True
+    except Exception:                                  # noqa: BLE001
+        pass
+    try:
+        c = mine.ctl()
+    except Exception:                                  # noqa: BLE001
+        c = {}
+    return bool(c.get('running') or (c.get('active') or []))
+
+
 class FakeProc:
     last = None
 
@@ -57,6 +80,13 @@ def _set_ctl(d):
 
 
 def main():
+    # ★★★ 2026-09-17：**有人在挖 ⇒ 本测试必挂（且不是它自己的错）** —— 全量回归被它误报过两次 ✗✗
+    #   真因见 `_real_mining()` 的说明（两边抢同一个 `_control.json`）⇒ 与 `_test_parallel_runner`
+    #   同款做法：**检测到就跳过**并说清原因（rc=0，不误报 ✓）
+    if _real_mining():
+        print('  [SKIP] 检测到**真实挖掘在跑**（调度器或引擎）—— 本测试会改写 `_control.json`，')
+        print('         与调度器每代的写交错就会误报。想跑它就单独重跑（或先全部停止）✓')
+        return 0
     ctl_p = mine.CTL_FILE
     before = _sha(ctl_p)
     raw_before = open(ctl_p, 'rb').read() if os.path.isfile(ctl_p) else None

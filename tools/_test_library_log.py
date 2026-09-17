@@ -179,6 +179,33 @@ def main():
     chk('两条都**只告警不中断**收尾（与其它步骤同一契约 ✓）',
         rt.count('-> 仍继续') >= 2)
 
+    # ---- [7] ★ 状态徽标（2026-09-17 用户："把已入库、已移出的状态也加上吧，加在 F06 文字旁边？"）----
+    print('\n[7] ★ 状态徽标：这条编号**还在不在当前有效库**（三态，与「因子库」页签同源）')
+    chk('后端给每条**显式**写 `inBank`（三态）—— 不是"有就带、没有就没有"',
+        "row['inBank'] = _inb_of(" in fp)
+    chk('★ 首选**指标表 `in_bank` 列**（够 `--include_history` 时连历史编号都写着 ⇒ 覆盖最全 ✓）',
+        '_has_ib' in fp and "str(v.get('in_bank', '')).strip().lower()" in fp,
+        '只读库文档行 ⇒ 早已不在文档里的编号拿不到状态，只能显示"未知" ✗')
+    chk('★★ 两条路都拿不到 ⇒ **None（判不了）**，绝不默认 True/False —— "不知道"≠"在库" ✗',
+        "if isinstance(f, dict) and f.get('inBank') is not None:" in fp
+        and re.search(r"return bool\(f\['inBank'\]\)\s*\n\s*return None", fp) is not None,
+        '默认成"已入库"= 编数据（比留白更糟 ✗）')
+    chk('前端在**编号旁**渲染三态徽标（已入库 / 已移出 / 状态未知）',
+        'libStateTip(e.inBank)' in src_tsx and '已入库' in src_tsx
+        and '已移出' in src_tsx and '状态未知' in src_tsx
+        and 0 < src_tsx.find('className="lc"') < src_tsx.find('libStateTip(e.inBank)'),
+        '用户原话："加在 F06 文字旁边"')
+    chk('★ 徽标**可收缩**（`flex: 0 1 auto` + 省略号）—— 宁可缩写，也不许把「详情」按钮挤没 ✗',
+        re.search(r'\.logrow \.stag \{[^}]*flex: 0 1 auto', css) is not None
+        and re.search(r'\.logrow \.stag \{[^}]*text-overflow: ellipsis', css) is not None,
+        '卡片只 ~310px；徽标不可收缩 + `overflow-x: hidden` ⇒ 按钮被裁掉、用户点不到 ✗')
+    chk('★ 详情弹层里"已不在当前有效库"只在**确证 false** 时显示（原来 `!f.inBank` ⇒ null 也误报 ✗）',
+        'f.inBank === false && <span className="out">' in src_tsx)
+    _tip = src_tsx[src_tsx.find('const libStateTip'):src_tsx.find('function EntryLogCard')]
+    chk('徽标鼠标提示**不臆断**（未知时明说"判不了"），且文案里没有 `**`/★/⇒ 这类符号（AI 味守门 ✗）',
+        _tip and '判不了它还在不在库' in _tip
+        and not any(s in _tip for s in ('**', '★', '⇒', '✓', '✗')))
+
     print('\n' + '=' * 96)
     print('通过 {}/{}'.format(OK[0] - OK[1], OK[0]) + ('' if OK[1] else '  ✓ 全部通过'))
     return 1 if OK[1] else 0

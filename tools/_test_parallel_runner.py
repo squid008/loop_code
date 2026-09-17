@@ -188,6 +188,10 @@ def main():
         re.search(r"if not from_ctl:\s*\n\s*write_ctl\(enabled=list\(pools\), stopped=\[\]\)", rt)
         is not None,
         'v1.12.0 后候选池全看 ctl ⇒ `--pools` 被无视、还继承上次的 stopped ⇒ 只起 1 个池 ✗')
+    chk('A22 ★★ `_test_mine_launch` 也加了**有人在挖就跳过**（否则与真调度器抢 `_control.json` ⇒ 全量误报 ✗）',
+        '_real_mining()' in io.open(os.path.join(ROOT, 'tools', '_test_mine_launch.py'),
+                                    encoding='utf-8').read(),
+        '同一天全量被它误报两次；单独跑全过 ⇒ 真因是并发写同一个控制文件 ✗（不是 metrics/curves）')
     chk('A21 ★★ 看板启动带 `--from_ctl=1`（在 ctl 里写好意图 ⇒ 调度器尊重它）',
         '--from_ctl=1' in io.open(os.path.join(ROOT, 'dashboard', 'api', 'app', 'mine.py'),
                                   encoding='utf-8-sig').read())

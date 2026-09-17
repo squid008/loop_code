@@ -196,8 +196,18 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .logrow .lt { flex: none; width: 104px; font-family: var(--mono); font-size: 11px; color: var(--mut); }
 .logrow .lp { flex: none; font-size: 11px; border: 1px solid var(--bd); border-radius: 6px;
               padding: 0 6px; color: #8fb2ff; background: var(--card2); }
-.logrow .lc { flex: none; width: 46px; font-family: var(--mono); font-size: 12px;
+.logrow .lc { flex: none; width: 42px; font-family: var(--mono); font-size: 12px;
               font-weight: 650; color: var(--sky); }
+/* ★ 2026-09-17（用户："把已入库、已移出的状态也加上，加在 F06 文字旁边"）：
+   行内**三态状态徽标**（在库 / 已移出 / 判不了，判据与「因子库」页签同源 ✓）
+   ⚠ 它**必须可收缩**（`flex: 0 1 auto` + 省略号）：卡片只有 ~310px，宁可徽标变成「已入…」，
+     也**绝不能**把右边的「详情」按钮挤出可视区（`overflow-x: hidden` 会直接裁掉它 ✗） */
+.logrow .stag { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+                white-space: nowrap; font-size: 10.5px; padding: 0 5px; border-radius: 6px;
+                border: 1px solid var(--bd); }
+.logrow .stag.ok { color: #a7f3d0; background: #052e1b; border-color: #14532d; }
+.logrow .stag.out { color: #fcd34d; background: #3b2c05; border-color: #78350f; }
+.logrow .stag.unk { color: var(--mut); background: var(--card2); }
 /* 公式那行占**整行宽度**（不再和按钮抢位置）；三件套缺一就会把卡片撑出横向滚动条 ✗ */
 .logrow .ls { min-width: 0; white-space: nowrap; overflow: hidden;
               text-overflow: ellipsis; color: var(--mut); font-size: 12px; }

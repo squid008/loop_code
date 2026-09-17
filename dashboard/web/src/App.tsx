@@ -532,6 +532,18 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
   （`gen_log` = 该代引擎日志时间 / `md_mtime` = 库文档最后修改）；**拿不到证据的一律标"时间未知"**
   —— 不臆造是项目铁律，而且"编一个时间"比"空着"更糟（会误导判断）✗
 */
+/** ★★★ 2026-09-17（用户："新入库日志把那个已入库、已移出的状态也加上吧，加在 F06 文字旁边？"）：
+ * 入库日志行「在不在库」的鼠标提示 —— **三态**，与「因子库」页签**完全同源**（同一个 `inBank`）✓
+ *
+ * ⚠ 两条铁律：
+ *   · 判不了（指标表与库文档都没这条）就**如实说判不了** —— 绝不默认成「已入库」（编数据比留白更糟 ✗）
+ *   · 文案里不许出现 `**` / ★ / ⇒ / ✓ 这类符号（`_test_ai_tone` 会判成 AI 味 ✗）
+ */
+const libStateTip = (inBank?: boolean | null) =>
+  inBank === true ? '这条编号如今在引擎的有效库里（判据与因子库页签同源）'
+    : inBank === false ? '入库过，但已不在当前有效库（只剩历史记录）。点详情仍能看到公式与指标'
+      : '指标表与库文档都没收录这条编号，所以判不了它还在不在库（不默认成已入库）'
+
 function EntryLogCard({ d, onDetail }:
   { d: LibraryEntriesDto | null; onDetail: (e: LibraryEntryDto) => void }) {
   const rows = d?.entries ?? []
@@ -558,6 +570,12 @@ function EntryLogCard({ d, onDetail }:
               </span>
               <span className="lp">{e.pool === 'all' ? '全A' : e.pool}</span>
               <span className="lc">{e.code ?? '无编号'}</span>
+              {/* ★ 入库过 ≠ 还在库里（跨池去重会移出）⇒ 编号旁边直接标出来，省得去别的页签对 ✗
+                  （三态：已入库 / 已移出 / 状态未知；判不了就写未知，绝不默认成已入库 ✓） */}
+              <span className={`stag ${e.inBank === true ? 'ok' : e.inBank === false ? 'out' : 'unk'}`}
+                    title={libStateTip(e.inBank)}>
+                {e.inBank === true ? '已入库' : e.inBank === false ? '已移出' : '状态未知'}
+              </span>
               <button className="btn sm" onClick={() => onDetail(e)}>详情</button>
             </div>
             <div className="ls" title={e.expr || e.summary || ''}>
@@ -1144,7 +1162,9 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
       <div className="dt" onClick={e => e.stopPropagation()}>
         <div className="dt-h">
           <b className="mono">{f.code}</b>
-          {!f.inBank && <span className="out">已不在当前有效库（历史编号）</span>}
+          {/* ★ 2026-09-17：这里原来写 `!f.inBank` ⇒ `null`（判不了）也会显示"已不在当前有效库" ✗
+              —— **编结论比留白更糟**（用户会以为这个编号被淘汰了）⇒ 只有**确证 false** 才这么说 ✓ */}
+          {f.inBank === false && <span className="out">已不在当前有效库（历史编号）</span>}
           <span className="mut">{f.family}</span>
           <button className="x" onClick={onClose}>×</button>
         </div>
