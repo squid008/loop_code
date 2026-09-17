@@ -178,6 +178,15 @@ def main():
         "tools/factor_curves.py', '--only-new', '--stage=core'" in rt)
     chk('两条都**只告警不中断**收尾（与其它步骤同一契约 ✓）',
         rt.count('-> 仍继续') >= 2)
+    # ★★ 2026-09-17（用户："怎么入库的有些因子没有剥风格曲线？我记得之前还有啊"）：
+    #   真因 = 收尾只跑了 `--stage=core` ⇒ 新因子只有核心曲线，strip / style 两段从没算 ✗
+    chk('★ 收尾也跑 `--stage=strip`（否则详情页"剥风格"永远显示"还没生成" ✗）',
+        "'--stage=' + _stage" in rt and "('⑤', 'strip'" in rt)
+    chk('★ 收尾也跑 `--stage=style+strip2`（否则"风格相关性"永远空着 ✗）',
+        "'style+strip2'" in rt)
+    chk('★★ 两段都带 `--only-new` ⇒ **按 stage 只补缺的**（不会把已有的重算一遍 ✗）',
+        rt.count("'--stage=' + _stage, '--panel_cache=use'") >= 1
+        and "'--only-new'" in rt)
 
     # ---- [7] ★ 状态徽标（2026-09-17 用户："把已入库、已移出的状态也加上吧，加在 F06 文字旁边？"）----
     print('\n[7] ★ 状态徽标：这条编号**还在不在当前有效库**（三态，与「因子库」页签同源）')

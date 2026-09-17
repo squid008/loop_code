@@ -364,6 +364,30 @@ def do_global_tail(tag=''):
             log('      [!] 曲线非零退出={} -> 仍继续（详情页图会缺）'.format(r.returncode))
     except Exception as e:
         log('      [!] 曲线失败({}) -> 仍继续'.format(type(e).__name__))
+    # ★★★ 2026-09-17（用户："怎么入库的有些因子没有剥风格曲线？我记得之前还有啊"）：
+    #   真因：③④ 只跑了 `--stage=core` ✗ ⇒ 新入库因子**只有核心曲线**，而
+    #   "剥风格四条"在 `--stage=strip` 里、"风格相关性画像"在 `--stage=style+strip2` 里 ✗
+    #   （核过缺口：在库因子中 `F06_500` 缺 strip+style、`F01_1000` 缺 strip ✓
+    #     另有一批**已移出的历史编号**也缺 —— 那些**故意不补**（它们不在库，按需再算 ✓））
+    #   ⇒ 补 ⑤⑥ 两步。★ 两步都很便宜：`factor_curves._need_one` 是**按 stage 判断**的
+    #     （core 看 `nav_e` · strip 看 `strip` · style 看 `tAdj/tYr/winYr` 是否齐全）
+    #     ⇒ `--only-new` **只算缺的那部分**，已有的一律跳过 ✓
+    #   ⚠ 不带 `--include_history`：只保证"**在库**因子齐全" ✓
+    for _tag, _stage, _what in (('⑤', 'strip', '剥风格四条净值（详情页"剥风格"图）'),
+                                ('⑥', 'style+strip2', '风格相关性画像（详情页"风格相关性"表）')):
+        log('  [收尾 {}] {}'.format(_tag, _what))
+        try:
+            r = subprocess.run([PY, '-u', 'tools/factor_curves.py', '--only-new',
+                                '--stage=' + _stage, '--panel_cache=use'],
+                               cwd=ROOT, capture_output=True, text=True,
+                               encoding='utf-8', errors='replace', timeout=14400,
+                               creationflags=NO_WIN)
+            for ln in (r.stdout or '').splitlines()[-4:]:
+                log('      ' + ln[:150])
+            if r.returncode != 0:
+                log('      [!] {} 非零退出={} -> 仍继续（详情页该段会缺）'.format(_stage, r.returncode))
+        except Exception as e:
+            log('      [!] {} 失败({}) -> 仍继续'.format(_stage, type(e).__name__))
     log('=' * 76)
     # ★★ 2026-09-16 修 BUG E：收尾结束后**必须自己复位 phase** ——
     #   调用方（`main()`）的复位写在 `do_global_tail()` **之前** ⇒ 这里若不复位，
