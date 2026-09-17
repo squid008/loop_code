@@ -359,6 +359,21 @@ def library(pool):
         for k in ('poolTagNote', 'strip', 'metricsDocText'):     # 散文类 ⇒ 出口处清洗
             f['detail'][k] = _plain(d.get(k, ''))
         f['metrics'] = (mtab.get(nm) or {}).get('_num') or {}
+        # ★★★ 2026-09-17（用户："中证500 F06 的方向 sign 为啥是 —？其他因子要么 1 要么 -1，是不是有问题？"）：
+        #   不是标签贴错，也**不是 bug**：那条因子的 md 明细段里写的**就是**
+        #   「符号 sign：**未记录**（缺失时不臆造，见 roadmap §8.45 铁律）」⇒ 解析出来是空 ⇒ 前端显示 — ✗
+        #   （当年引擎确实没拿到该方向 ⇒ md 这样写是**诚实**的 ✓）
+        #   但**指标表里有真值**：`factor_metrics` 的 sign 是「重算 IC 与库记录 IC 对齐」求出来的 ✓
+        #   语义完全一致（都表示"因子值须乘它才是越大越好"✓）⇒ 空的时候**退回指标表**，
+        #   并用 `signFrom` 标出来路 —— **绝不冒充成"库文档记录"** ✗
+        if not f['detail'].get('sign'):
+            _sg = (f['metrics'] or {}).get('sign')
+            if _sg is not None:
+                try:
+                    f['detail']['sign'] = str(int(_sg))
+                    f['detail']['signFrom'] = '重算指标表'
+                except (TypeError, ValueError):
+                    pass
         # 三态：True 在库 / False 已移出 / None 未知（表不完整或没跑）✓
         f['inBank'] = (_inb(nm) if (inbank_known and nm in mtab) else
                        (False if inbank_known else None))

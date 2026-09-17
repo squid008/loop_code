@@ -1180,7 +1180,7 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
             <span className="k">方向 sign</span>
             <span className="v">
               {d.sign
-                ? <><b className="mono">{d.sign}</b><em>因子值须乘它才是"越大越好"；不乘会反向选股</em></>
+                ? <><b className="mono">{d.sign}</b><em>因子值须乘它才是"越大越好"；不乘会反向选股{d.signFrom ? `（来自${d.signFrom}，库文档当时没记）` : ''}</em></>
                 : '—'}
             </span>
           </div>

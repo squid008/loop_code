@@ -87,6 +87,9 @@ export interface LibraryFactor {
   detail?: {
     sign: string; family: string; leaves: string; skeleton: string
     poolTag: string; poolTagNote: string; strip: string; metricsDocText: string
+    /** ★ 2026-09-17：`sign` 不是库文档写的、而是**退回重算指标表**取的时候标出来路
+     *  （库文档当时写的是"未记录"⇒ 空 ⇒ 显示 —；指标表里有真值 ⇒ 用它 ✓ **不冒充**库记录 ✓） */
+    signFrom?: string
   }
   /** 统一口径的费后指标（`tools/factor_metrics.py` 重算；缺失项为 null） */
   metrics?: Record<string, number | null>

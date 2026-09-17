@@ -91,6 +91,14 @@ chk('历史行的状态列改成「已移出当前库（历史）」（明细里
 chk('详情页在"没有指标"时**告诉你补的命令**（含 `--include_history`）',
     'factor_metrics.py --include_history' in _appc
     and 'factor_curves.py --include_history' in _appc)
+# ★★ 2026-09-17（用户："中证500 F06 的方向 sign 为啥是 —？其他因子要么 1 要么 -1，是不是有问题？"）：
+#   真因 = 那条 md 明细段里写的**就是**"符号 sign：未记录（缺失时不臆造）"⇒ 解析为空 ⇒ 显示 — ✗
+#   而**指标表里有真值**（重算 IC 与库记录 IC 对齐求出）⇒ 空时**退回指标表**，并标出来路 ✓
+chk('★ 库文档写"未记录"的 sign ⇒ **退回指标表**（真值，语义一致）',
+    "if not f['detail'].get('sign'):" in api and "signFrom'] = '重算指标表'" in api,
+    '否则用户看到 — 会以为出错（其实真值就在指标表里 ✓）')
+chk('★★ 退回时**标出来路**（不是冒充"库文档记录" ✗），且详情页把它显示出来',
+    'signFrom' in api and 'signFrom' in _appc and '库文档当时没记' in _appc)
 
 print()
 print('=' * 96)
