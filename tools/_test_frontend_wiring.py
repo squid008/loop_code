@@ -130,9 +130,18 @@ chk('极窄屏**优雅降级**（先省次要文字，而不是折行或横滑�
     '@media (max-width: 1000px)' in css)
 # ★★ 2026-09-17 用户第二批：「这个一坨会随着轮次、内存数据变动而改变长度，就搞成**固定的宽度**吧，
 #   卡片宽度不要变来变去的；第一个空闲的那个卡片宽度可以**对齐下面 0/5 那个卡片**」
-chk('★ 相位卡**定宽 218px**（= KPI 卡常见宽度 (1136−4×12)/5 ⇒ 与下面 0/5 卡左右对齐）',
-    re.search(r'\.ctrls \.phase \{ width: 218px', css) is not None,
-    '用 min-width 不够 —— 内容变宽时卡片仍会变宽 ✗')
+# ★★★ 2026-09-17 第三批（**推翻上面那条**）：「这个卡片是不是可以窄很多了？空闲跟 1/50 之间
+#   隔了太宽了，留的宽度够"空闲 9999/9999"的位置就行了」
+#   ⇒ 现在 = **贴合内容**（不再有那段空白）+ **轮次槽定宽**（仍不抖 ✓）；旧断言同步改掉 ✓
+chk('★★ 相位卡**贴合内容**（撤掉"定宽 218px + 轮次靠右"那一段空白 —— 用户："隔太宽了"）',
+    re.search(r'\.ctrls \.phase \{ width: max-content', css) is not None
+    and 'margin-left: auto' not in css.split('.ctrls .phase small')[1][:120],
+    '仍是 218px / 轮次 `margin-left:auto` ⇒ 空闲时右边空一大段 ✗')
+chk('★ 轮次槽**定宽**（"9999/9999" 也放得下，且数字变化**不推动卡宽**）',
+    re.search(r'\.ctrls \.phase small \{ flex: none; min-width: 52px', css) is not None
+    and 'tabular-nums' in css)
+chk('★ 轮次槽**永远渲染**（没轮次时是**空槽** ⇒ 卡宽不抖，也不显示假数据）',
+    "? `${compactRound(mine.roundText)}/${mine?.rounds ?? '?'}` : ''" in src)
 chk('★ 内存卡**定宽 236px**（文案简化后收窄；仍按"运行中"最宽内容定 ⇒ 开始挖掘时不变宽）',
     re.search(r'\.ctrls \.res \{ width: 236px', css) is not None)
 # ★★ 2026-09-17 用户第二批：「`并行×1（自动） · 共享` 改成 `并行 · 共享`」
@@ -153,7 +162,7 @@ chk('★★ 池卡片会显示"启动即崩"（读 `slot.crashes`，红点 + 红
     '崩溃不可见 ⇒ "蓝点（并行中）"会被误读成"在排队/轮转" ✗')
 chk('★ 内存卡的"模式"格**永远渲染**（未运行时显示占位 ⇒ 卡宽恒定且不留空白）',
     "'mode' + (mine?.running ? '' : ' off')" in src and '未运行' in src)
-chk('相位卡文案**压缩**（218px 塞得下；完整信息留在鼠标提示里）',
+chk('相位卡文案**压缩**（卡窄了更要压；完整信息留在鼠标提示里）',
     'compactCur' in src and 'compactRound' in src)
 
 print()

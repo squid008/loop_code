@@ -309,9 +309,20 @@ tr.outbank .fcode { color: var(--mut); }
       ③ 两者都 `overflow: hidden` + 内部省略号 ⇒ **内容再变，卡宽也不变** ✓
       ④ 内存卡用 `space-between` 把三部分摊开（idle 时不会在右边留一大块空白）✓
    ⚠ 为什么要"定宽"而不是"min-width"：`min-width` 只保证下限，**内容变宽时卡片仍然会变宽** ✗ */
-.ctrls .phase { width: 218px; overflow: hidden; }
+/* ★★★ 2026-09-17 用户追问：「这个卡片是不是可以窄很多了？**空闲跟 1/50 之间隔了太宽了**，
+   留的宽度够"空闲 9999/9999"的位置就行了」
+   ⇒ **撤掉上一版"定宽 218px + 轮次 `margin-left:auto` 靠右"**（那是为了对齐下面的 KPI 卡，
+      代价就是中间那一段固定空白 —— 用户不要这个 ✗）
+   ⇒ 现在：卡宽**贴合内容**（`max-content`），轮次槽**预留下来**（`min-width: 52px` ≈ "9999/9999"
+      在 10.5px 下的宽度）＋ `tabular-nums` ⇒
+      ① 不再有空白（空闲时卡片约 120px 而不是 218px）✓
+      ② 轮次从 `1/50` 变到 `9999/9999` **卡宽不变**（上一版"不许抖"的要求仍满足）✓ */
+.ctrls .phase { width: max-content; max-width: 218px; overflow: hidden; }
+/* ↑ `max-width: 218px` 只是**安全上限**（轮转模式会多一个"当前池"段；顶栏不许溢出 ✗）——
+   常规并行模式用不到它：内容短，卡片就短（空闲时约 120px）✓ */
 .ctrls .phase em { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ctrls .phase small { margin-left: auto; }          /* 轮次靠右 ⇒ 中间内容变化时位置稳定 ✓ */
+.ctrls .phase small { flex: none; min-width: 52px; text-align: right;
+                      font-variant-numeric: tabular-nums; }   /* 轮次槽定宽 ⇒ 数字变化不推动卡宽 ✓ */
 .ctrls .res { width: 236px; justify-content: space-between; overflow: hidden; }
 .ctrls .res .mode { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctrls .res .mode.off { color: var(--mut); }        /* 未运行时占位（保持卡宽不变、又说明状态）✓ */

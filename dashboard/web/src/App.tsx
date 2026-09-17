@@ -214,7 +214,12 @@ export default function App() {
                 ⚠ 而且只在**真在跑**时才显示 —— 否则会拿 `curPool` 的**陈旧值**当现状 ✗ */}
             {mine?.running && mine.execMode !== 'parallel' && mine.curText
               && <em>{compactCur(mine.curText)}</em>}
-            {mine?.roundText && <small>{compactRound(mine.roundText)}/{mine?.rounds ?? '?'}</small>}
+            {/* ★★ 2026-09-17（用户："空闲跟 1/50 之间隔了太宽了，留够'空闲 9999/9999'的位置就行"）：
+                轮次槽**永远渲染**（宽度钉在 CSS 的 `min-width` 里）——
+                ① 卡宽贴合内容、不再有那段空白 ② 没轮次时是个**空槽**（不显示假数据）
+                   ⇒ 轮次变化时卡宽**不变**（不抖）✓ */}
+            <small>{mine?.roundText
+              ? `${compactRound(mine.roundText)}/${mine?.rounds ?? '?'}` : ''}</small>
           </span>
           {/* ★★ 2026-09-16（用户："顶上 19.4 GB 5 池已配置这里的鼠标提示还有引号…干脆把这里的提示
               全部删掉"）⇒ **那个 tooltip 直接去掉**（`memNote` 后端仍在，只是不再挂在悬停上）✓

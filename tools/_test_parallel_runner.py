@@ -183,6 +183,14 @@ def main():
     chk('A19 ★★ 崩了的池**本轮就重试**（不干等下一轮，但有次数上限防刷屏）',
         'MAX_CRASH_RETRY' in pr and 'launched.discard' in pr,
         '原来崩掉也记 `launched` ⇒ 要等下一轮（可能半小时）才再试 ✗')
+    # ★★★★ 2026-09-17：`--pools` 与 ctl 谁说话（本文件 B4/B5/B6 当场抓到的真副作用）
+    chk('A20 ★★ 命令行直跑时以 **`--pools` 为准**（播种 enabled、清残留 stopped）',
+        re.search(r"if not from_ctl:\s*\n\s*write_ctl\(enabled=list\(pools\), stopped=\[\]\)", rt)
+        is not None,
+        'v1.12.0 后候选池全看 ctl ⇒ `--pools` 被无视、还继承上次的 stopped ⇒ 只起 1 个池 ✗')
+    chk('A21 ★★ 看板启动带 `--from_ctl=1`（在 ctl 里写好意图 ⇒ 调度器尊重它）',
+        '--from_ctl=1' in io.open(os.path.join(ROOT, 'dashboard', 'api', 'app', 'mine.py'),
+                                  encoding='utf-8-sig').read())
 
     # ★★ 锁测试**必须放在这里**（在 `--quick` / "有人在挖就跳过"两个 early-return **之前**）——
     #    否则用户正在挖的时候这条永远不跑（本次就是在挖的时候发现 A18 挂了才知道 ✗）

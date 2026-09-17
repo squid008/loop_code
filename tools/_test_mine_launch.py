@@ -90,6 +90,11 @@ def main():
         chk('含 --auto_parallel=1（★ 上限**动态重算**：后来加池不用重启调度器）',
             '--auto_parallel=1' in a, str(a))
         chk('含 --panel_cache=use（共享默认开）', '--panel_cache=use' in a, str(a))
+        # ★★★★ 2026-09-17（回归测试当场抓到）：看板**必须**带 `--from_ctl=1` ——
+        #   它先在 ctl 里写好 enabled/stopped，再让调度器"以 ctl 为准" ✓
+        #   否则调度器按"命令行直跑"处理 ⇒ **清掉 stopped**（用户刚停的池被拉回来 ✗✗）
+        chk('★ 含 --from_ctl=1（看板启动以**控制文件**为准 ⇒ 动态启停才有效）',
+            '--from_ctl=1' in a, str(a))
         chk('返回体 execMode=parallel / panelCache=use',
             r.get('execMode') == 'parallel' and r.get('panelCache') == 'use')
 

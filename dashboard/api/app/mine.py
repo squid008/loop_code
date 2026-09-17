@@ -546,6 +546,11 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
             args.append('--auto_parallel=1')
     if panel_cache != 'off':
         args.append('--panel_cache=%s' % panel_cache)
+    # ★★★★ 2026-09-17：**看板启动一律带 `--from_ctl=1`** —— 因为我们在上面**已经**把
+    #   `enabled`/`stopped` 按用户意图写进控制文件了（`reset_stopped` 决定要不要清 stopped）⇒
+    #   调度器必须**以 ctl 为准**（否则"运行中点启动本池/停止本池"这套动态能力全失效 ✗✗）
+    #   ⚠ 不带它会被当成"命令行直跑"⇒ 调度器会**清掉 stopped**、把用户刚停的池又拉起来 ✗
+    args.append('--from_ctl=1')
     log = os.path.join(LOGD, '_ui_scheduler.log')
     proc = subprocess.Popen(args, cwd=settings.PROJECT_ROOT, env=env, stdout=open(log, 'ab'),
                             stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,

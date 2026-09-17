@@ -353,6 +353,16 @@ def main():
     # ★★★ 2026-09-16（用户实测「加的池只排队、不并行」后新增）：`--auto_parallel=1` ⇒ 上限**动态重算**
     #   （按"当前启用池数 + 可用内存"每次迭代）—— 看板默认走这个（它能随时加池却不用重启调度器）✓
     auto_parallel = False
+    # ★★★★ 2026-09-17（回归测试当场抓到的一个**真副作用**）：`--from_ctl=1` = **以控制文件为准**。
+    #   · 看板启动 ⇒ **带** 这个参数：`mine.py` 在起进程前**已经**把 `enabled`/`stopped` 按用户意图
+    #     写好（"一键启动全部"清 stopped、"启动本池"只移除该池）⇒ 调度器**必须尊重 ctl**
+    #     —— 否则"运行中点启动本池/停止本池"就失效 ✗（这正是用户要的动态能力）
+    #   · 命令行直跑（CLI / 回归测试）⇒ **不带**：**命令行是事实** ⇒ 播种 `enabled := --pools`、
+    #     清掉 `stopped`（下面 `if not from_ctl:` 那段）✓
+    #   ⚠ 为什么必须有这条：v1.12.0 把候选池改成"以 ctl.enabled 为准"（为了支持运行期加池 ✓）之后，
+    #     **`--pools` 被完全无视**了；且会继承**上一次会话残留的 `stopped`** ⇒ 实测
+    #     `--pools=300,500` 却只起了一个池（ctl 里躺着 `stopped=['300']`）✗✗
+    from_ctl = False
     mem_per_engine = 3.0      # 每引擎内存预算 GB（仅 parallel 模式；不足就排队等）
     panel_cache = 'off'       # 透传给引擎：off(默认,现状) / use / build（见 tools/build_panel_cache.py）
     # ★★ 2026-09-16 新增 `--engine_arg=...`（可重复）：**追加**到默认 extra。
@@ -461,6 +471,8 @@ def main():
             max_parallel = max(1, int(a.split('=', 1)[1]))
         elif a.startswith('--auto_parallel='):
             auto_parallel = str(a.split('=', 1)[1]).strip().lower() in ('1', 'true', 'yes', 'on')
+        elif a.startswith('--from_ctl='):
+            from_ctl = str(a.split('=', 1)[1]).strip().lower() in ('1', 'true', 'yes', 'on')
         elif a.startswith('--mem_per_engine='):
             mem_per_engine = float(a.split('=', 1)[1])
         elif a.startswith('--panel_cache='):
@@ -493,6 +505,14 @@ def main():
             '**不会**写回本轨道的 state/因子库。')
         log('     ⚠ 只给 `all` 轨道注入（池轨道的价值是"给式子打池内标签"，注入全A 库会让它无产出）；'
             '`--inject_pools=none` 可关。')
+    # ★★★★ 2026-09-17：命令行直跑 ⇒ **命令行即事实**（把 `enabled/stopped` 播种回控制文件）——
+    #   之后运行期的"动态加池/停池"**照样生效**（它们会覆盖这两个键）✓
+    #   ⚠ 必须放在"分叉"之前：并行分支是**每次迭代从 ctl 重读 `enabled/stopped`** 的 ✓
+    if not from_ctl:
+        write_ctl(enabled=list(pools), stopped=[])
+        log('[CTL] 命令行启动（无 `--from_ctl`）⇒ 以 `--pools={}` 为准：'
+            '已把它播种进控制文件、并清掉上次残留的 stopped ✓（看板启动会带 `--from_ctl=1`）'
+            .format(','.join(pools)))
     log('=' * 76)
     # ★★★ 2026-09-16：**调度模式分叉**（默认 rotate ⇒ 下面的轮转逻辑与改造前逐字一致）★
     #   并行语义（队列/内存护栏/收尾）全部在 `tools/parallel_runner.py` 里，本文件不塞逻辑。
