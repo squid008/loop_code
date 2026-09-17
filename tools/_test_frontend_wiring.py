@@ -160,6 +160,15 @@ chk('★ IC 图下说明**以 RankIC 为准**（Pearson 的收益侧是原始值
 chk('★★ 池卡片会显示"启动即崩"（读 `slot.crashes`，红点 + 红字提示）',
     'crashN' in src and '启动即崩 ×' in src and 'crashes' in api,
     '崩溃不可见 ⇒ "蓝点（并行中）"会被误读成"在排队/轮转" ✗')
+# ★★★★ 2026-09-17（用户："因子库里滚轮往下滚，发现顶部 F02 那一行跟表头重叠了、有重影"）：
+#   真因 = 吸顶 `th` **没设 `z-index`**，而 `.tbl` 里有 `tr.outbank td { opacity: .62 }` ——
+#   **`opacity < 1` 会给单元格新建层叠上下文** ⇒ 历史行的文字按 DOM 顺序**画在表头之上** ✗
+#   （在库行没有 opacity ⇒ 正常；所以此前一直没暴露）⇒ **所有吸顶元素必须显式给 `z-index`** ✓
+chk('★★ 吸顶表头有 `z-index`（否则 `opacity<1` 的单元格会盖住它 ⇒ 重影 ✗）',
+    re.search(r'\.tbl th \{[^}]*z-index:\s*\d+', css) is not None,
+    '`tr.outbank td` 的 opacity 新建层叠上下文 ⇒ "历史行"压住表头（用户实测的那个现象）✗')
+chk('★ 详情弹层的吸顶标题同样有 `z-index`（同类隐患，一并堵住）',
+    re.search(r'\.dt-h \{[^}]*z-index:\s*\d+', css) is not None)
 chk('★ 内存卡的"模式"格**永远渲染**（未运行时显示占位 ⇒ 卡宽恒定且不留空白）',
     "'mode' + (mine?.running ? '' : ' off')" in src and '未运行' in src)
 chk('相位卡文案**压缩**（卡窄了更要压；完整信息留在鼠标提示里）',

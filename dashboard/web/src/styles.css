@@ -201,8 +201,18 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 
 /* ---------------- tables ---------------- */
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
+/* ★★★★ 2026-09-17 修（用户："因子库里，鼠标滚轮往下滚，发现顶部 F02 那一行跟编号表头那一行
+   重叠了、有重影"）—— 真因是**层叠顺序**，不是背景透明：
+   · `th` 是 `position: sticky`（**自己会新建层叠上下文**），但 `z-index` 没设 ⇒ 与后面的单元格
+     同属 `z-index: auto` ⇒ 按 DOM 顺序绘制 ⇒ **表头先画、后面的单元格后画（压在表头上面）** ✗
+   · 为什么**只有"历史行"**出问题：`tr.outbank td { opacity: .62 }` —— **`opacity < 1` 会给单元格
+     新建层叠上下文** ⇒ 它的文字进入"层叠上下文层"绘制，于是**盖住吸顶表头** ✗
+     （在库的正常行没有 opacity ⇒ 文字仍在普通文本层 ⇒ 被表头正常遮住 ✓，所以此前没暴露）
+   ⇒ 修：吸顶层**显式给 `z-index: 2`**（表头 > 所有单元格）；顺手加 1px 阴影让交界更清楚 ✓
+   ⚠ 别删 `z-index`：只要还有 `opacity`/`transform`/`filter` 的单元格，重影就会回来 ✗ */
 .tbl th { text-align: left; color: var(--mut); font-weight: 600; font-size: 12px;
-          border-bottom: 1px solid var(--bd); padding: 9px 10px; position: sticky; top: 0; background: var(--card); }
+          border-bottom: 1px solid var(--bd); padding: 9px 10px; position: sticky; top: 0;
+          background: var(--card); z-index: 2; box-shadow: 0 1px 0 0 var(--bd); }
 .tbl td { border-bottom: 1px solid #1e2846; padding: 8px 10px; vertical-align: top; }
 .tbl tr:hover td { background: #182142; }
 .tbl .strong { color: var(--sky); font-weight: 650; }
@@ -253,8 +263,11 @@ tr.outbank .fcode { color: var(--mut); }
 .dt { width: 100%; max-width: 880px; max-height: 88vh; overflow: auto;
       background: var(--card); border: 1px solid var(--bd); border-radius: 12px;
       box-shadow: 0 20px 60px rgba(0, 0, 0, .55); }
+/* ⚠ 详情弹层的吸顶标题**同样要 `z-index`**（同上一条的理由：内容里只要有 opacity/transform
+   的元素，`z-index:auto` 的吸顶层就会被压在下面 ⇒ 重影 ✗） */
 .dt-h { display: flex; align-items: center; gap: 10px; padding: 14px 18px;
-        border-bottom: 1px solid var(--bd); position: sticky; top: 0; background: var(--card); }
+        border-bottom: 1px solid var(--bd); position: sticky; top: 0; background: var(--card);
+        z-index: 3; }
 .dt-h b { font-size: 15px; }
 .dt-h .out { background: #f59e0b22; color: var(--amber); border: 1px solid #f59e0b55;
              border-radius: 8px; padding: 2px 8px; font-size: 11.5px; }
