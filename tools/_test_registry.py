@@ -141,6 +141,25 @@ def main():
     probs = ER.compare(cur['factors'], js)
     chk('JSON 与现状一致（实得 %d 处差异）' % len(probs), not probs, '; '.join(probs[:4]))
 
+    # ---- [5] ★ 规模化（用户之问："将来几千个因子会不会爆炸/读崩溃？"）----
+    print('\n[5] ★ 规模化：体积与"无变化不重写"')
+    kb = os.path.getsize(REG) / 1024.0
+    per = kb / max(1, len(fs))
+    print('    实测: 每因子约 %.2f KB ⇒ 推算 1000 因子约 %.1f MB / 10000 因子约 %.1f MB'
+          % (per, per * 1000 / 1024.0, per * 10000 / 1024.0))
+    chk('单文件未超告警阈值（%.0f MB；现在 %.1f KB）—— 读它从不是瓶颈（10 MB 解析约 0.18s）✓'
+        % (ER.SIZE_WARN_MB, kb), kb <= ER.SIZE_WARN_MB * 1024,
+        '超了就按池分片（为的是 git diff 可读，不是为了性能 ✗）')
+    # ★★ "内容没变就不重写"：否则每轮收尾都因 `generatedAt` 变化而给 git 添一个 blob ✗✗
+    js2 = json.loads(json.dumps(js, ensure_ascii=False))          # 深拷贝
+    js2['generatedAt'] = '1970-01-01 00:00:00'                    # 只改时间戳
+    chk('★ `compare` **不看时间戳** ⇒ 内容没变就能"跳过写入"（少给 git 添版本 ✓）',
+        not ER.compare(cur['factors'], js2),
+        '若它把时间戳算成差异 ⇒ 每轮收尾都会重写文件 ✗')
+    chk('★ `load_bank_nodes` 走**进程内缓存**（`_registry_nodes`，5 池不再重复解析 ✓）',
+        'def _registry_nodes(' in io.open(os.path.join(ROOT, 'tools', 'build_facs.py'),
+                                         encoding='utf-8').read())
+
     print('\n' + '=' * 96)
     print('通过 {}/{}'.format(OK[0] - OK[1], OK[0]) + ('' if OK[1] else '  ✓ 全部通过'))
     return 1 if OK[1] else 0

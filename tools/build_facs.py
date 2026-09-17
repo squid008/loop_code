@@ -115,21 +115,8 @@ def load_bank_nodes(pool):
         · 家里：pkl 缺失 ⇒ 直接用 JSON 里的 **node 结构**精确重建 ✓
         · 本机：两边都有 ⇒ **取并集**（JSON 可能比 pkl 旧 ⇒ 新入库的因子仍从 pkl 拿到 ✓）
     """
-    out = {}
-    # ---- ① registry（进 git；换机器时是**唯一**来源 ✓）----
-    rp = os.path.join(DOCS, 'factor_registry.json')
-    if os.path.exists(rp):
-        try:
-            js = json.load(io.open(rp, encoding='utf-8'))
-            for f in (js.get('factors') or []):
-                if f.get('pool') != pool or not f.get('node') or not f.get('expr'):
-                    continue
-                try:
-                    out[str(f['expr'])] = _LE().node_from_dict(f['node'])
-                except Exception:
-                    continue
-        except Exception as e:
-            print('  [!] 读 {} 失败: {}: {}'.format(os.path.basename(rp), type(e).__name__, e))
+    # ---- ① registry（进 git；换机器时是**唯一**来源 ✓；进程内**只解析一次** ✓）----
+    out = dict(_registry_nodes().get(pool) or {})
     n_reg = len(out)
     # ---- ② pkl（本机才有；补上 registry 里还没有的新因子 ✓）----
     sfx = '' if pool == 'all' else '_' + pool
@@ -155,6 +142,38 @@ def _LE():
     """拿 `loop_engine`（**延迟 import**：本模块在 `_prep_main()` 之前就要用它建 Node ✓）"""
     import loop_engine
     return loop_engine
+
+
+_REG_CACHE = [None]
+
+
+def _registry_nodes():
+    """`docs/factor_registry.json` ⇒ `{pool: {expr: Node}}`（★ **进程内只解析一次**）。
+
+    ★ 2026-09-17（用户之问："将来几千个因子会不会读崩溃？"）：实测单因子约 1.2 KB，
+      1000 因子 1.1 MB / 解析 **13 ms**、10000 因子 11 MB / **0.18 s** ⇒ 读取**从不是瓶颈** ✓
+      但 `load_bank_nodes` 每池调一次 ⇒ 5 池就重复解析 5 次 ✗（规模大时纯属浪费）
+      ⇒ 这里缓存一份（调用方都只读，不修改 ✓）
+    """
+    if _REG_CACHE[0] is not None:
+        return _REG_CACHE[0]
+    out = {}
+    p = os.path.join(DOCS, 'factor_registry.json')
+    if os.path.exists(p):
+        try:
+            js = json.load(io.open(p, encoding='utf-8'))
+            LE = _LE()
+            for f in (js.get('factors') or []):
+                if not f.get('node') or not f.get('expr'):
+                    continue
+                try:
+                    out.setdefault(f['pool'], {})[str(f['expr'])] = LE.node_from_dict(f['node'])
+                except Exception:
+                    continue
+        except Exception as e:
+            print('  [!] 读 {} 失败: {}: {}'.format(os.path.basename(p), type(e).__name__, e))
+    _REG_CACHE[0] = out
+    return out
 
 
 def load_archive_ic(pool):

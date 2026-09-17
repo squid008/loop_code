@@ -64,6 +64,10 @@ sys.path.insert(0, HERE)
 
 REG = os.path.join(DOCS, 'factor_registry.json')
 POOLS = ('all', '300', '500', '1000', '50')
+# ★ 体积阈值（2026-09-17 实测：约 **1.2 KB / 因子** ⇒ 1000 因子 1.1 MB、3000 因子 3.4 MB、
+#   10000 因子 11.2 MB；`json.load` 耗时 10 MB 也只有 **0.18s** ⇒ **读它永远不会崩** ✓
+#   本阈值只用来提醒"该分片了"（分片是为了 **git diff/评审** 可读，不是为了性能 ✓）
+SIZE_WARN_MB = 4.0
 
 
 def _md(pool):
@@ -324,16 +328,31 @@ def main():
         print()
         print('★ %s' % ('一致 ✓' if (not problems and not st) else '不一致（见上）✗'))
         return 1 if (problems or st) else 0
+    # ★★★★ 2026-09-17（用户之问："将来几千个因子，`factor_registry.json` 会不会爆炸/家里读崩溃？"）：
+    #   ① **内容没变就绝不重写** —— 本文件每轮收尾都会被重建，而原来**每次都会写**（只因 `generatedAt`
+    #      变了）⇒ git 里每轮多一个 blob ✗✗（实测：1.1 MB 的文件 × 每天几十轮 = 仓库无谓膨胀）
+    #      ⇒ 现在用 `compare`（**只看内容**：pool/no/expr/node，**不看时间戳**）判"有没有真变化" ✓
+    #   ② **体积守门**：到 `SIZE_WARN_MB` 就吼（届时该考虑按池分片，而不是继续单文件长大）✓
     if problems:
         print('  与旧文件的差异（更新理由）：')
         for p in problems[:8]:
             print('    · ' + p)
-    tmp = REG + '.tmp'
-    io.open(tmp, 'w', encoding='utf-8').write(
-        json.dumps(cur, ensure_ascii=False, indent=1))
-    os.replace(tmp, REG)
-    print('  已写 %s（%.1f KB）✓' % (os.path.relpath(REG, ROOT),
-                                     os.path.getsize(REG) / 1024.0))
+    else:
+        print('  内容无变化（仅时间戳不同）⇒ **跳过写入**，不给 git 多添一个版本 ✓')
+        print('  %s 保持原样（%.1f KB）✓' % (os.path.relpath(REG, ROOT),
+                                            os.path.getsize(REG) / 1024.0))
+    if problems or not old:
+        tmp = REG + '.tmp'
+        io.open(tmp, 'w', encoding='utf-8').write(
+            json.dumps(cur, ensure_ascii=False, indent=1))
+        os.replace(tmp, REG)
+        print('  已写 %s（%.1f KB）✓' % (os.path.relpath(REG, ROOT),
+                                         os.path.getsize(REG) / 1024.0))
+    kb = os.path.getsize(REG) / 1024.0
+    if kb > SIZE_WARN_MB * 1024:
+        print('  ⚠⚠ 登记表已 %.1f MB（> %.0f MB 阈值）—— 读它仍然很快（实测 10 MB 约 0.18s），'
+              '但**单文件太大会让 git diff/评审变难** ⇒ 该考虑**按池分片**了（见 README）✗'
+              % (kb / 1024.0, SIZE_WARN_MB))
     print()
     print('★ 换机器重建：`python tools/build_facs.py --only-new` → `tools/factor_metrics.py` →'
           ' `tools/factor_curves.py`（它们都优先读本 JSON ✓）')
