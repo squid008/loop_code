@@ -58,7 +58,7 @@ def meta():
         'factorFields': factors.FACTOR_FIELDS,
         'endpoints': [
             '/api/health', '/api/meta', '/api/status', '/api/pools',
-            '/api/library', '/api/library/{pool}', '/api/selected',
+            '/api/library', '/api/library/entries', '/api/library/{pool}', '/api/selected',
             '/api/strip-bank', '/api/pool-obs/{pool}', '/api/factors/flat',
             '/api/mine/state', '/api/mine/start', '/api/mine/stop',
             '/api/mine/start_pool', '/api/mine/global',
@@ -83,6 +83,13 @@ def library_all():
     libs = factors.all_libraries()
     return {'libraries': libs,
             'totalFactors': sum(l.get('count') or 0 for l in libs)}
+
+
+# ⚠⚠ 本路由**必须声明在 `/api/library/{pool}` 之前**！否则 `/api/library/entries`
+#   会被那条**更宽**的路径吃掉（`pool='entries'` ⇒ 404「未知池」）✗ —— FastAPI 按声明顺序匹配 ✓
+@app.get('/api/library/entries', summary='新入库日志（最近 N 条：时间 / 池 / 代数 / 编号 / 公式）')
+def library_entries(limit: int = Query(50, ge=1, le=500)):
+    return factors.library_entries(limit=limit)
 
 
 @app.get('/api/library/{pool}', summary='单池因子库清单')

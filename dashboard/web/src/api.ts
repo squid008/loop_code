@@ -119,6 +119,37 @@ export interface LibraryDto {
   path: string; mtime: string | null; factors: LibraryFactor[]
 }
 
+/** ★ 2026-09-17 新增：**新入库事件**（看板「新入库日志」卡片）。
+ *
+ * 用户之问：「我发现又入库了一个新因子，但**找不到什么时候入库的、入的哪个库**」⇒ 加这张卡 ✓
+ * 时间口径分两种（后端在 `tsSource`/`tsNote` 里说明，看板要显示出来，不许含糊 ✗）：
+ *  · `engine`      = 引擎入库那一刻写的**真实时间** ✓
+ *  · `backfill`    = 历史条目回填：`gen_log`（该代引擎日志时间）/ `md_mtime`（该池库文档最后修改）
+ *  · `unknown`     = 早期入库、**没有时间证据** ⇒ 时间留空（不臆造 ✓，看板标"时间未知"）
+ */
+export interface LibraryEntryDto {
+  ts: string | null
+  tsSource?: string
+  tsNote?: string
+  source?: string
+  pool: string
+  gen: number | null
+  code: string | null
+  expr: string
+  family?: string | null
+  summary?: string
+  oneLiner?: string | null
+  inBank?: boolean
+  inLibrary?: boolean
+  detail?: LibraryFactor['detail']
+  metrics?: Record<string, number | null>
+  status?: string
+}
+
+export interface LibraryEntriesDto {
+  count: number; limit: number; entries: LibraryEntryDto[]; note: string
+}
+
 export interface SelectedFactor {
   code: string; pool: string; grade: string; stripCalmar: string; expr: string
   /** ★ 2026-09-16：精选池也能「点开看详情」—— 与库表同一套字段（联表自各池库文档 + 指标表） */
@@ -306,6 +337,8 @@ export const api = {
   status: (fresh = false) => get<StatusDto>(`/status${fresh ? '?fresh=true' : ''}`, 40000),
   libraries: () => get<{ libraries: LibraryDto[]; totalFactors: number }>('/library'),
   library: (pool: string) => get<LibraryDto>(`/library/${pool}`),
+  /** ★ 新入库日志（最近 N 条；`/library/entries` **必须**在路由里排在 `/library/{pool}` 之前） */
+  libraryEntries: (limit = 50) => get<LibraryEntriesDto>(`/library/entries?limit=${limit}`),
   selected: () => get<SelectedDto>('/selected'),
   // ★ 因子曲线（离线预算好，读文件 + 下采样 ⇒ 打开详情几乎零开销）
   curves: (pool: string, name: string, maxPts = 700) =>

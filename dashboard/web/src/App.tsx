@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
-  type CurvesDto, type LibraryDto, type LibraryFactor, type MetaDto, type MineStateDto,
+  type CurvesDto, type LibraryDto, type LibraryEntriesDto, type LibraryEntryDto,
+  type LibraryFactor, type MetaDto, type MineStateDto,
   type PoolStatus, type SelectedDto, type SelectedFactor, type StatusDto,
 } from './api'
 
@@ -25,6 +26,10 @@ export default function App() {
   const [status, setStatus] = useState<StatusDto | null>(null)
   const [meta, setMeta] = useState<MetaDto | null>(null)
   const [libs, setLibs] = useState<LibraryDto[]>([])
+  // ★ 2026-09-17（用户："又入库了一个新因子，但找不到什么时候入库的、入的哪个库"）
+  //   ⇒ 池状态区加「新入库日志」卡：最近 50 条（时间 / 池 / 代数 / 编号 / 一句话）+ 详情按钮 ✓
+  const [entries, setEntries] = useState<LibraryEntriesDto | null>(null)
+  const [entrySel, setEntrySel] = useState<LibraryEntryDto | null>(null)
   const [selected, setSelected] = useState<SelectedDto | null>(null)
   const [tab, setTab] = useState<TabKey>('pools')
   const [pool, setPool] = useState('1000')
@@ -66,10 +71,12 @@ export default function App() {
     busyRef.current = true
     setBusy(true)
     try {
-      const [st, mt, lb, se, ms] = await Promise.all([
+      const [st, mt, lb, se, ms, le] = await Promise.all([
         api.status(fresh), api.meta(), api.libraries(), api.selected(), api.mineState(),
+        api.libraryEntries(50),
       ])
       setStatus(st); setMeta(mt); setLibs(lb.libraries); setSelected(se); setMine(ms)
+      setEntries(le)
       setRounds(r => (r === 50 ? ms.defaultRounds : r))
       setLastAt(new Date().toLocaleTimeString('zh-CN'))
       setErr(null)
@@ -327,7 +334,20 @@ export default function App() {
             <PoolCard key={p.key} p={p} nowMs={nowMs} mine={mine} busy={mineBusy}
                       onStart={() => doStartPool(p.key)} onStop={() => doStop(p.key)} />
           ))}
+          {/* ★★★ 2026-09-17（用户："池运行状态在上证50池右边再加一个一样大小的卡片，
+              记录新入库因子的挖掘时间日志，带 Y 轴滚动条（不要 X 轴），可看最近 50 条，
+              右边也加详情按钮我可以直接点开"）⇒ 卡片与池卡同款（`.card`）✓ */}
+          <EntryLogCard d={entries} onDetail={setEntrySel} />
         </section>
+      )}
+      {/* 详情弹窗与「因子库」页签**同一个组件**（`FactorDetail`）⇒ 口径、字段、布局全一致 ✓ */}
+      {entrySel && (
+        <FactorDetail f={{ code: entrySel.code ?? '(无编号)', expr: entrySel.expr,
+                           pool: entrySel.pool, summary: entrySel.summary,
+                           family: entrySel.family ?? '', status: entrySel.status ?? '',
+                           inBank: entrySel.inBank, detail: entrySel.detail,
+                           metrics: entrySel.metrics } as LibraryFactor}
+                      onClose={() => setEntrySel(null)} />
       )}
 
       {tab === 'library' && (
@@ -498,6 +518,57 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
     </div>
   )
 }
+
+/** ★★★ 2026-09-17 新增：**新入库日志**卡（池状态区最右，与池卡同款同高）。
+
+用户之问：「我发现又入库了一个新因子，但**找不到什么时候入库的、入的哪个库**」
+⇒ 这张卡回答两件事：**什么时候**（`ts`）· **哪个池**（池标签），并给完整公式的入口 ✓
+
+用户对交互的原话：「**带 Y 轴滚动条（不要 X 轴）**、可以查看最近 50 条、右边也加详情按钮」:
+  · Y 轴滚动 = `.loglist { overflow-y: auto }` ✓
+  · **绝不出横向滚动条** = `overflow-x: hidden` + 文本 `white-space: nowrap; text-overflow: ellipsis` ✓
+  · 详情 = 复用「因子库」页签**同一个** `FactorDetail` 组件（字段/口径/布局一致 ✓）
+⚠ **时间口径必须让人看见**：`engine` = 入库那一刻的真实时间；历史条目是**推算**的
+  （`gen_log` = 该代引擎日志时间 / `md_mtime` = 库文档最后修改）；**拿不到证据的一律标"时间未知"**
+  —— 不臆造是项目铁律，而且"编一个时间"比"空着"更糟（会误导判断）✗
+*/
+function EntryLogCard({ d, onDetail }:
+  { d: LibraryEntriesDto | null; onDetail: (e: LibraryEntryDto) => void }) {
+  const rows = d?.entries ?? []
+  return (
+    <div className="card">
+      <div className="card-h">
+        <span className="dot" style={{ background: 'var(--indigo)' }} />
+        <b>新入库日志</b>
+        <span className="pid" title={d?.note || ''}>
+          最近 {rows.length} 条{d ? ` · 共 ${d.count}` : ''}
+        </span>
+      </div>
+      <div className="loglist">
+        {rows.map((e, i) => (
+          <div className="logrow" key={`${e.pool}-${e.code ?? 'x'}-${e.ts ?? i}-${i}`}>
+            <span className="lt"
+                  title={e.ts ? `${e.ts}（${e.tsNote || e.tsSource || ''}）` : (e.tsNote || '时间未知')}>
+              {e.ts ? e.ts.slice(5, 16) : '时间未知'}
+            </span>
+            <span className="lp">{e.pool === 'all' ? '全A' : e.pool}</span>
+            <span className="lc">{e.code ?? '无编号'}</span>
+            <span className="ls" title={e.expr || e.summary || ''}>
+              {e.summary || e.oneLiner || e.expr || '—'}
+            </span>
+            <button className="btn sm" onClick={() => onDetail(e)}>详情</button>
+          </div>
+        ))}
+        {!rows.length && <div className="empty">还没有入库记录（跑一次挖掘后就有了）</div>}
+      </div>
+      <div className="card-f">
+        <span>标时间未知的 = 早期入库、没留记录（不臆造）</span>
+        <span>点详情看完整公式</span>
+      </div>
+    </div>
+  )
+}
+
 
 function Field({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
   return (

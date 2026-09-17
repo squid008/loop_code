@@ -839,6 +839,51 @@ def _mk_library_skeleton(fname):
     io.open(LIBRARY, 'w', encoding='utf-8').write(txt)
 
 
+# ★★★★ 2026-09-17（用户："我发现又入库了一个新因子，但**找不到什么时候入库的、入的哪个库**"
+#   ⇒ 要求看板池状态区加一张"新入库日志"卡片）：
+#   入库事件日志（**append-only JSONL**，进 git ⇒ 换机器也看得到）——
+#   · 一行 = 一次入库：时间 / 池 / 代数 / 编号 / 公式 / 家族 / 一句话
+#   · 由**引擎入库那一刻**写（真实时间 ✓）；历史条目由
+#     `tools/backfill_library_entries.py` **回填**（时间取自该代引擎日志的 mtime，
+#     并标 `tsSource` —— 推算出来的时间**必须标明来路**，不许冒充"记录时间" ✗）
+LIB_ENTRIES = os.path.join(os.path.dirname(HERE), 'docs', 'library_entries.jsonl')
+
+
+def append_library_entries(evs, quiet=False):
+    """把**本次入库**的事件追加进 `docs/library_entries.jsonl`（幂等：同 (pool, code) 只留一条）。
+
+    ⚠ 契约与 `_lib_sync` 一致：**任何失败只告警，绝不影响入库主流程** ✓（但**必须吼**）
+    """
+    if not evs:
+        return 0
+    try:
+        old = []
+        if os.path.exists(LIB_ENTRIES):
+            with io.open(LIB_ENTRIES, encoding='utf-8') as f:
+                for ln in f:
+                    ln = ln.strip()
+                    if not ln:
+                        continue
+                    try:
+                        old.append(json.loads(ln))
+                    except Exception:
+                        continue          # 坏行跳过（不让一行脏数据毁掉整个日志 ✓）
+        seen = {(x.get('pool'), x.get('code')) for x in old}
+        add = [e for e in evs if (e.get('pool'), e.get('code')) not in seen]
+        if not add:
+            return 0
+        os.makedirs(os.path.dirname(LIB_ENTRIES), exist_ok=True)
+        with io.open(LIB_ENTRIES, 'a', encoding='utf-8') as f:
+            for e in add:
+                f.write(json.dumps(e, ensure_ascii=False) + '\n')
+        if not quiet:
+            print('  [入库日志] +%d 条 -> %s' % (len(add), os.path.basename(LIB_ENTRIES)))
+        return len(add)
+    except Exception as e:                # noqa: BLE001
+        print('  [入库日志] [!] 写入失败（不影响入库）: %s: %s' % (type(e).__name__, e))
+        return 0
+
+
 def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_grades=None):
     """本代新入库因子自动同步追加进 docs/factor_library.md(只增不改历史, 家族命名留待人工精炼)。
     幂等: 编号取文本现有最大 F{nn}+1; 任何失败仅告警, 绝不影响入库主流程。
@@ -877,6 +922,7 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
         nos = [int(x) for x in re.findall(r'\bF(\d{2})\b', txt)]
         no = (max(nos) + 1) if nos else 1
         tbl_rows, det_rows = [], []
+        evs = []                     # ★ 入库事件（写 md 的同时落到 `library_entries.jsonl` ✓）
         for expr in added_exprs:
             r = rows.get(expr)
             if r is None:
@@ -945,6 +991,11 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
                 '- 费后指标（full，成本 %s）：%s\n'
                 % (no, gen, expr, _sg_line2, fam, leaf_s, skel, _tg_line, _sg_line,
                    cost_label(r['cost']), met))
+            evs.append(dict(ts=time.strftime('%Y-%m-%d %H:%M:%S'), tsSource='engine',
+                            source='engine', pool=MINE_POOL, gen=int(gen),
+                            code='F%02d' % no, expr=expr, family=fam, oneLiner=short,
+                            ic=(float(r['ic']) if np.isfinite(r['ic']) else None),
+                            annEx=(float(r['ann_ex']) if np.isfinite(r['ann_ex']) else None)))
             no += 1
         if not det_rows:
             return
@@ -974,6 +1025,8 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
         else:
             txt = txt[:p] + add_det + '\n---\n\n' + txt[p:]
         io.open(LIBRARY, 'w', encoding='utf-8').write(txt)
+        # ★ 同步落一份**结构化入库事件**（看板"新入库日志"卡片读它 ✓；失败只告警、不影响入库 ✓）
+        append_library_entries(evs)
         # ⚠ 打印**真实文件名**（2026-09-13）：原先硬编码写 `factor_library.md`，
         #   池轨道跑时也在报 `factor_library.md`，**指到了别的文件** ⇒ 排查时误导。
         print(f"  [文档] {os.path.basename(LIBRARY)} 已自动追加 {len(det_rows)} 条新入库 "

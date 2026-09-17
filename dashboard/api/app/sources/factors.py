@@ -6,11 +6,13 @@
   · `factor_pool_selected.md`             —— 精选清单（**双闸门**后，含完整表达式）
   · `loop_strip_style_bank.csv`           —— 剥风格评估口径（`strip_calmar` / `grade`）
   · `loop_pool_obs{,_300,_500,_1000}.csv` —— 池内指标（`ic/calmar/calmar_d/ann_ex/turn/...`）
+  · `library_entries.jsonl`                —— ★ 新入库事件日志（**时间/池/代数/编号/公式**，看板「新入库日志」卡）
 
 ★ 目标（用户 2026-09-15）：**逐步往「聚宽因子看板」+ PG 数据库靠**
   ⇒ 所以这里已按"**可入库的规整结构**"输出（每行一个因子 + 统一字段名），
     将来接 PG 只需把本模块的 dict 直接 insert ✓
 """
+import json
 import os
 import re
 
@@ -192,6 +194,58 @@ def _md_table(lines, header_hint, max_rows=400):
         if len(out) >= max_rows:
             break
     return head or [], out
+
+
+def library_entries(limit=50):
+    """★ 2026-09-17（用户："我发现又入库了一个新因子，但**找不到什么时候入库的、入的哪个库**"
+    ⇒ 要求池状态区加一张"新入库日志"卡片）：
+
+    数据源 = `docs/library_entries.jsonl`（**append-only**，进 git ⇒ 换机器也看得到）：
+      · 引擎入库那一刻写（`ts` = **真实时间**，`source='engine'` ✓）
+      · 历史条目由 `tools/backfill_library_entries.py` **回填**（时间取自该代引擎日志 mtime，
+        `tsSource` 标明是推算的 ✓ —— 推算必须标注来路，不许冒充记录时间 ✗）
+    返回**最近 `limit` 条**，并补齐成"库清单里那种因子对象"（`detail`/`metrics`/`inBank`）
+    ⇒ 看板可**复用同一个详情弹层** ✓
+    """
+    p = core.docs_path('library_entries.jsonl')
+    txt = core.read_text(p)
+    evs = []
+    for ln in txt.splitlines():
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            evs.append(json.loads(ln))
+        except Exception:
+            continue                       # 坏行跳过（不让一行脏数据毁掉整张卡 ✓）
+    n_all = len(evs)
+    tail = evs[-limit:] if limit and limit > 0 else evs
+    libs = {}
+
+    def _lib(pool):
+        if pool not in libs:
+            libs[pool] = {f['code']: f for f in (library(pool).get('factors') or [])}
+        return libs[pool]
+
+    out = []
+    for e in reversed(tail):               # ★ 倒序：最新的在最上面 ✓
+        pool = e.get('pool') or 'all'
+        f = _lib(pool).get(e.get('code')) or {}
+        row = dict(e)
+        for k in ('detail', 'metrics', 'inBank', 'status'):
+            if k in f and k not in row:
+                row[k] = f[k]
+        # 库清单里的 `summary`（一句话，出口已清洗 ✓）优先；事件里的是入库时的原始值 ✓
+        row['summary'] = f.get('summary') or _plain(e.get('oneLiner') or '')
+        row['family'] = f.get('family') or _plain(e.get('family') or '')
+        row['expr'] = f.get('expr') or e.get('expr') or ''
+        row['inLibrary'] = bool(f)          # 这条编号今天还在库文档里吗（≠ 在有效库，见 inBank ✓）
+        out.append(row)
+    return {'count': n_all, 'limit': limit, 'entries': out,
+            # ⚠ 这段会**原样显示在看板上**（鼠标提示）⇒ 一律自然语言 + 普通标点 ✓
+            #   （不许 `**` / 反引号 / 引号 —— 有 `_test_ui_quotes` 与 `_test_ai_tone` 两道守门 ✗）
+            'note': ('时间取自引擎入库那一刻（source=engine）；历史条目另有 tsSource 说明是推算'
+                     '（该代引擎日志的写入时间，或该池库文档最后修改时间）')}
 
 
 def library(pool):

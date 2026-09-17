@@ -178,6 +178,21 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .fk { color: var(--mut); font-size: 12px; }
 .fv { font-family: var(--mono); font-size: 13px; }
 .fv.strong { color: var(--sky); font-weight: 650; }
+/* ★★★ 2026-09-17「新入库日志」卡（池状态区最右，与池卡同款）：**只许纵向滚动** ✓
+   用户原话："带 Y 轴滚动条的（**不要 X 轴滚动条**哈），可以查看最近 50 条，右边也加详情按钮"
+   ⚠ 不出横向滚动条的关键：容器 `overflow-x: hidden` + 长文本那格
+     `min-width: 0` + `white-space: nowrap` + `text-overflow: ellipsis`（少任一条都会横向溢出 ✗） */
+.loglist { margin: 11px 0 8px; max-height: 236px; overflow-y: auto; overflow-x: hidden; }
+.logrow { display: flex; align-items: center; gap: 8px; padding: 5px 0;
+          border-bottom: 1px dashed #23305a; }
+.logrow .lt { flex: none; width: 80px; font-family: var(--mono); font-size: 11px; color: var(--mut); }
+.logrow .lp { flex: none; font-size: 11px; border: 1px solid var(--bd); border-radius: 6px;
+              padding: 0 6px; color: #8fb2ff; background: var(--card2); }
+.logrow .lc { flex: none; width: 48px; font-family: var(--mono); font-size: 12px;
+              font-weight: 650; color: var(--sky); }
+.logrow .ls { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden;
+              text-overflow: ellipsis; color: var(--mut); font-size: 12px; }
+.logrow .btn.sm { flex: none; padding: 2px 8px; font-size: 11.5px; }
 .card-f { display: flex; justify-content: space-between; color: var(--mut); font-size: 11.5px;
           border-top: 1px solid var(--bd); padding-top: 8px; margin-top: 4px; }
 
