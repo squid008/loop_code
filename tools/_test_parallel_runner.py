@@ -21,6 +21,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 
 try:
@@ -63,6 +64,66 @@ def snapshot():
             if fn.startswith(pat) and (fn.endswith('.pkl') or fn.endswith('.md')):
                 out[os.path.join(d, fn)] = sha(os.path.join(d, fn))
     return out
+
+
+def t_ctl_lock():
+    """★ 真跑一遍跨进程锁（**在临时路径上**，绝不碰真控制文件 —— 用户可能正在挖 ✗）"""
+    print('\n===== 控制文件写锁（真跑；用临时 lock 路径）=====')
+    import run_tracks as RT
+    old = RT.CTL_LOCK
+    tmpd = tempfile.gettempdir()
+    RT.CTL_LOCK = os.path.join(tmpd, '_lck_probe.lock')
+    try:
+        for p in (RT.CTL_LOCK,):
+            if os.path.exists(p):
+                os.remove(p)
+        # 手工"占锁" 0.5s ⇒ 期间调 `_with_ctl_lock` 必须**等**（证明它真走锁，而不是直接写）
+        # (a) 别的进程"占锁 0.5s 后放开" ⇒ 本次调用**必须等**，放开后立刻拿到并执行 ✓
+        import threading
+
+        def _holder():
+            _fd = os.open(RT.CTL_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.close(_fd)
+            time.sleep(0.5)
+            os.unlink(RT.CTL_LOCK)
+
+        _th = threading.Thread(target=_holder)
+        _th.start()
+        time.sleep(0.1)
+        _seen = []
+        t0 = time.time()
+        RT._with_ctl_lock(lambda: _seen.append(True))
+        dt = time.time() - t0
+        _th.join()
+        chk('拿不到锁时**会等待**（实测等 %.2fs）—— 否则等于没锁 ✗' % dt, dt >= 0.3)
+        chk('锁里的函数**真的被执行**了（不是"拿到锁就返回"）', _seen == [True])
+        chk('执行完**释放锁**（lock 文件被清掉）', not os.path.exists(RT.CTL_LOCK))
+        # (b) 锁**一直被占着**（持有者崩掉那种）⇒ 超时后**照样写**（不卡死调度器/接口）✓
+        _fd = os.open(RT.CTL_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        os.close(_fd)
+        _seen = []
+        t0 = time.time()
+        RT._with_ctl_lock(lambda: _seen.append(True))
+        dt = time.time() - t0
+        chk('★ 锁一直被占 ⇒ 超时后**照样执行**（实测 %.1fs），绝不卡死 ✗' % dt,
+            _seen == [True] and dt < 8.0)
+        os.unlink(RT.CTL_LOCK)
+        # (c) 陈旧锁（>15s 的残留）必须被自动清理，否则一次崩溃就永久卡住所有写
+        open(RT.CTL_LOCK, 'w').write('stale')
+        _old_t = time.time() - 60
+        os.utime(RT.CTL_LOCK, (_old_t, _old_t))
+        t0 = time.time()
+        _seen = []
+        RT._with_ctl_lock(lambda: _seen.append(True))
+        chk('★ **陈旧锁**（>15s 残留）会被清掉后立刻拿到（不是干等超时）',
+            _seen == [True] and time.time() - t0 < 1.0)
+    finally:
+        RT.CTL_LOCK = old
+        try:
+            if os.path.exists(os.path.join(tmpd, '_lck_probe.lock')):
+                os.remove(os.path.join(tmpd, '_lck_probe.lock'))
+        except OSError:
+            pass
 
 
 def main():
@@ -109,7 +170,23 @@ def main():
         '启动时按 len(pools) 算死 ⇒ 1 个池启动后加的池只能排队 ✗（用户实测到的点）')
     chk('A15 ★ auto 时把**有效上限**写回控制文件（看板显示的是真话，不是启动时的旧值）',
         "'maxParallel': eff_max" in pr)
+    # ★★ 2026-09-17（用户实测："只有 300 池是绿点在跑，但显示有 2 个池在挖" + "几个池蓝点像轮转"）
+    chk('A16 ★★ 收割后**立刻重写 `active`**（否则控制文件残留**已死引擎**的 pid ⇒ 看板撒谎）',
+        'RT.write_ctl(active=[' in pr,
+        '原来只在"启动新引擎"时写 active ⇒ 引擎崩了/被杀后列表永远是旧的 ✗')
+    chk('A17 ★★ 崩溃**结构化写进控制文件**（各池 `crashes`）⇒ 前端卡片能提示"启动即崩"',
+        'write_ctl(crashes=' in pr and 'crashes=_cr' in pr,
+        '只写日志 ⇒ 池子每代秒崩、卡片照旧"并行中"蓝点 ⇒ 用户白等一整晚 ✗（这次实测踩到）')
+    chk('A18 ★★ 控制文件写操作**加跨进程锁**（read-modify-write 并发会丢更新）',
+        'def _with_ctl_lock(' in rt and '_with_ctl_lock(_do)' in rt,
+        '实录：调度器写的 `active` 被后端"停止池"写回的旧快照吞掉 ⇒ 残留已死 pid ✗（锁在 run_tracks）')
+    chk('A19 ★★ 崩了的池**本轮就重试**（不干等下一轮，但有次数上限防刷屏）',
+        'MAX_CRASH_RETRY' in pr and 'launched.discard' in pr,
+        '原来崩掉也记 `launched` ⇒ 要等下一轮（可能半小时）才再试 ✗')
 
+    # ★★ 锁测试**必须放在这里**（在 `--quick` / "有人在挖就跳过"两个 early-return **之前**）——
+    #    否则用户正在挖的时候这条永远不跑（本次就是在挖的时候发现 A18 挂了才知道 ✗）
+    t_ctl_lock()
     print()
     print('=' * 88)
     print('【B】端到端：--exec_mode=parallel 真跑一次（`--gen_only`，不写状态）')
@@ -178,6 +255,7 @@ def main():
         if ctl_bak and os.path.exists(ctl_bak):
             shutil.move(ctl_bak, CTL)        # ★ 还原用户的控制文件（enabled/stopped 是**用户配置**）
             print('  [ctl] 已还原测试前的 _control.json ✓')
+    t_ctl_lock()
     return _report()
 
 

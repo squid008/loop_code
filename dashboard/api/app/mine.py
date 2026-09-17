@@ -55,6 +55,7 @@ from .sources import core, pools
 RUN_TRACKS = os.path.join(settings.PROJECT_ROOT, 'tools', 'run_tracks.py')
 LOGD = os.path.join(settings.PROJECT_ROOT, 'ai_test', '_tracks')
 CTL_FILE = os.path.join(LOGD, '_control.json')
+CTL_LOCK = CTL_FILE + '.lock'        # ★ 跨进程写锁（见 `_with_ctl_lock`；与 tools/run_tracks.py 同款）
 
 ROUNDS_MIN, ROUNDS_MAX = 1, 200
 DEFAULT_ROUNDS = 50
@@ -154,19 +155,54 @@ def ctl():
     return d
 
 
+def _with_ctl_lock(fn, tries=80, wait=0.05):
+    """★ 与 `tools/run_tracks.py::_with_ctl_lock` **同款**（跨进程文件锁）。
+
+    ★★ 2026-09-17（用户实测："只有 300 池是绿点，却显示 2 个池在挖"）：
+      `_write_ctl` 是 **read-modify-write**，而调度器和后端**都会写它** ⇒ 交错就**丢更新**
+      （实录：调度器写的 `active` 被后端那次"停止池"写回的**旧快照**吞掉 ⇒ 残留已死 pid）✗
+      ⇒ 必须加锁；⚠ 侧不为了锁卡死：超时（4s）照样写、并清掉陈旧锁（>15s）✓
+    """
+    for _ in range(tries):
+        try:
+            fd = os.open(CTL_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(CTL_LOCK) > 15:
+                    os.unlink(CTL_LOCK)
+                    continue
+            except OSError:
+                pass
+            time.sleep(wait)
+            continue
+        try:
+            return fn()
+        finally:
+            os.close(fd)
+            try:
+                os.unlink(CTL_LOCK)
+            except OSError:
+                pass
+    return fn()
+
+
 def _write_ctl(**kw):
-    d = ctl()
-    d.update(kw)
-    d['updated'] = _now()
-    try:
-        os.makedirs(LOGD, exist_ok=True)
-        tmp = CTL_FILE + '.tmp'
-        with io.open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(d, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, CTL_FILE)          # ★ 原子 ⇒ 调度器永远读到完整 JSON ✓
-    except Exception as e:
-        raise MineError('写控制文件失败: %r' % (e,), 500)
-    return d
+    def _do():
+        d = ctl()
+        d.update(kw)
+        d['updated'] = _now()
+        try:
+            os.makedirs(LOGD, exist_ok=True)
+            tmp = CTL_FILE + '.tmp'
+            with io.open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(d, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, CTL_FILE)      # ★ 原子 ⇒ 调度器永远读到完整 JSON ✓
+        except Exception as e:
+            # ⚠ 保持原语义：**写不进控制文件必须报错**（不然用户以为"点了生效了"其实没写）✗
+            raise MineError('写控制文件失败: %r' % (e,), 500)
+        return d
+
+    return _with_ctl_lock(_do)
 
 
 # ---------------------------------------------------------------- 资源 / 进程
@@ -236,6 +272,10 @@ def state():
     en = [p for p in (c.get('enabled') or known) if p in known] or known
     st = [p for p in (c.get('stopped') or []) if p in known]
     by_pool = {}
+    # ★★★★ 2026-09-17（用户："几个池子显示蓝点、只有 300 池是绿点，像轮转"）：
+    #   各池最近几次"**启动即崩**"的代数（调度器写在控制文件里）—— 必须让用户**看得见** ✗
+    #   （以前只躺在日志里 ⇒ 池子每代秒崩，卡片却照旧"并行中"蓝点 ⇒ 白等一整晚）
+    _crashes = c.get('crashes') or {}
     for k in known:
         # ★★★★ 2026-09-16 修 BUG I：`mining` 必须**以"真的有它的引擎在跑"为准**，
         #   不能只看调度器的 `curPool` —— 否则会出现
@@ -248,6 +288,8 @@ def state():
             'stopped': k in st,
             'mining': bool(_eng),                    # ★ 有引擎 = 正在跑 ✓
             'engine': _eng,
+            'crashes': [int(x) for x in (_crashes.get(k) or [])
+                        if isinstance(x, (int, float))][-3:],
         }
     phase = c.get('phase') or 'idle'
     if not running_now and phase in ('mine',):
@@ -304,8 +346,16 @@ def state():
         # ★★ 2026-09-17（用户："300、500 池并行挖的话…鼠标放上去就显示 正在跑：300·gen54 /
         #   正在跑：500·gen17"）⇒ 需要**每个在跑的池各自的代数** ⇒ 直接透传控制文件里的 `active`
         #   （调度器每启动一个引擎就写一条 `{pool, gen, pid}` —— 这是**最准**的来源，只扣字段不加逻辑）✓
+        # ★★★★ 2026-09-17 修（用户实测："只有 300 池是绿点在跑，但显示有 2 个池在挖"）：
+        #   `active` 由调度器写，可能**残留已死引擎**（引擎崩了/被杀，调度器还没重写它）
+        #   ⇒ 一律**按活进程核对**：pid 必须**在真实引擎列表里**，否则丢掉 ✓
+        #   （宁可少报，不可谎报 —— 这正是用户被误导的那一处 ✗）
         'active': [{'pool': a.get('pool'), 'gen': a.get('gen'), 'pid': a.get('pid')}
-                   for a in (c.get('active') or []) if isinstance(a, dict) and a.get('pool')],
+                   for a in (c.get('active') or [])
+                   if isinstance(a, dict) and a.get('pool')
+                   and a.get('pid') in {p['pid'] for p in engs}],
+        'crashes': {k: [int(x) for x in v if isinstance(x, (int, float))][-3:]
+                    for k, v in _crashes.items() if v},
         'round': c.get('round'), 'rounds': c.get('rounds'),
         'roundText': (('第 %s 轮' % c.get('round')) if c.get('round') else None),
         'curText': (('%s · gen %s' % (cur, c.get('curGen'))) if cur else None),

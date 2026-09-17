@@ -205,6 +205,7 @@ def _ltime():
 #     ⇒ 所以杀掉"当前那一代"= 该代整体作废、旧状态完好、下次重跑 ✓
 # ============================================================================================
 CTL_FILE = os.path.join(LOGD, '_control.json')
+CTL_LOCK = CTL_FILE + '.lock'          # ★ 跨进程写锁（见 `_with_ctl_lock`）
 
 CTL_DEFAULT = {'running': False, 'enabled': [], 'stopped': [], 'stopAll': False,
                'rounds': 0, 'round': 0, 'curPool': None, 'curGen': None,
@@ -223,19 +224,60 @@ def read_ctl():
 
 
 def write_ctl(**kw):
-    """★ 合并式更新控制文件（其他键保持不动）—— 前端/调度器**并发读写**时更安全。"""
-    d = read_ctl()
-    d.update(kw)
-    d['updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-    try:
-        os.makedirs(LOGD, exist_ok=True)
-        tmp = CTL_FILE + '.tmp'
-        with io.open(tmp, 'w', encoding='utf-8') as f:
-            json.dump(d, f, ensure_ascii=False, indent=1)
-        os.replace(tmp, CTL_FILE)          # ★ 原子替换：前端读到的永远是完整 JSON ✓
-    except Exception as e:
-        log('[CTL] 写控制文件失败: {!r}'.format(e))
-    return d
+    """★ 合并式更新控制文件（其他键保持不动）—— 前端/调度器**并发读写**时更安全。
+
+    ★★★★ 2026-09-17 修**并发丢更新**（用户实测："只有 300 池是绿点，却显示 2 个池在挖"）：
+      本函数是 **read-modify-write**，而前端点一次启停、调度器起一次引擎**都会写它**
+      ⇒ 两个进程交错（A 读 → B 读 → A 写 → B 写）⇒ **后写的把先写的字段整段吞掉** ✗
+      ★ 实录（就是这次的现象）：09:40:46 调度器把 `active` 写成 `[300, all]`，09:40:51
+        前端那次"停止 50"写回的是**它更早读到的快照** ⇒ `active` 退回 09:39:01 的
+        `[500,1000,300]`（含两个**已死 pid**）⇒ 看板/鼠标提示照着撒谎 ✗✗
+      ⇒ 加**跨进程文件锁**（`O_CREAT|O_EXCL` 原子创建，Windows/Linux 通吃）✓
+    """
+    def _do():
+        d = read_ctl()
+        d.update(kw)
+        d['updated'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        try:
+            os.makedirs(LOGD, exist_ok=True)
+            tmp = CTL_FILE + '.tmp'
+            with io.open(tmp, 'w', encoding='utf-8') as f:
+                json.dump(d, f, ensure_ascii=False, indent=1)
+            os.replace(tmp, CTL_FILE)      # ★ 原子替换：前端读到的永远是完整 JSON ✓
+        except Exception as e:
+            log('[CTL] 写控制文件失败: {!r}'.format(e))
+        return d
+
+    return _with_ctl_lock(_do)
+
+
+def _with_ctl_lock(fn, tries=80, wait=0.05):
+    """跨进程互斥：拿锁 → 执行 → 放锁。
+
+    ⚠ **绝不为了锁把调度器/接口卡死**：持有者崩掉会残留 lock 文件 ⇒ 超时（4s）就**照样写**；
+      并顺手清掉**陈旧锁**（>15s 视为残留）✓（宁可偶发丢一次更新，也不能让循环停摆）
+    """
+    for _ in range(tries):
+        try:
+            fd = os.open(CTL_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError:
+            try:
+                if time.time() - os.path.getmtime(CTL_LOCK) > 15:
+                    os.unlink(CTL_LOCK)          # 残留锁 ⇒ 清掉再抢
+                    continue
+            except OSError:
+                pass
+            time.sleep(wait)
+            continue
+        try:
+            return fn()
+        finally:
+            os.close(fd)
+            try:
+                os.unlink(CTL_LOCK)
+            except OSError:
+                pass
+    return fn()                                  # 拿不到锁也要写（不卡死优先）
 
 
 def do_global_tail(tag=''):

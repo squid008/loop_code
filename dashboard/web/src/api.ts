@@ -210,6 +210,8 @@ export interface PoolSlot {
   stopped: boolean      // 是否被单独停掉
   mining: boolean       // 是否正在跑它这一代
   engine: number[]      // 该池当前引擎 PID
+  /** ★ 2026-09-17：最近几次"启动即崩"的代数（空 = 没崩过）。崩了必须在卡片上看得见 */
+  crashes: number[]
 }
 
 export interface MineStateDto {
@@ -235,6 +237,8 @@ export interface MineStateDto {
   enabled: string[]
   stopped: string[]
   byPool: Record<string, PoolSlot>
+  /** ★ 2026-09-17：各池最近几次"启动即崩"的代数（{池: [gen, ...]}） */
+  crashes?: Record<string, number[]>
   runningPools: string[]
   freeGB: number | null
   gbPerEngine: number

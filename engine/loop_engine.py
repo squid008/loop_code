@@ -1040,13 +1040,43 @@ def bad_skels(fail_lib, gen, min_fail=3, rate=0.6, keep_gen=5):
             and e['ok'] == 0 and e['fail'] / max(e['try_'], 1) >= rate}
 
 
+def _wt(d, k):
+    """取权重：**存在且非 None** 才用它，否则回退 1.0（均匀）✓
+
+    ★★ 2026-09-17（修引擎秒崩的加固层）：`dict.get(k, 1.0)` **只在键不存在时**给默认值 ——
+      若键存在但值是 `None`，它照样返回 `None` ⇒ `rng.choices(weights=[None,...])` 直接抛异常 ✗
+      （实测根因在 `loop_critic._set_param`，已单独修；这里是**第二道防线**：
+       任何来源的 None（旧 state / 人工编辑 / 未来的新代码）都不该让整个池停摆一整晚）
+       ⚠ 用 `is None` 判断而不是 `or` —— **0 权重是有意义的**（= 永不抽这个叶子），不能被当成 None ✓
+    """
+    v = (d or {}).get(k)
+    return 1.0 if v is None else v
+
+
+def _clean_cfg(cfg):
+    """把 cfg 里 `leaf_w`/`op_bias` 的 **None 值剔除**（= 回到"该键不存在" ⇒ 均匀权重）✓
+
+    ★★ 2026-09-17（"引擎秒崩"的**自愈**层）：v1.17.1 之前 `loop_critic._set_param` 会把棘轮
+      回退的 `old=None` 当真值写进 cfg ⇒ 这些脏值**如果已被存进 state 就会一直崩下去** ✗
+      ⇒ 读 state 时先洗一遍（配合 `_wt` 的第二道防线，双保险）✓
+    """
+    if not isinstance(cfg, dict):
+        return dict(DEFAULT_CFG)
+    out = dict(cfg)
+    for k in ('leaf_w', 'op_bias'):
+        d = out.get(k)
+        if isinstance(d, dict):
+            out[k] = {a: b for a, b in d.items() if b is not None}
+    return out
+
+
 def pick_leaf(rng, cfg):
-    w = [cfg['leaf_w'].get(l, 1.0) for l in LEAVES]
+    w = [_wt(cfg.get('leaf_w'), l) for l in LEAVES]
     return rng.choices(LEAVES, weights=w, k=1)[0]
 
 
 def pick_op(rng, cfg, pool):
-    w = [cfg['op_bias'].get(o, 1.0) for o in pool]
+    w = [_wt(cfg.get('op_bias'), o) for o in pool]
     return rng.choices(pool, weights=w, k=1)[0]
 
 
@@ -1885,7 +1915,7 @@ def run(args):
             bank_ex = {}
         frozen = st.get('frozen', [])
         fail_lib = st.get('fail_lib', {})  # 失败模式库
-        cfg = st.get('cfg', cfg)
+        cfg = _clean_cfg(st.get('cfg', cfg))     # ★ 洗掉历史脏值（None 权重）—— 见 `_clean_cfg`
         _prev_pool_map = st.get('last_pool_map', None)
         print(f"载入上一代种子 {len(seeds)} 个, 入库因子 {len(bank)} 个, "
               f"冻结骨架 {len(frozen)} 个, 失败库 {len(fail_lib)} 条, "
@@ -2940,7 +2970,8 @@ def _mix_weights(base, freq, universe, family=False):
             n = freq.get(''.join(c for c in k if not c.isdigit()), 0.0) / mx
         else:
             n = freq.get(k, 0.0) / mx
-        out[k] = base.get(k, 1.0) * (0.3 + 0.7 * n)
+        # ⚠ 同 `_wt`：`base[k] is None` 时 `.get(k, 1.0)` 返回 None ⇒ 乘出来炸（2026-09-17 加固）
+        out[k] = _wt(base, k) * (0.3 + 0.7 * n)
     return out
 
 

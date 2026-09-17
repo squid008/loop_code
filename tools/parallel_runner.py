@@ -140,17 +140,36 @@ def _reap(t):
             RT.log('        [note] 本代入库 0（连续多代如此先看 fail_* 分布再下结论）')
     except Exception:
         pass
+    t['crashed'] = False
     if rc != 0 or errsz > 0:
         ctl = RT.read_ctl()
         killed = bool(ctl.get('stopAll')) or (t['pool'] in set(ctl.get('stopped') or []))
         # ★ 2026-09-16：把"是不是被用户停的"**带出去**给调用方（用来触发"本轮不再补位"）✓
         t['killed'] = bool(killed)
+        # ★ 2026-09-17：**崩溃**（不是被用户停的）⇒ 调用方**本轮就重试**（不必等下一轮）✓
+        t['crashed'] = not killed
         RT.log('[!] pool={} 本代非正常结束{} -> **只跳过本池本轮**。人工看 {}'.format(
             t['pool'], '（★ 被用户停止，该代作废下次重跑）' if killed else '（疑似崩溃）',
             os.path.basename(t['errf'])))
         ok = False
+        if not killed:
+            # ★★★★ 2026-09-17（用户实测："几个池子显示蓝点、只有 300 是绿点，像轮转"）：
+            #   **崩溃必须在看板上看得见**！以前只写在日志里 ⇒ 池子每代秒崩、卡片却照旧显示
+            #   "并行中"（蓝点），用户完全无从发现 ✗✗（这次就是被这个坑耽误了一整晚）
+            #   ⇒ 把各池最近几次"启动即崩"的代数**结构化写进控制文件**，前端在卡片上红字提示 ✓
+            try:
+                _cr = {k: list(v)[-3:] for k, v in (ctl.get('crashes') or {}).items()}
+                _g = list(_cr.get(t['pool']) or [])
+                if t['gen'] not in _g:
+                    _g.append(t['gen'])
+                _cr[t['pool']] = _g[-3:]                      # 只留最近 3 次，别让文件长草
+                RT.write_ctl(crashes=_cr)
+            except Exception as _e:                           # 记不上也不能影响调度 ✓
+                RT.log('        [warn] 崩溃计数写控制文件失败: {!r}'.format(_e))
     return ok
 
+
+MAX_CRASH_RETRY = 2    # ★ 某池"启动即崩"时**本轮**最多重试几次（2026-09-17；防必崩时无限刷屏）
 
 MIN_FREE_GB = 3.0      # 系统余量（与看板 `mine.MIN_FREE_GB` 同一口径：留 3 GB 不碰）
 
@@ -239,6 +258,7 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
             #     ★ 只有"**你在 stopped 里、之后又被「启动本池」放回来**"的池才允许马上上
             #       ⇒ 既不会自动顶上来，又让你手动加的那个立刻开挖 ✓✓
             launched = set()                 # 本轮已启动
+            retries = {}                     # ★ 池 -> 本轮"崩溃重试"已用次数（见 `MAX_CRASH_RETRY`）
             deferred = {}                    # 池 -> 顺延那一刻的 stopped 快照（用来认"你重新启用"）
             ran_round = False
             while True:
@@ -274,6 +294,27 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                                    '就保持"停完剩下的 {} 个"在跑；空出来的槽**留给你自己决定**'
                                    '（「启动本池」的那个会**马上**开挖）✓'.format(len(running) - 1))
                         running.remove(t)
+                        # ★★★★ 2026-09-17 修（用户实测："只有 300 池是绿点在跑，但显示有 2 个池在挖"）：
+                        #   收割后**立刻按当前在跑集合重写 `active`** —— 否则控制文件里会残留
+                        #   **已死引擎**的 `{pool, gen, pid}`（原来只在"启动新引擎"时才写它）✗
+                        #   ⇒ 看板/鼠标提示会拿旧列表撒谎（后端另有一道"按活进程核对"，双保险）✓
+                        RT.write_ctl(active=[{'pool': x['pool'], 'gen': x['gen'], 'pid': x['pr'].pid}
+                                             for x in running])
+                        # ★★ 2026-09-17：**崩了的池本轮就重试**（用户在"蓝点"上白等过一整晚）——
+                        #   原来崩掉也记 `launched` ⇒ 该池要等到**下一轮**（可能半小时后）才再试 ✗
+                        #   ⇒ 现在按 `MAX_CRASH_RETRY` 次重试（防"必崩"时无限重启刷屏）✓
+                        if t.get('crashed'):
+                            _n = retries.get(t['pool'], 0)
+                            if _n < MAX_CRASH_RETRY:
+                                retries[t['pool']] = _n + 1
+                                launched.discard(t['pool'])
+                                RT.log('[CTL] ★ pool={} 本代崩溃 ⇒ **本轮立刻重试**（第 {}/{} 次）'
+                                       '；若一直崩，看它的 *_err.log（别再干等下一轮）✗'.format(
+                                           t['pool'], _n + 1, MAX_CRASH_RETRY))
+                            else:
+                                RT.log('[CTL] pool={} 本轮已崩 {} 次 ⇒ 不再重试（留到下一轮）；'
+                                       '**先看 *_err.log 的 traceback** ✗'.format(
+                                           t['pool'], MAX_CRASH_RETRY))
                 # ---- 动态候选（★ 每次迭代重算）----
                 # ★★★ 候选来自**当前启用集**，不是启动时的 `--pools` 快照！
                 #   2026-09-16 用户实测「点了一个启动、再点一个池子启动，怎么是加入轮转而不是并行？」

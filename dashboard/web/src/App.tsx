@@ -422,8 +422,14 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
   const badge = mining ? (leaving ? '运行中·已移出' : '挖掘中')
     : (inRotation ? (qword + '中')
       : (configured ? '待启动' : (stopped ? '已停止' : '空闲')))
+  // ★★★★ 2026-09-17（用户实测："几个池子显示蓝点、只有 300 是绿点，像轮转"）：
+  //   那几个池其实是**每代秒崩**（`None * float`）⇒ 永远等不到绿点 ✗
+  //   ⇒ 卡片必须**明说"启动即崩"**，否则"蓝点（并行中）"会被误读成"在排队/轮转" ✗✗
+  const crashN = slot?.crashes?.length ?? 0
+  const crashed = !mining && crashN > 0
   const dotColor = mining ? 'var(--ok)'
-    : (inRotation ? 'var(--sky)' : (configured ? 'var(--amber)' : 'var(--idle)'))
+    : (crashed ? '#ef4444'
+      : (inRotation ? 'var(--sky)' : (configured ? 'var(--amber)' : 'var(--idle)')))
   return (
     <div className={cls}>
       <div className="card-h">
@@ -431,6 +437,13 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
         <b>{p.label}</b>
         <span className="pid">{p.key === 'all' ? '全A' : p.key}</span>
         <span className="state">{badge}</span>
+        {crashed && (
+          <span className="crash"
+                title={`${p.label} 最近 ${crashN} 次一启动就崩（gen ${slot!.crashes.join(',')}）——` +
+                       `不是排队、不是轮转；去看 ai_test/_tracks/pool_${p.key}_gen*_err.log 的 traceback`}>
+            启动即崩 ×{crashN}
+          </span>
+        )}
       </div>
       <div className="grid">
         <Field k="当前库（权威）" v={fmt(p.librarySize)} strong />

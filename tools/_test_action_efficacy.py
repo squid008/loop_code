@@ -156,6 +156,51 @@ def t_ratchet(C):
         'r7 的快照记录 depth 写入了 [3,4,5]（**同参数、不同动作**都各记一份）')
 
 
+def t_none_weight(C):
+    print('\n[6] ★★★★ `None` 权重**绝不能写进 cfg**（真 BUG：引擎秒崩 ⇒ 用户看到"蓝点、像轮转"）')
+    # 1) `_set_param` 写 None ⇒ **删键**（不是塞个 None 进去）
+    s = dict(leaf_w={'a': 0.25, 'b': 0.5}, min_stab=0.3)
+    C._set_param(s, 'leaf_w.a', None)
+    chk('a' not in s['leaf_w'] and s['leaf_w'] == {'b': 0.5},
+        '`leaf_w.a` 写 None ⇒ **键被删除**、值不是 None —— 实得 {}'.format(s['leaf_w']))
+    C._set_param(s, 'min_stab', None)
+    chk('min_stab' not in s, '顶层参数写 None ⇒ 同样删键')
+    # 2) 棘轮回退：`old=None` 的语义是"**施加前这个键不存在**" ⇒ 回退必须**删键**（实测根因就在这里）
+    s2 = dict(leaf_w={'barra_growth': 0.25})
+    done, _sk = C._rollback_plan(s2, 'r1_leaf_conc', {'leaf_w.barra_growth': [None, 0.25]})
+    chk(done == [('leaf_w.barra_growth', None)],
+        '回退计划如实返回 old=None（日志里要写明"删键"而不是"恢复成 None"）')
+    chk('barra_growth' not in s2['leaf_w'] and None not in s2['leaf_w'].values(),
+        '★★ 回退后 cfg 里**不含任何 None**（这就是不崩的关键）—— 实得 {}'.format(s2['leaf_w']))
+    chk('删除该键' in open(os.path.join(ENG, 'loop_critic.py'), encoding='utf-8').read(),
+        '回退留痕写明"删除该键"（否则 journal 会让人以为真值就是 None）')
+
+
+def t_none_weights_engine():
+    """★ 真跑一遍引擎侧抽样（有 None 也不该抛异常 —— 这是让池子继续跑的第二道防线）。"""
+    print('\n[7] ★★ 引擎侧抽样/混权/自愈：`None` 权重不再让整池停摆')
+    import random
+    import loop_engine as LE
+    cfg = {'leaf_w': {'barra_growth': None}, 'op_bias': {'ts_std': None}}
+    rng = random.Random(7)
+    try:
+        for _ in range(20):
+            LE.pick_leaf(rng, cfg)
+            LE.pick_op(rng, cfg, ['ts_std', 'ts_rank'])
+        ok, err = True, None
+    except Exception as e:                                 # noqa: BLE001
+        ok, err = False, e
+    chk(ok, '含 None 的 cfg 也能正常抽样（不再 TypeError）{}'.format('' if ok else ' —— ' + repr(err)))
+    m = LE._mix_weights({'a': None, 'b': 2.0}, {'a': 1.0, 'b': 1.0}, ['a', 'b'])
+    chk(all(v is not None for v in m.values()) and abs(m['b'] - 2.0) < 1e-9,
+        '`_mix_weights`：None 回退 1.0，且**原样保留**已给的权重 —— 实得 {}'.format(m))
+    cleaned = LE._clean_cfg({'leaf_w': {'x': None, 'y': 0.25}, 'op_bias': {'o': None}})
+    chk(cleaned['leaf_w'] == {'y': 0.25} and cleaned['op_bias'] == {},
+        '`_clean_cfg` 读 state 时剔除 None（旧脏 state 自愈）—— 实得 {}'.format(cleaned))
+    chk(LE._wt({'k': 0.0}, 'k') == 0.0,
+        '★ **0 权重不被当成 None**（"永不抽它"这个语义必须保住，别用 `or 1.0` 一刀切）')
+
+
 def t_static(C):
     print('\n[5] 静态断言：所有动作都必须走 `_set`（防新增动作**静默漏记**）')
     src = open(os.path.join(ENG, 'loop_critic.py'), encoding='utf-8').read()
@@ -182,6 +227,8 @@ def main():
     t_rollback_plan(C)
     t_efficacy(C)
     t_ratchet(C)
+    t_none_weight(C)
+    t_none_weights_engine()
     t_static(C)
     print('\n' + '=' * 96)
     print('通过 {}/{}'.format(OK[0] - OK[1], OK[0]) + ('' if OK[1] else '  ✓ 全部通过'))

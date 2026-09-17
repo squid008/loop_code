@@ -103,6 +103,14 @@ def main():
         a = FakeProc.last
         chk('含 --exec_mode=parallel', '--exec_mode=parallel' in a, str(a[2:]))
         chk('含 --max_parallel=3（显式传入时按传入值）', '--max_parallel=3' in a)
+        # ★★ 2026-09-17（用户实测："只有 300 池是绿点，却显示 2 个池在挖"）：
+        #   后端与调度器**都要**给控制文件加同一把跨进程锁（否则 read-modify-write 互相吞字段 ✗）
+        chk('后端 `_write_ctl` 走**跨进程锁**（与 tools/run_tracks.py 同款）',
+            '_with_ctl_lock(_do)' in io.open(
+                r'D:\loop_code\dashboard\api\app\mine.py', encoding='utf-8-sig').read())
+        chk('后端 `state()` 把 `active` **按活进程过滤**（文件可能残留已死 pid ⇒ 不许撒谎）',
+            "a.get('pid') in {p['pid'] for p in engs}" in io.open(
+                r'D:\loop_code\dashboard\api\app\mine.py', encoding='utf-8-sig').read())
         chk('显式指定并行数 ⇒ **不带** --auto_parallel（用户的明确指定不被自动覆盖）',
             '--auto_parallel=1' not in a, str(a))
         chk('含 --mem_per_engine=2.5', '--mem_per_engine=2.5' in a)

@@ -164,11 +164,29 @@ def _get_param(s, p):
 
 
 def _set_param(s, p, v):
-    """扁平参数名 -> 写回（嵌套同理）。"""
+    """扁平参数名 -> 写回（嵌套同理）。
+
+    ★★★★ 2026-09-17 修**真 BUG**（用户实测："几个池子显示蓝点、只有 300 池是绿点，像轮转"）：
+      `v is None` ⇒ **删除该键**，绝不许把 `None` 写进字典 ✗✗
+
+    为什么（这次是**引擎秒崩**的根因）：
+      参数棘轮回退时用 `old` 作为恢复值，而 `old=None` 的语义是「**本次施加前这个键根本不存在**」
+      （`_get_param` 取不到就返回 None）⇒ 直接写回就是把 `None` **当成真值**塞进 `cfg['leaf_w']` ✗
+      下一次生成 `pick_leaf`/`_mix_weights` 读到 `None` ⇒ `None * float` / `rng.choices(weights=[None])`
+      ⇒ **TypeError 秒崩**（实测 500/1000/50 三个池各崩两次，每代 0.2 分钟就退出）
+      ⇒ 表现成"那几个池永远不绿"（看板只能显示"并行中"蓝点），看着**像轮转** ✗
+    ⇒ 语义对齐：**None = 该参数不存在** ⇒ 写入 None 就是**删除** ✓（回退 = 回到"不存在"状态）
+    """
     if '.' in p:
         head, sub = p.split('.', 1)
+        if v is None:
+            (s.get(head) or {}).pop(sub, None)
+            return
         s.setdefault(head, {})[sub] = v
     else:
+        if v is None:
+            s.pop(p, None)
+            return
         s[p] = v
 
 
@@ -554,7 +572,11 @@ def suggest(diag, cur=None):
         if done or (skip and not quiet):
             reasons_.append('【{}】↩ 参数棘轮（因{}）：恢复 {}；跳过 {}'.format(
                 aid, why,
-                ', '.join('{}={}'.format(p, _fmtv(v)) for p, v in done) or '（无）',
+                # ⚠ `None` 不是"恢复成 None"，而是"**删掉这个键**"（施加前它不存在）——
+                #   日志必须写清，否则看 journal 的人会以为真值就是 None ✗（2026-09-17 厘清）
+                ', '.join('{}={}'.format(p, _fmtv(v)) if v is not None
+                          else '{}（删除该键：施加前它不存在）'.format(p)
+                          for p, v in done) or '（无）',
                 ', '.join('{}（{}）'.format(p, r) for p, r in skip) or '（无）'))
         # ★★ 只清理**已成功恢复**的记录，**保留跳过的** —— 否则重试机制失效 ✗
         #   （2026-09-14 实录：初版写 `if done: pop('params')`，把跳过的 `depth` 记录一起丢了
