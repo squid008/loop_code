@@ -1105,9 +1105,14 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
             剥成交额 {fmtN3(st.calmars.lnamt)} · 剥两者 {fmtN3(st.calmars.both)}
             {st.calmars.floatcap !== undefined &&
               <> · 剥流通市值 {fmtN3(st.calmars.floatcap)} · 剥总市值+限售 {fmtN3(st.calmars.caplimit)}</>}
-            {st.calmars.allsty !== undefined &&
-              <> · <b>剥全部 {fmtN3(st.calmars.allsty)}</b>
-                （对照：只剥风格不剥行业 {fmtN3(st.calmars.allsty_noind)}）</>}
+            {st.calmars.allsty !== undefined && (
+              // ★ 2026-09-18（用户）：这一行太长了 ⇒ **「剥全部」另起一行**（前面 6 项保持一行 ✓）
+              <>
+                <br />
+                <b>剥全部 {fmtN3(st.calmars.allsty)}</b>
+                （对照：只剥风格不剥行业 {fmtN3(st.calmars.allsty_noind)}）
+              </>
+            )}
           </div>
         </>
       ) : (
