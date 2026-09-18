@@ -261,6 +261,38 @@ def engine_of(pool):
     return [p for p in engines() if pool in (p.get('pools') or [])]
 
 
+def pool_engines(pool, c=None):
+    """★ 池 → 它**此刻在跑**的引擎列表（改「只停这一个池」用）—— **唯一权威口径** ✓
+
+    ## 为什么需要它（2026-09-19 真事故，用户："我本来就想要跑 3 个池，那 3 个池我不想停呀"）
+    原实现用 `curPool == pool` 做兜底，而 **`curPool` = "最后启动过的那个池"** ✗：
+    `parallel_runner.py` 每起一个引擎就写一次 `curPool=p`（**并行时=最后起的那个**），
+    **该池跑完后并不清零** ✗ ⇒ 它是个**陈旧标记**，不代表"此刻在跑的就是它" ✗。
+    实录（09-19 00:36）：50 池 gen7 于 00:33 **正常跑完**（rc=0）⇒ `curPool` 仍留着 `'50'` ✗；
+    用户 00:36 点「停止 50」⇒ 兜底命中 ⇒ 把**正在跑的 300/500/1000 三个引擎全杀了** ✗✗
+    （调度器日志：00:36:29-30 三个同时 `rc=1`，还把它们记成了"疑似崩溃" ✗）
+    ⇒ 且残留检查同样命中（同一陈旧条件）⇒ 接口回 `ok=False`
+    ⇒ 前端红字「**有进程没停掉**」（用户看到的那句 ✗）+ 三点报错
+
+    ## 口径（两路合并，都不依赖 `curPool` ✓）
+    1. **命令行归属**：`--mine_pool=` 解析（`engine_of` ✓，最直接）
+    2. **调度器 `active` 表**：`{pool, gen, pid}` 逐池登记（兜底"命令行解析不到"的旧进程 ✓）
+       —— 但必须**按活进程核对**（引擎崩了/被杀而表还没重写 ⇒ 丢掉 ✗），
+       这与 `state()` 里同一条纪律（宁可少报、不可谎报 ✓）
+    """
+    c = ctl() if c is None else c
+    live = {p['pid'] for p in engines()}
+    out = list(engine_of(pool))
+    seen = {x['pid'] for x in out}
+    for a in (c.get('active') or []):
+        if not isinstance(a, dict):
+            continue
+        if a.get('pool') == pool and a.get('pid') in live and a.get('pid') not in seen:
+            out.append({'pid': a['pid'], 'pools': [pool], 'kind': 'engine'})
+            seen.add(a['pid'])
+    return out
+
+
 # ---------------------------------------------------------------- 状态
 def state():
     c = ctl()
@@ -594,15 +626,11 @@ def stop(pool=None, **kw):
         st = sorted(set(list(c.get('stopped') or []) + [pool]))
         _write_ctl(stopped=st)
         killed = []
-        # ★★★★ 2026-09-16 兜底（用户实测"停止了全A，它还在跑"）：
-        #   若控制文件里 **`curPool == pool`**（调度器正在跑它），
-        #   那就把**当前这个引擎**也算进来一起杀 —— **不依赖命令行归属解析** ✓
-        #   为什么需要：命令行归属可能因历史原因失配（如旧进程没传 `--mine_pool`），
-        #   而"调度器正在跑哪个池"是**确定的事实** ⇒ 用它兜底最可靠 ✓
-        _targets = list(engine_of(pool))
-        if c.get('curPool') == pool:
-            _seen = {x['pid'] for x in _targets}
-            _targets += [x for x in engines() if x['pid'] not in _seen]
+        # ★★★ 2026-09-16 兜底（当时用户实测"停止了全A，它还在跑"）：命令行归属可能失配
+        #   （如旧进程没传 `--mine_pool`）⇒ 需要第二路来源。**但 2026-09-19 修**：
+        #   原第二路用的是 `curPool`（**陈旧标记** ✗，见 `pool_engines` 的说明）
+        #   ⇒ 误杀其它池 ✗✗ ⇒ 改用 `pool_engines()`（命令行 + `active` 表，**逐池**归属 ✓）
+        _targets = pool_engines(pool, c)
         _was_mining = bool(_targets)          # ★ 它当时是否在跑（以“有无目标进程”为准）✓
         for p in _targets:
             r = subprocess.run(['taskkill', '/PID', str(p['pid']), '/T', '/F'],
@@ -610,11 +638,17 @@ def stop(pool=None, **kw):
                                creationflags=_NO_WIN)
             killed.append({'pid': p['pid'], 'kind': 'engine', 'pools': p.get('pools'),
                            'rc': r.returncode, 'out': (r.stdout or r.stderr or '').strip()[:160]})
-        time.sleep(1)
-        # ★ 残留检查同样要兜底：归属解析不到、但调度器仍指向该池 ⇒ 也算"没杀干净" ✓
-        left = list(engine_of(pool))
-        if ctl().get('curPool') == pool:
-            left += [x for x in engines() if x['pid'] not in {y['pid'] for y in left}]
+        # ★★★ 残留检查：**必须等进程真的消失**（2026-09-19 修）——
+        #   `taskkill /F` **返回 ≠ 进程已退出**（Windows 上回收要一点时间）✗
+        #   原实现只 `sleep(1)` 就查 ⇒ 经常仍扫到旧 pid ⇒ 接口 `ok=False`
+        #   ⇒ 前端报「有进程没停掉」（**假警报** ✗，用户实测："报错说没有全部停掉，但过一会儿就没了" ✓）
+        #   ⇒ 改成**轮询等待**（最多 5s）：进程真没了就通过，真杀不掉才算失败 ✓
+        left = []
+        for _ in range(20):
+            left = pool_engines(pool)
+            if not left:
+                break
+            time.sleep(0.25)
         en = [x for x in (c.get('enabled') or core.POOL_KEYS) if x != pool]
         # ★ 文案按"它当时是否在跑"区分 —— 没在跑却说"杀掉了当前那一代"会误导 ✗
         _how = ('从轮转中移除，并结束它当前那一代（该代作废，下次重跑；state 是原子写，不会坏数据）'
