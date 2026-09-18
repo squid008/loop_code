@@ -755,13 +755,13 @@ const CPAL = ['#6366f1', '#22d3ee', '#f59e0b', '#34d399', '#f472b6',
               '#a78bfa', '#facc15', '#38bdf8', '#fb7185', '#4ade80']
 const dLab = (d: number) => `${String(d).slice(2, 4)}-${String(d).slice(4, 6)}`
 
-type ChSeries = { label: string; color: string; data: (number | null)[]; dashed?: boolean }
+type ChSeries = { label: string; color: string; data: (number | null)[]; dashed?: boolean
+  /** ★ 2026-09-18：图例项的可选说明（鼠标提示）—— 口径解释放这里，**不占标题栏** ✓ */
+  tip?: string }
 
-function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false, legendCol = false }:
+function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false }:
   { series: ChSeries[]; dates: number[]; height?: number
-    kind?: 'line' | 'area'; yFmt?: (v: number) => string; zero?: boolean
-    /** ★ 2026-09-18（用户："图例放一列就好了"）：剥风格那张图有 7 条 ⇒ 图例改**竖排一列**才放得下 ✓ */
-    legendCol?: boolean }) {
+    kind?: 'line' | 'area'; yFmt?: (v: number) => string; zero?: boolean }) {
   // ★★ 2026-09-16（用户要求）：「所有的图，点图例要能**显隐曲线**」
   //   ⇒ 图例项变成可点按钮；隐藏的曲线**同时退出 Y 轴取值范围**（否则坐标轴被藏着的那条撑住，
   //     等于"藏了也没用" ✗）· 换因子（图例变了）时**自动重置**显隐状态 ✓
@@ -780,11 +780,11 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false,
           {series.length && !vis.length ? '（曲线已全部隐藏 —— 点下方图例恢复）' : '（无数据）'}
         </div>
         {series.length > 0 && (
-          <div className="ch-lg" style={legendCol ? { flexDirection: 'column', gap: 3, alignItems: 'flex-start' } : undefined}>
+          <div className="ch-lg">
             {series.map((s, i) => (
               <button key={i} className={`ch-lgbtn${off[i] ? ' off' : ''}`}
                       onClick={() => setOff(o => ({ ...o, [i]: !o[i] }))}
-                      title="点击显示 / 隐藏这条曲线">
+                      title={s.tip ?? '点击显示 / 隐藏这条曲线'}>
                 <i style={{ background: s.color }} />{s.label}
               </button>
             ))}
@@ -839,12 +839,11 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false,
           </text>
         ))}
       </svg>
-      <div className="ch-lg"
-           style={legendCol ? { flexDirection: 'column', gap: 3, alignItems: 'flex-start' } : undefined}>
+      <div className="ch-lg">
         {series.map((s, i) => (
           <button key={i} className={`ch-lgbtn${off[i] ? ' off' : ''}`}
                   onClick={() => setOff(o => ({ ...o, [i]: !o[i] }))}
-                  title={off[i] ? '点击显示这条曲线' : '点击隐藏这条曲线'}>
+                  title={s.tip ?? (off[i] ? '点击显示这条曲线' : '点击隐藏这条曲线')}>
             <i style={{ background: s.color }} />{s.label}
           </button>
         ))}
@@ -974,6 +973,18 @@ const STRIP_LABEL: Record<string, string> =
     // ★ 2026-09-18（用户命名）：第 7 条叫「剥全部」= 15 个连续风格（4 自有 + 11 Barra）+ 行业内去均值 ✓
     allsty: '剥全部' }
 
+/** ★ 2026-09-18（用户："这个很丑啊…改成剥风格对比就好啦"）：
+ *  口径解释**搬到图例项的鼠标提示里**（`ChSeries.tip`）⇒ 标题栏保持一行、图例保持一行 ✓
+ *  ⚠ 这些串会**显示给用户** ⇒ 一律自然语言，不许 `**` / ★ / ✗ 这类符号（`_test_ai_tone` 会判 AI 味 ✗） */
+const STRIP_TIP: Record<string, string> =
+  { raw: '原 = 不做任何风格中性化的原始信号',
+    lncap: '剥市值 = 对总市值做截面秩中性化',
+    lnamt: '剥成交额 = 对成交额做截面秩中性化',
+    both: '剥两者 = 同时剥总市值与成交额',
+    floatcap: '剥流通市值 = 用流通市值做中性化',
+    caplimit: '剥总市值加限售比例 = 总市值与流通市值之比一起剥',
+    allsty: '剥全部 = 秩回归剥掉 15 个连续风格（4 自有 + 11 个 Barra），再把残差按行业内去均值' }
+
 /** 详情页图表区：打开时**才**拉曲线（离线预算好的），拉到前显示占位 ✓
  *
  * ★★★★ 2026-09-17 修**真 BUG**（用户："新入库的 `500 F06` 为啥**有曲线图**，但超额年化那些
@@ -1080,16 +1091,13 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
       )}
       {st ? (
         <>
-          <div className="ch-t">
-            剥风格对比（期频超额净值）—— 原 / 剥市值 / 剥成交额 / 剥两者 / … / 剥全部
-            （剥全部 = 剥掉 15 个连续风格 + 行业；剥得越干净，剩下的才是"纯选股"）
-          </div>
-          <Chart dates={st.dates} yFmt={v => v.toFixed(1)} legendCol
+          <div className="ch-t">剥风格对比（期频超额净值）</div>
+          <Chart dates={st.dates} yFmt={v => v.toFixed(1)}
                  series={['raw', 'lncap', 'lnamt', 'both', 'floatcap', 'caplimit', 'allsty']
                    .filter(k => (st.navs[k] ?? []).length > 0)
                    .map((k, i) => ({
                      label: STRIP_LABEL[k] ?? k,
-                     color: CPAL[i], data: st.navs[k],
+                     color: CPAL[i], data: st.navs[k], tip: STRIP_TIP[k],
                    }))} />
           <div className="ch-lg2">
             剥风格 Calmar：原 {fmtN3(st.calmars.raw)} · 剥市值 {fmtN3(st.calmars.lncap)} ·

@@ -207,8 +207,14 @@ chk('新增两个剥法（剥流通市值 / 剥总市值+限售）已接进图�
 # ★★ 2026-09-18（用户之问）：「风格相关性表加一列剥全部、剥前/剥后对比」+「净值曲线加一条剥全部，
 #   第 7 个就叫剥全部」+「图例放一列就好了」
 chk('★ 第 7 条剥法 `allsty`「剥全部」已接进图例', 'allsty' in src and '剥全部' in src)
-chk('★ 剥风格图**按用户指定的竖排一列图例**（7 条横排会换行挤在一起 ✗）',
-    'legendCol' in src and "flexDirection: 'column'" in src)
+# ★★ 2026-09-18 用户看过截图后**否掉了竖排**（"底下图例不要搞那么多行，跟原来一样放一行"）✗
+#   ⇒ 图例回到默认横向流式（`ch-lg` 的 flex-wrap）✓；口径解释搬到 `ChSeries.tip` 鼠标提示 ✓
+chk('★ 剥风格图图例**回到一行（默认横向流式）**，不再竖排（用户否掉 ✗）',
+    'legendCol' not in src and "flexDirection: 'column'" not in src)
+chk('★ 口径解释搬进**图例项鼠标提示**（`tip`），标题栏保持一行',
+    'STRIP_TIP' in src and 'tip: STRIP_TIP[k]' in src and 's.tip ??' in src)
+chk('★ 剥风格标题回到短标题（不再堆"原/剥市值/…/剥全部"那一长串 ✗）',
+    '剥风格对比（期频超额净值）' in src and '剥得越干净，剩下的才是' not in src)
 chk('★ 风格相关性表新增「剥全部均值」一列（剥前 / 剥市值+行业 / 剥全部 三态对比）',
     '剥全部均值' in src and 'allsty' in src)
 chk('★ 风格条形图支持**第三根**（剥全部），右侧数字也随之三列',
