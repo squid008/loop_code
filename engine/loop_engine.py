@@ -1438,6 +1438,19 @@ def _critic_review_prev(_prev_pool_map, args, cfg, prev_l1, prev_l2):
     原段落: B角: 先审查上一代, 再据此定本代搜索策略
     """
     import loop_critic as critic
+    # ★★★★ 2026-09-19 修真 BUG（用户报"上证50怎么崩了" ⇒ 实测 `pool_50_gen8_err.log` 640B traceback）：
+    #   `diag` / `reasons` / `r` **只在"有上一代"的分支里被绑定** ✗，而 **首代会走 else** ⇒
+    #   下面 return 引用未绑定变量 ⇒ `UnboundLocalError: cannot access local variable 'diag'` ✗✗
+    #   ⇒ 引擎**起来即死**（500 多字节日志 + rc=1）⇒ 看板显示"启动即崩" ✗
+    #   ⚠ 什么时候会走首代：`prev_l1` 为空 ⇒ 该池 **bank/种子为空**（如 `50` 池 bank=0 ✓）
+    #   ★ 溯源：v0.17.0「P0-2 拆 run()」把这段内联代码抽成函数时，**新增了 return 这三个值** ✗；
+    #     而原内联版里它们只在**后面**被重新赋值（`critic.diagnose(...)` / `critic.suggest(...)`）
+    #     ⇒ 老代码"不崩"只是因为没人当场读它 ✗ ⇒ **抽函数才暴露**（那次提交标题写着"顺带修潜伏
+    #     NameError"，结果是引入了这一个 ✗）
+    #   ⇒ 修法：给**与"有上一代"分支同形**的默认值（空 dict / 空 list / 空串）✓
+    #     下游 `_agg_style_diag(..., r, ...)` 的 `r` 参数其实**未被使用**（死参）✓，
+    #     `diag` / `reasons` 也会在 L2935/L2939 被重新赋值 ⇒ **语义不变** ✓
+    diag, reasons, r = {}, [], ''
     if prev_l1 is not None and len(prev_l1):
         # ★ 传 gate + pool_map（2026-09-14, §1.1 修法①②）：让 B角 的传感器与**实际生效的门槛**对账，
         #   并在池内模式下改看**池口径**（那才是真实卡点）。代首用上一代存的 `last_pool_map`。

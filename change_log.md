@@ -15,6 +15,50 @@
 
 ---
 
+## [1.21.6] — 2026-09-19
+
+> 主题：★★★ **真 BUG：空 bank 池「首代必崩」**（用户：_"上证50怎么崩了"_）
+
+### 现象（实测，不是猜）
+- `50` 池卡片：红点 + **启动即崩 ×1**
+- `ai_test/_tracks/pool_50_gen8_err.log` = **640 B（有 traceback ✗）**、`pool_50_gen8.log` 只 535 B ⇒ 起来就死 ✓
+```
+File engine/loop_engine.py, line 1452, in _critic_review_prev
+    return (cfg, critic, diag, r, reasons)
+UnboundLocalError: cannot access local variable 'diag' where it is not associated with a value
+```
+
+### 根因
+`_critic_review_prev` 里 `diag` / `reasons` / `r` **只在"有上一代"分支里被绑定** ✗，
+而**首代会走 else** ⇒ `return` 引用未绑定变量 ⇒ 引擎启动即崩 ✗
+- 何时走首代：`prev_l1` 为空 ⇒ 该池**种子/bank 为空**（`50` 池 `bank=0` ✓）
+  日志实证：`载入上一代种子 0 个 … 失败库 370 条，已测 3500 个候选` + `[B角] 首代, 使用默认策略` ✓
+- ★ **溯源（git）**：v0.17.0 `41705f4`「P0-2 拆 run() 1291→921 行（17 个函数）**+ 顺带修潜伏 NameError**」
+  —— 那次把这段**内联代码抽成函数**时**新增了 `return` 这三个值** ✗；原内联版里它们只在**后面**被
+  重新赋值（`critic.diagnose(...)` / `critic.suggest(...)`）⇒ **老代码"不崩"只因当场没人读它** ✗
+  ⇒ 也就是说：**那次"顺带修 NameError"实际引入了一个新 NameError** ✗
+
+### 修法
+给**与"有上一代"分支同形**的默认值（不动其它逻辑）：
+```python
+diag, reasons, r = {}, [], ''
+if prev_l1 is not None and len(prev_l1):
+    diag = critic.diagnose(...); cfg, reasons = critic.suggest(diag, cfg); ...
+```
+- 已核：下游 `_agg_style_diag(..., r, ...)` 的 `r` 参数**未被使用**（死参 ✓）；
+  `diag` / `reasons` 会在 L2935 / L2939 被**重新赋值** ⇒ **语义不变** ✓
+
+### 守门 `tools/_test_critic_firstgen.py`（新增 ⇒ 全量回归 **28/28** ✓）
+① `prev_l1=None` 与 `prev_l1=空 DataFrame` ⇒ **必须正常返回 5 元组**，默认值同形（`{}`/`[]`/`''`）✓
+② 静态：初始化那行必须在 `if prev_l1 is not None` **之前**（防以后被"清理"掉 ✗）
+· 不跑挖掘、不写文件、不连网 ⇒ **线上挖掘时可安全跑** ✓
+
+### 影响面
+只影响引擎**启动阶段**（首代路径）⇒ **正在跑的那一代不受影响** ✓（代码在进程启动时载入 ✓）；
+**下次 spawn 的引擎自动生效** ✓ ⇒ `50` 池从此可以正常跑起来 ✓
+
+---
+
 ## [1.21.5] — 2026-09-19
 
 > 主题：**docs：README「版本与回退」表逐版补登**（用户：_"逐版补登，然后push"_）
