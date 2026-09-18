@@ -202,7 +202,115 @@ def core_for(nm, fac, rr, cost, window, verbose=True):
     return out
 
 
-def strip_for(nm, fac, rr, B, dates, cols, close, cost, window, STYLE, verbose=True):
+# ================================================================ 「剥全部」（2026-09-18 用户要求）
+# ★ 用户之问：「做一个剥离所有风格后的风格相关性图？放在现有风格相关性表下面，剥前/剥后对比；
+#   剥风格净值曲线加一条剥全部的」+「A（全部风格 + 行业）做默认，B（只剥风格、不剥行业）顺手一起算」
+#
+# ★★ 为什么「剥全部」的输入必须**预计算一次、全库复用**（性能关键，实测差一个数量级）：
+#   `factor_miner.evaluate_real` 的 **IC 循环遍历 `idx` 的每一天**（不只是换仓日 ✗）⇒
+#   `strip_for` 必须交出**全日期**的面板；而"剥全部"要对 15 个风格 × 3309 天做秩回归
+#   ⇒ 若每个因子现算：约 26s/因子 ⇒ 61 因子 = 27 分钟白花 ✗✗
+#   ⇒ 但**风格秩是"因子无关"的** ⇒ 全库只算一次（15 个 float32 秩面板 ≈ 1.1 GB）✓
+#     每因子只多 rank(x) + 回归 + 重排 ⇒ 约 8s/因子 ✓
+def _rank_rows32(v):
+    """按行(截面)秩到 0~1，返回 **float32**（15 个秩面板要同时驻留 ⇒ 必须省内存）。
+
+    与 `loop_metrics.rank_rows` 同一语义（pct 秩），只是**不升 float64** ✓
+    """
+    import pandas as pd
+    return (pd.DataFrame(np.asarray(v, dtype='float32')).rank(axis=1, pct=True)
+            .values.astype('float32'))
+
+
+def allsty_inputs(STYLE_PROF, verbose=True):
+    """预计算「剥全部」的回归量：`(15 个风格秩面板, 行业编码)`。
+
+    风格画像不可用 ⇒ 返回 `None`（**如实不做**，绝不拿别的口径顶上 ✗）
+    """
+    if not STYLE_PROF:
+        return None
+    styles = list(STYLE_PROF['styles'])
+    feats = STYLE_PROF['feat']
+    ranks = [_rank_rows32(feats[s]) for s in styles]
+    ind = np.asarray(STYLE_PROF['ind'], dtype='int16')
+    if verbose:
+        gb = sum(r.nbytes for r in ranks) / 2 ** 30
+        print('剥全部输入就绪: %d 个风格秩面板（%.2f GB）+ 行业编码（%d 类）'
+              % (len(ranks), gb, int(ind.max()) + 1))
+    return ranks, ind, styles
+
+
+def _allsty_one(x, sty_ranks, g, n_ind, min_n=200):
+    """单期截面：**秩回归剥掉给定的风格** → 返回 `(A, B)` 两个"已重排的残差"（0~1）。
+
+      A `allsty`       = 残差**再按行业内去均值**（默认口径；与既有 `_neut_size_ind`
+                         的"剥市值 + 行业内去均值"**同构** —— 行业去均值 = 不含截距的
+                         行业哑变量回归，FWL 等价 ✓）
+      B `allsty_noind` = 残差**不动行业**（对照 ✓）
+
+    样本不足 / 回归退化 ⇒ `(None, None)`（**不臆造、不拿原值顶上** ✗）
+    """
+    import pandas as pd
+    x = np.asarray(x, dtype='float64')
+    m = np.isfinite(x)
+    for r in sty_ranks:
+        m = m & np.isfinite(r)
+    k = int(m.sum())
+    if k < min_n:
+        return None, None
+    idx = np.nonzero(m)[0]
+    Y = pd.Series(x[idx]).rank(pct=True).values
+    X = np.column_stack([np.ones(k)] + [np.asarray(r, dtype='float64')[idx] for r in sty_ranks])
+    try:
+        coef, *_ = np.linalg.lstsq(X, Y, rcond=None)
+    except np.linalg.LinAlgError:
+        return None, None
+    res = Y - X @ coef
+    # ★★ 退化守卫（与 `_neut_size_ind` 的 `_deg_of` 同一铁律）：因子被这 15 个风格**完全解释**时
+    #   残差 ≈ 0 ⇒ 再排秩只是"在数值噪声上排序" ⇒ 回测出来的是一条**假曲线** ✗
+    #   ⇒ 判退化、返回 `(None, None)`（"不可判定" ≠ "剥干净了" ✓）
+    #   阈值取 `1e-3 × Y 的标准差`（Y 已是 0~1 的秩 ⇒ 尺度稳定 ✓）
+    if np.percentile(np.abs(res), 99.5) <= 1e-3 * (float(np.std(Y)) + 1e-18):
+        return None, None
+    B = pd.Series(res).rank(pct=True).values
+    g = np.asarray(g, dtype='int64')[idx]
+    g = np.where(g < 0, n_ind, g)                       # ★ 无行业编码 ⇒ 自成一组（与既有口径一致 ✓）
+    cnt = np.bincount(g, minlength=n_ind + 1)
+    sm = np.bincount(g, weights=res, minlength=n_ind + 1)
+    res2 = res - (sm / np.maximum(cnt, 1))[g]
+    A = pd.Series(res2).rank(pct=True).values
+    return A, B
+
+
+def _allsty_neutral(fv, ranks, ind, min_n=200):
+    """**逐日**做「剥全部」→ 两个 (T,S) float32（A=含行业去均值 / B=不含）。
+
+    ⚠⚠ `_allsty_one` 返回的是**有效样本子集**上的数组（长度 = 当期有效股票数）——
+      写回整行时**必须用位置索引 `idx`**，不能拿"子集长度的掩码"去索引宽度 S 的行 ✗
+      （实测踩到：`IndexError: boolean index did not match ... dimension is 5384 but ... 2621`）
+    """
+    v = np.asarray(fv, dtype='float64')
+    T, S = v.shape
+    ind = np.asarray(ind)
+    n_ind = int(ind.max()) + 1 if ind.size else 0
+    outA = np.full((T, S), np.nan, dtype='float32')
+    outB = np.full((T, S), np.nan, dtype='float32')
+    for t in range(T):
+        m = np.isfinite(v[t])
+        for r in ranks:
+            m &= np.isfinite(r[t])
+        if int(m.sum()) < min_n:
+            continue
+        idx = np.nonzero(m)[0]                      # ★ 位置索引（长度 = 有效样本数 ✓）
+        A, B = _allsty_one(v[t], [r[t] for r in ranks], ind[t], n_ind, min_n)
+        if A is None or len(A) != len(idx):         # 长度不符 ⇒ 宁可跳过（不硬写 ✗）
+            continue
+        outA[t, idx] = A
+        outB[t, idx] = B
+    return outA, outB
+
+
+def strip_for(nm, fac, rr, B, dates, cols, close, cost, window, STYLE, ALLSTY=None, verbose=True):
     """剥风格四条净值（原 / 剥市值 / 剥成交额 / 剥两者）—— 期频；`raw` 直接复用已算好的 `rr`。"""
     import pandas as pd
     import factor_miner as fm
@@ -213,6 +321,20 @@ def strip_for(nm, fac, rr, B, dates, cols, close, cost, window, STYLE, verbose=T
     for k, sty in (('lncap', ['lncap']), ('lnamt', ['lnamt']), ('both', ['lncap', 'lnamt'])):
         variants[k] = pd.DataFrame(
             neutral_rank(fv, [STYLE[x] for x in sty]), index=dates, columns=cols)
+    # ★★ 2026-09-18：「剥全部」两条（A 默认 = 15 风格 + 行业；B 对照 = 只剥风格不剥行业）
+    newv = {}
+    if ALLSTY is not None:
+        _ranks, _ind, _ = ALLSTY
+        _A, _Bv = _allsty_neutral(fv, _ranks, _ind)
+        # ⚠ 覆盖率守卫：因子被风格完全解释时 `_allsty_one` 会判退化（整行 NaN ✓ 铁律）；
+        #   若退化比例过高 ⇒ **不加这两条**（而不是让它们把整段 strip 拖成 None ✗）
+        _cov = float(np.isfinite(_A).mean()) / max(1e-9, float(np.isfinite(fv).mean()))
+        if _cov >= 0.5:
+            newv['allsty'] = pd.DataFrame(_A, index=dates, columns=cols)
+            newv['allsty_noind'] = pd.DataFrame(_Bv, index=dates, columns=cols)
+        elif verbose:
+            print('    [i] 剥全部：退化比例过高（覆盖 %.0f%%）⇒ 不生成这两条（不臆造 ✗）'
+                  % (_cov * 100))
     navs = {'raw': _rl(np.cumprod(1.0 + np.asarray(rr['ex'], dtype='float64')))}
     calmars = {'raw': _r(rr['calmar'])}
     for k, x in variants.items():
@@ -221,13 +343,34 @@ def strip_for(nm, fac, rr, B, dates, cols, close, cost, window, STYLE, verbose=T
             return None
         navs[k] = _rl(np.cumprod(1.0 + np.asarray(r['ex'], dtype='float64')))
         calmars[k] = _r(r['calmar'])
+    # ★ 新增的两条**单独跑、失败不致命**（绝不能让"新口径的问题"把已算好的 4 条一起废掉 ✗）
+    for k, x in newv.items():
+        try:
+            r = fm.evaluate_real(x, close, nm + '#' + k, cost=cost, window=window, with_ex=True)
+        except Exception as e:                                   # noqa: BLE001
+            r = None
+            if verbose:
+                print('    [!] 剥全部子项 %s 回测异常：%s' % (k, e))
+        if r is None:
+            if verbose:
+                print('    [!] 剥全部子项 %s 回测无结果 ⇒ 跳过（其余子项不受影响 ✓）' % k)
+            continue
+        navs[k] = _rl(np.cumprod(1.0 + np.asarray(r['ex'], dtype='float64')))
+        calmars[k] = _r(r['calmar'])
     if verbose:
-        print('    strip ✓ 剥Calmar 原 %s / 市值 %s / 成交额 %s / 两者 %s'
+        # ⚠ 不要用"格式串拼接"：`条件表达式对格式串` 会让参数个数与占位符对不上 ⇒ TypeError ✗
+        _ex = ('' if 'allsty' not in calmars
+               else ' / 剥全部 %s（只剥风格不剥行业 %s）'
+                    % (calmars.get('allsty'), calmars.get('allsty_noind')))
+        print('    strip ✓ 剥Calmar 原 %s / 市值 %s / 成交额 %s / 两者 %s%s'
               % (calmars.get('raw'), calmars.get('lncap'), calmars.get('lnamt'),
-                 calmars.get('both')))
+                 calmars.get('both'), _ex))
     return {'dates': _dates_of(rr['ex'].index), 'navs': navs, 'calmars': calmars,
             'caliber': '期频超额净值（成本已扣）；剥市值=对 lncap 截面秩中性化，'
-                       '剥成交额=lnamt，剥两者=同时做'}
+                       '剥成交额=lnamt，剥两者=同时做；'
+                       '剥全部=对 15 个连续风格（4 自有 + 11 个 Barra）做逐期截面秩回归，'
+                       '再把残差按行业内去均值（两者都重排后再选股）；'
+                       '只剥风格不剥行业=同样回归但不做行业去均值（仅作对照）'}
 
 
 # ================================================================ 风格相关性（2026-09-16 用户要求）
@@ -386,9 +529,9 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
     ind_ok = len(_elig) >= 30
     periods = _elig if ind_ok else list(rb)
 
-    series = {k: {s: [] for s in names} for k in ('raw', 'neut')}
-    ind_series = {k: {j: [] for j in range(len(ind_names))} for k in ('raw', 'neut')}
-    r2s = {'raw': [], 'neut': []}
+    series = {k: {s: [] for s in names} for k in ('raw', 'neut', 'allsty')}
+    ind_series = {k: {j: [] for j in range(len(ind_names))} for k in ('raw', 'neut', 'allsty')}
+    r2s = {'raw': [], 'neut': [], 'allsty': []}
     for d in periods:
         i = pos.get(int(d))
         if i is None:
@@ -416,9 +559,16 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
         # ⚠ 剥后序列的长度 = `mk.sum()`（不是 `m.sum()`）⇒ 下游与它配对的**必须用同一子集**的掩码 ✓
         xr_n = np.full(int(mk.sum()), np.nan) if _deg else pd.Series(_xn).rank(pct=True).values
         g_k = iv[i][mk]                                     # ★ 与 xr_n 同长度的行业码
+        # ★★ 2026-09-18「剥全部」（用户之问）：与 neut **同一子集** `mk`（同一批期、同一批股票 ✓，
+        #   否则"剥市值+行业 vs 剥全部"的对比会被**样本差异**混淆 ✗ —— 这正是上面 `_elig` 那条教训 ✓）
+        _sty_sub = [pd.Series(sv[s][i][mk]).rank(pct=True).values for s in names]
+        _xa, _xb = _allsty_one(x[mk], _sty_sub, iv[i][mk], len(ind_names))
+        xr_a = np.full(int(mk.sum()), np.nan) if _xa is None else pd.Series(_xa).rank(pct=True).values
+        _nm_a, _ns_a = float(np.nanmean(xr_a)), float(np.nanstd(xr_a))
         r2s['raw'].append(_ind_r2(xr, g))
         # ★ 退化（中性化后≈0）⇒ **记 NaN 不臆造**（见 `_neut_size_ind` 注释）
         r2s['neut'].append(np.nan if _deg else _ind_r2(xr_n, g_k))
+        r2s['allsty'].append(np.nan if _xa is None else _ind_r2(xr_a, g_k))
         # 行业 |相关|：把"行业哑变量"当 0/1 变量，与因子秩做点双列相关 = 组均值差
         gm, sx = xr.mean(), xr.std()
         _nm_n, _ns_n = float(np.nanmean(xr_n)), float(np.nanstd(xr_n))
@@ -437,6 +587,13 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
                 ind_series['neut'][j].append(
                     (yr, float((xr_n[mjk].mean() - _nm_n) / (_ns_n + 1e-12)
                                * np.sqrt(mjk.mean() * (1 - mjk.mean())))))
+            # ★ 剥全部口径的行业暴露（与 raw/neut 完全同款算法，只是换一套中性化结果 ✓）
+            if _xa is None or mjk.sum() < 5:
+                ind_series['allsty'][j].append((yr, np.nan))
+            else:
+                ind_series['allsty'][j].append(
+                    (yr, float((xr_a[mjk].mean() - _nm_a) / (_ns_a + 1e-12)
+                               * np.sqrt(mjk.mean() * (1 - mjk.mean())))))
         for s in names:
             v = sv[s][i]
             mm = m & np.isfinite(v)
@@ -453,6 +610,7 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
             if float(np.nanstd(v[mm])) <= 1e-12:
                 series['raw'][s].append((yr, None))
                 series['neut'][s].append((yr, None))
+                series['allsty'][s].append((yr, None))
                 continue
             vr = pd.Series(v[mm]).rank(pct=True).values
             xr2 = pd.Series(x[mm]).rank(pct=True).values
@@ -466,11 +624,20 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
             # ★ 兜底：中性化结果里**出现 NaN 一律判"不可判定"**（不许让 NaN 悄悄变成 `—` 而不留痕 ✗）
             if not deg and not np.isfinite(xn).all():
                 deg = True
+            # ★ 剥全部分支：`xr_a` 的长度对应 `mk` 子集 ⇒ **按位置映射到 `mmn` 子集**（mmn ⊆ mk ✓）
+            #   ⚠ 直接拿 xr_a 与 vr_n 相乘会因长度不同而报错/错位 ✗（与 `vr` vs `vr_n` 那条教训同源）
+            if _xa is None:
+                _a_rho = np.nan
+            else:
+                _xa_sub = xr_a[np.searchsorted(np.nonzero(mk)[0], np.nonzero(mmn)[0])]
+                _a_rho = _rho(pd.Series(_xa_sub).rank(pct=True).values, vr_n)
             if deg:
                 series['neut'][s].append((yr, np.nan))      # ★ 退化 ⇒ 不判定
+                series['allsty'][s].append((yr, np.nan if _xa is None else _a_rho))
                 continue
             # ⚠ 这里必须用 **`vr_n`**（`mmn` 子集）—— 用 `vr`（`mm` 子集）长度不一致 ⇒ 广播报错 ✗（实测踩到）
             series['neut'][s].append((yr, _rho(pd.Series(xn).rank(pct=True).values, vr_n)))
+            series['allsty'][s].append((yr, np.nan if _xa is None else _a_rho))
     out = {'n_periods': len(series['raw'][names[0]]), 'styles': list(names),
            # ★ 行业面板的**覆盖情况必须让人看见**（没行业编码的股票按"自成一组"处理）
            'indCover': _r(float((iv >= 0).mean())) if iv.size else None,
@@ -487,19 +654,30 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
                   int(min(_elig)) if (_elig and ind_ok) else '全程不足') +
               't 用 AR(1) 有效样本量校正（T_eff = T 乘 (1−ac1)/(1+ac1)）：'
               '实测相关序列 ac1 约 0.93~0.97（风格暴露变化慢），'
-              '朴素 t = IR 乘根号 T 会放大数倍，别直接看它'),
+              '朴素 t = IR 乘根号 T 会放大数倍，别直接看它'
+              ' · 剥全部 = 对 15 个连续风格（4 自有 + 11 个 Barra）做逐期截面秩回归，'
+              '再把残差按行业内去均值（与"剥总市值 + 行业"同一套算法，只是把 1 个风格扩成 15 个）'),
            'raw': {s: _summ(series['raw'][s]) for s in names},
            'neut': {s: _summ(series['neut'][s]) for s in names},
+           'allsty': {s: _summ(series['allsty'][s]) for s in names},
            'ind': {'raw': [_summ(ind_series['raw'][j]) for j in range(len(ind_names))],
-                   'neut': [_summ(ind_series['neut'][j]) for j in range(len(ind_names))]},
+                   'neut': [_summ(ind_series['neut'][j]) for j in range(len(ind_names))],
+                   'allsty': [_summ(ind_series['allsty'][j]) for j in range(len(ind_names))]},
            'r2': {'raw': _r(float(np.nanmean(r2s['raw'])) if r2s['raw'] else None),
-                  'neut': _r(float(np.nanmean(r2s['neut'])) if r2s['neut'] else None)}}
+                  'neut': _r(float(np.nanmean(r2s['neut'])) if r2s['neut'] else None),
+                  'allsty': _r(float(np.nanmean(r2s['allsty'])) if r2s['allsty'] else None)}}
     if verbose:
         top = sorted(names, key=lambda s: -abs(out['raw'][s]['mean'] or 0))[:4]
         print('    style ✓ %d 期 · 最强原始相关: %s' % (
             out['n_periods'], ' · '.join(
                 '%s %+.3f' % (s.replace('barra_', ''), out['raw'][s]['mean'] or 0) for s in top))
-              + ' | 行业R² raw %.3f → neut %.3f' % (out['r2']['raw'] or 0, out['r2']['neut'] or 0))
+              + ' | 行业R² raw %.3f → neut %.3f → 剥全部 %.3f'
+              % (out['r2']['raw'] or 0, out['r2']['neut'] or 0, out['r2']['allsty'] or 0))
+        # ★★ 剥全部后**最强残留相关**：这是"剥干净了没"的自证（应≈0 ✓）
+        _top3 = sorted(names, key=lambda s: -abs((out['allsty'][s] or {}).get('mean') or 0))[:3]
+        print('        剥全部后最强残留相关: %s' % ' · '.join(
+            '%s %+.3f' % (s.replace('barra_', ''), (out['allsty'][s] or {}).get('mean') or 0)
+            for s in _top3))
     return out
 
 
@@ -571,6 +749,14 @@ def _self_test(B, dates, cols, close, STYLE_PROF):
                 fails.append('%s: 与 barra_size 原始相关应≈−1，实测 %s' % (tag, raw_sz))
             if neu_sz is not None and abs(neu_sz) > 0.15:
                 fails.append('%s: 中性化后 barra_size 相关应≈0，实测 %s' % (tag, neu_sz))
+            # ★★ 2026-09-18（新增「剥全部」列）：纯小市值因子**被 size 完全解释** ⇒
+            #   `_allsty_one` 必须判**退化**（整行 NaN ⇒ 不判定），而不是"在数值噪声上排序"给出一个假相关 ✗
+            if not p.get('allsty'):
+                fails.append('%s: 剥全部列缺失（`style_for` 没产出 allsty）' % tag)
+            _am = (p.get('allsty') or {}).get('barra_size') or {}
+            if _am.get('mean') is not None and abs(_am['mean']) > 0.20:
+                fails.append('%s: 剥全部后 barra_size 相关应判退化或≈0，实测 %s（可能是退化守卫失效 ✗）'
+                             % (tag, _am['mean']))
         if tag.startswith('B'):
             if (r2r or 0) < 0.30:
                 fails.append('%s: 原始行业 R² 应很高，实测 %.3f' % (tag, r2r or 0))
@@ -671,10 +857,16 @@ def main():
             d = json.load(io.open(p, encoding='utf-8'))
         except Exception:
             return True
+        def _style_all_ok(dd):
+            """★ 2026-09-18：「剥全部」那一列/那条曲线是否已生成（老文件没有 ⇒ 视为要重算 ✓）"""
+            return bool((dd.get('style') or {}).get('allsty'))
+
         if a.stage == 'core':
             return 'nav_e' not in d
         if a.stage == 'strip':
-            return 'strip' not in d
+            # ★ 剥全部加入后：只有 4 条老曲线的文件也要重算（增量口径必须同步扩 ✓）
+            return (('strip' not in d)
+                    or (not (d.get('strip') or {}).get('navs', {}).get('allsty')))
         def _style_ok(dd):
             """★ 不只检查"有没有 style"，还要**统计量齐全**（老版本没 `tAdj`/`tYr`
             ⇒ 必须视为"要重算"，否则新旧混在一张表里 ✗ —— 2026-09-16 实测漏过 4 个）
@@ -704,13 +896,13 @@ def main():
                            for k in ('floatcap', 'caplimit'))
 
         if a.stage == 'style':
-            return not _style_ok(d)
+            return (not _style_ok(d)) or (not _style_all_ok(d))
         if a.stage == 'strip2':
             return _need2(d)
         if a.stage == 'style+strip2':
-            return (not _style_ok(d)) or _need2(d)
+            return (not _style_ok(d)) or (not _style_all_ok(d)) or _need2(d)
         return (('nav_e' not in d) or ('strip' not in d) or (not _style_ok(d))
-                or _need2(d))
+                or (not _style_all_ok(d)) or _need2(d))
 
     def _need(it):
         # ★ 该表达式的**任一名字**缺文件/缺阶段 ⇒ 都要重算（保证每个名字都有文件）✓
@@ -741,8 +933,10 @@ def main():
         print('风格特征(lncap/lnamt) 就绪')
 
     # ★★ 风格相关性画像（stage=style）：15 个连续风格 + 31 个申万一级行业
+    # ★★ 2026-09-18：「剥全部」（strip 段的新曲线）**也要**它（15 个风格 + 行业编码）
+    #   ⇒ 条件从"只有 style 段"改成"**除 core 外都要**"✓
     STYLE_PROF = None
-    if a.stage in ('style', 'style+strip2', 'all') or a.self_test:
+    if a.stage != 'core' or a.self_test:
         import pandas as pd
         sf = LE.style_features(B)
         feat = {k: sf[k].astype('float32') for k in STYLE_SELF}
@@ -768,6 +962,9 @@ def main():
             ind_code = np.full((len(dates), len(cols)), -1, dtype='int16')
         STYLE_PROF = dict(feat=feat, styles=styles, ind=ind_code, ind_names=ind_names)
         print('风格画像输入就绪: %d 个连续风格（4 自有 + 11 Barra）' % len(styles))
+
+    # ★★ 2026-09-18：「剥全部」的回归量**全库只算一次**（因子无关 ⇒ 不该按因子重算 ✗，见 `allsty_inputs`）
+    ALLSTY = allsty_inputs(STYLE_PROF) if STYLE_PROF is not None else None
 
     # ★★ 限售比例（stage=strip2）：market_cap_2 = **流通市值**（与总市值同源同目录）
     LIM = None
@@ -830,7 +1027,7 @@ def main():
                 cur.update(c)
                 _touched.update(c.keys())
             if a.stage in ('strip', 'all'):
-                s = strip_for(nm, fac, rr, B, dates, cols, close, a.cost, a.window, STYLE)
+                s = strip_for(nm, fac, rr, B, dates, cols, close, a.cost, a.window, STYLE, ALLSTY)
                 if s is not None:
                     cur['strip'] = s
                     _touched.add('strip')

@@ -204,6 +204,17 @@ chk('表里同时有 **校正 t 与朴素 t**，且用 tAdj', '>t朴素<' in src
 chk('未生成时给可执行提示（不是空白）', '--stage=style+strip2' in src)
 chk('新增两个剥法（剥流通市值 / 剥总市值+限售）已接进图例',
     all(k in src for k in ('floatcap', 'caplimit')))
+# ★★ 2026-09-18（用户之问）：「风格相关性表加一列剥全部、剥前/剥后对比」+「净值曲线加一条剥全部，
+#   第 7 个就叫剥全部」+「图例放一列就好了」
+chk('★ 第 7 条剥法 `allsty`「剥全部」已接进图例', 'allsty' in src and '剥全部' in src)
+chk('★ 剥风格图**按用户指定的竖排一列图例**（7 条横排会换行挤在一起 ✗）',
+    'legendCol' in src and "flexDirection: 'column'" in src)
+chk('★ 风格相关性表新增「剥全部均值」一列（剥前 / 剥市值+行业 / 剥全部 三态对比）',
+    '剥全部均值' in src and 'allsty' in src)
+chk('★ 风格条形图支持**第三根**（剥全部），右侧数字也随之三列',
+    'v3' in src and 'const has3 =' in src)
+chk('★★ 老曲线文件兼容：没有 `v3` 时**自动退回两根**（不编数据、不报错 ✗）',
+    'has3 ? 3 : 2' in src)
 
 print()
 print('【7】★ 调度模式 / 面板共享：UI 控件必须接到位（2026-09-16 用户之问「前端还没把并行切换加上」）')

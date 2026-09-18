@@ -224,8 +224,11 @@ export interface StyleProfileDto {
   caliber: string
   raw: Record<string, StyleSummDto>
   neut: Record<string, StyleSummDto>
-  ind: { raw: StyleSummDto[]; neut: StyleSummDto[] }
-  r2: { raw: number | null; neut: number | null }
+  /** ★★ 2026-09-18（用户要求）：**剥全部**（15 个连续风格秩回归 + 行业内去均值）——
+   *  用来验证"剥干净了没有"（各风格 |均值| 应≈0 ✓）；老文件没有这个键 ⇒ 页面按"未生成"处理 ✓ */
+  allsty?: Record<string, StyleSummDto>
+  ind: { raw: StyleSummDto[]; neut: StyleSummDto[]; allsty?: StyleSummDto[] }
+  r2: { raw: number | null; neut: number | null; allsty?: number | null }
 }
 
 export interface MetaDto {

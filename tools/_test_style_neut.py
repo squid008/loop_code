@@ -64,6 +64,19 @@ chk('有 `np.isfinite(xn).all()` 兜底并把 `deg` 置真',
 
 print()
 print('=' * 96)
+print('【3b】★ 2026-09-18：新增「剥全部」（`allsty`）—— 三套口径齐全 + 退化守卫')
+print('=' * 96)
+chk('三套口径齐全（raw / neut / allsty）',
+    "('raw', 'neut', 'allsty')" in FC and "'allsty': {s: _summ(" in FC)
+chk('★ 「剥全部」也必须**有退化守卫**（因子被 15 个风格完全解释 ⇒ 判退化，不拿噪声排序 ✗）',
+    'np.percentile(np.abs(res), 99.5)' in FC,
+    '缺了会给出一条"在数值噪声上排序"的假曲线 ✗')
+chk('★ `_allsty_neutral` 写回整行用**位置索引**（子集长度的掩码不能索引宽度 S 的行 ✗）',
+    re.search(r'idx = np\.nonzero\(m\)\[0\][\s\S]{0,400}outA\[t, idx\] = A', FC) is not None,
+    '实测踩到过：IndexError dimension is 5384 but ... 2621')
+
+print()
+print('=' * 96)
 print('【4】数据侧不变量：剥后无值的风格**只允许**是 `barra_comovement`')
 print('=' * 96)
 files = sorted(glob.glob(os.path.join(ROOT, 'docs', 'factor_curves', '*.json')))
