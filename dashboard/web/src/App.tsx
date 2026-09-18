@@ -856,7 +856,7 @@ const fmtN3 = (v: number | null | undefined) =>
   v === null || v === undefined || Number.isNaN(v) ? '—' : v.toFixed(3)
 
 /** ★★ 横向条形图（风格相关性用）—— 2026-09-16；★ 2026-09-18 加第三根「剥全部」
- *  · 每行 2 或 3 根：上=**原始**、中=**剥总市值 + 行业**、下=**剥全部**（15 个风格 + 行业内去均值）
+ *  · 每行 2 或 3 根：上=**原始**、中=**剥总市值 + 行业**、下=**剥全部**（11 个 Barra 风格 + 行业内去均值）
  *    ；0 在中间，左负右正
  *  · `domain` 给了就固定值域（风格相关性固定 ±1 ⇒ **跨因子可比** ✓）；不给则按数据自适应（行业用）
  *  · 图例可点（与折线图同约定）· 第三根**只在真有 `v3` 时才画**（老文件没有 ⇒ 自动退回两根 ✓，不编数据 ✗）
@@ -933,7 +933,7 @@ function BarChart({ rows, rowH = 15, domain, fmt, tag2 = '剥后', tag3 = '剥�
           <button className={`ch-lgbtn${hide.c ? ' off' : ''}`}
                   onClick={() => setHide(o => ({ ...o, c: !o.c }))}
                   title="点击隐藏或显示剥全部这一根">
-            <i style={{ background: CPAL[4] }} />{tag3}（剥 15 个风格 + 行业）
+            <i style={{ background: CPAL[4] }} />{tag3}（剥 11 个 Barra 风格 + 行业）
           </button>
         )}
         <span className="ch-lg-hint">
@@ -970,7 +970,8 @@ const cumsum = (a: (number | null)[]): (number | null)[] => {
 const STRIP_LABEL: Record<string, string> =
   { raw: '原', lncap: '剥市值', lnamt: '剥成交额', both: '剥两者',
     floatcap: '剥流通市值', caplimit: '剥总市值+限售',
-    // ★ 2026-09-18（用户命名）：第 7 条叫「剥全部」= 15 个连续风格（4 自有 + 11 Barra）+ 行业内去均值 ✓
+    // ★ 2026-09-18（用户命名）：第 7 条叫「剥全部」= 11 个 Barra 风格 + 行业内去均值 ✓
+    //   （用户："重跑剥 11 + 行业…正规一点"；4 个自有风格与 Barra 重叠 ⇒ 不参与回归 ✓）
     allsty: '剥全部' }
 
 /** ★ 2026-09-18（用户："这个很丑啊…改成剥风格对比就好啦"）：
@@ -983,7 +984,7 @@ const STRIP_TIP: Record<string, string> =
     both: '剥两者 = 同时剥总市值与成交额',
     floatcap: '剥流通市值 = 用流通市值做中性化',
     caplimit: '剥总市值加限售比例 = 总市值与流通市值之比一起剥',
-    allsty: '剥全部 = 秩回归剥掉 15 个连续风格（4 自有 + 11 个 Barra），再把残差按行业内去均值' }
+    allsty: '剥全部 = 秩回归剥掉 11 个 Barra 风格，再把残差按行业内去均值（4 个自有风格与 Barra 重叠，不参与回归）' }
 
 /** 详情页图表区：打开时**才**拉曲线（离线预算好的），拉到前显示占位 ✓
  *
@@ -1119,7 +1120,7 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
           <div className="ch-t">
             风格相关性（逐期截面 Spearman · {sp.n_periods} 期换仓日）—— 条长 = 相关系数均值，
             0 在中间、右正左负；上根 = 原始，中根 = 剥总市值 + 行业，
-            下根 = 剥全部（剥掉 15 个连续风格 + 行业）
+            下根 = 剥全部（剥掉 11 个 Barra 风格 + 行业）
           </div>
           <BarChart rows={styleRows} domain={1} />
           <table className="st-tab">

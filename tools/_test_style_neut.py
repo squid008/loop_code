@@ -68,6 +68,15 @@ print('【3b】★ 2026-09-18：新增「剥全部」（`allsty`）—— 三套
 print('=' * 96)
 chk('三套口径齐全（raw / neut / allsty）',
     "('raw', 'neut', 'allsty')" in FC and "'allsty': {s: _summ(" in FC)
+# ★★ 2026-09-18 用户："重跑剥 11 + 行业的曲线和剥风格均值吧，这样正规一点"
+#   ⇒ 回归量**只取 11 个 Barra**（4 个自有风格与 Barra 的 size/liquidity 高度重叠 ⇒ 双份计入 ✗）
+chk('★ 剥全部的回归量**只取 Barra**（4 个自有风格只当参照、不参与回归）',
+    'ALLSTY_PREFIX = ' in FC and 'startswith(ALLSTY_PREFIX)' in FC
+    and 'for s in barra_names]' in FC)
+chk('★★ 口径标记 `styCal` 必须**写进 JSON 且参与增量判定**（否则改口径后 `--only-new` 会误判不重算 ✗）',
+    'ALLSTY_CAL = ' in FC and "'styCal': _stycal" in FC and "'styCal': ALLSTY_CAL" in FC
+    and "_sp.get('styCal') != ALLSTY_CAL" in FC
+    and "(dd.get('style') or {}).get('styCal') == ALLSTY_CAL" in FC)
 chk('★ 「剥全部」也必须**有退化守卫**（因子被 15 个风格完全解释 ⇒ 判退化，不拿噪声排序 ✗）',
     'np.percentile(np.abs(res), 99.5)' in FC,
     '缺了会给出一条"在数值噪声上排序"的假曲线 ✗')

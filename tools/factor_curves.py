@@ -222,22 +222,35 @@ def _rank_rows32(v):
             .values.astype('float32'))
 
 
+# ★★ 2026-09-18（用户："重跑剥 11 + 行业的曲线和剥风格均值吧，这样正规一点"）：
+#   「剥全部」的回归量**只取 11 个 Barra 风格 + 行业** ✓ —— 那 4 个自有风格（`lncap`/`lnamt`/
+#   `lntr`/`lnpx`）与 Barra 的 size / liquidity **高度重叠**（实测秩相关 0.98+）⇒ 一起放进去等于
+#   **双份计入** ⇒ 剥得比标准 Barra 更狠 ✗（我 2026-09-18 第一版就是那样，已按用户要求改回标准口径 ✓）
+#   ⚠ 那 4 个自有风格**仍留在风格表里当参照**（只是不参与回归 ✓）⇒ 它们的「剥全部均值」不必然≈0 ✓
+ALLSTY_PREFIX = 'barra_'
+#   ★ 口径标记：**必须写进 JSON 并参与增量判定** —— 否则改了口径后 `--only-new` 会误判
+#     "已有 allsty ⇒ 不用重算" ✗（实测教训：加新键时必须同步加标记 ✓）
+ALLSTY_CAL = 'barra11+industry'
+
+
 def allsty_inputs(STYLE_PROF, verbose=True):
-    """预计算「剥全部」的回归量：`(15 个风格秩面板, 行业编码)`。
+    """预计算「剥全部」的回归量：`(11 个 Barra 风格秩面板, 行业编码, 风格名, 口径标记)`。
 
     风格画像不可用 ⇒ 返回 `None`（**如实不做**，绝不拿别的口径顶上 ✗）
     """
     if not STYLE_PROF:
         return None
-    styles = list(STYLE_PROF['styles'])
+    styles = [s for s in STYLE_PROF['styles'] if s.startswith(ALLSTY_PREFIX)]
+    if not styles:
+        return None
     feats = STYLE_PROF['feat']
     ranks = [_rank_rows32(feats[s]) for s in styles]
     ind = np.asarray(STYLE_PROF['ind'], dtype='int16')
     if verbose:
         gb = sum(r.nbytes for r in ranks) / 2 ** 30
-        print('剥全部输入就绪: %d 个风格秩面板（%.2f GB）+ 行业编码（%d 类）'
-              % (len(ranks), gb, int(ind.max()) + 1))
-    return ranks, ind, styles
+        print('剥全部输入就绪: %d 个 Barra 风格秩面板（%.2f GB）+ 行业编码（%d 类）· 口径 %s'
+              % (len(ranks), gb, int(ind.max()) + 1, ALLSTY_CAL))
+    return ranks, ind, styles, ALLSTY_CAL
 
 
 def _allsty_one(x, sty_ranks, g, n_ind, min_n=200):
@@ -323,8 +336,9 @@ def strip_for(nm, fac, rr, B, dates, cols, close, cost, window, STYLE, ALLSTY=No
             neutral_rank(fv, [STYLE[x] for x in sty]), index=dates, columns=cols)
     # ★★ 2026-09-18：「剥全部」两条（A 默认 = 15 风格 + 行业；B 对照 = 只剥风格不剥行业）
     newv = {}
+    _stycal = None
     if ALLSTY is not None:
-        _ranks, _ind, _ = ALLSTY
+        _ranks, _ind, _sty_names, _stycal = ALLSTY
         _A, _Bv = _allsty_neutral(fv, _ranks, _ind)
         # ⚠ 覆盖率守卫：因子被风格完全解释时 `_allsty_one` 会判退化（整行 NaN ✓ 铁律）；
         #   若退化比例过高 ⇒ **不加这两条**（而不是让它们把整段 strip 拖成 None ✗）
@@ -366,11 +380,14 @@ def strip_for(nm, fac, rr, B, dates, cols, close, cost, window, STYLE, ALLSTY=No
               % (calmars.get('raw'), calmars.get('lncap'), calmars.get('lnamt'),
                  calmars.get('both'), _ex))
     return {'dates': _dates_of(rr['ex'].index), 'navs': navs, 'calmars': calmars,
+            # ★ 口径标记（增量判定要用 ✓）：口径变了就必须重算，不能只看"有没有 allsty" ✗
+            'styCal': _stycal,
             'caliber': '期频超额净值（成本已扣）；剥市值=对 lncap 截面秩中性化，'
                        '剥成交额=lnamt，剥两者=同时做；'
-                       '剥全部=对 15 个连续风格（4 自有 + 11 个 Barra）做逐期截面秩回归，'
-                       '再把残差按行业内去均值（两者都重排后再选股）；'
-                       '只剥风格不剥行业=同样回归但不做行业去均值（仅作对照）'}
+                       '剥全部=对 11 个 Barra 连续风格做逐期截面秩回归，再把残差按行业内去均值'
+                       '（两者都重排后再选股）；只剥风格不剥行业=同样回归但不做行业去均值（仅作对照）；'
+                       '4 个自有风格（对数市值 / 成交额 / 换手率 / 股价）与 Barra 高度重叠，'
+                       '故不参与回归，只在风格表里当参照'}
 
 
 # ================================================================ 风格相关性（2026-09-16 用户要求）
@@ -515,6 +532,9 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
         sv[k] = arr[_rows]
     iv = np.asarray(STYLE['ind'])[_rows]                # (T_idx,S) int16 行业编码
     names = STYLE['styles']                             # 15 个连续风格名
+    # ★ 2026-09-18（用户："剥 11 + 行业…正规一点"）：**回归量只取 11 个 Barra** ✓
+    #   （4 个自有风格与 Barra 的 size/liquidity 高度重叠 ⇒ 一起放进去 = 双份计入 ⇒ 剥得过狠 ✗）
+    barra_names = [s for s in names if s.startswith(ALLSTY_PREFIX)]
     ind_names = STYLE['ind_names']
 
     # ★★ 先定"合格期"：**行业覆盖率 ≥ 50%** —— raw 与 neut 必须在**同一批期**上算，
@@ -561,7 +581,7 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
         g_k = iv[i][mk]                                     # ★ 与 xr_n 同长度的行业码
         # ★★ 2026-09-18「剥全部」（用户之问）：与 neut **同一子集** `mk`（同一批期、同一批股票 ✓，
         #   否则"剥市值+行业 vs 剥全部"的对比会被**样本差异**混淆 ✗ —— 这正是上面 `_elig` 那条教训 ✓）
-        _sty_sub = [pd.Series(sv[s][i][mk]).rank(pct=True).values for s in names]
+        _sty_sub = [pd.Series(sv[s][i][mk]).rank(pct=True).values for s in barra_names]
         _xa, _xb = _allsty_one(x[mk], _sty_sub, iv[i][mk], len(ind_names))
         xr_a = np.full(int(mk.sum()), np.nan) if _xa is None else pd.Series(_xa).rank(pct=True).values
         _nm_a, _ns_a = float(np.nanmean(xr_a)), float(np.nanstd(xr_a))
@@ -639,6 +659,8 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
             series['neut'][s].append((yr, _rho(pd.Series(xn).rank(pct=True).values, vr_n)))
             series['allsty'][s].append((yr, np.nan if _xa is None else _a_rho))
     out = {'n_periods': len(series['raw'][names[0]]), 'styles': list(names),
+           # ★ 口径标记（增量判定用 ✓）：只有"11 Barra + 行业"这一版才算数 ✓
+           'styCal': ALLSTY_CAL,
            # ★ 行业面板的**覆盖情况必须让人看见**（没行业编码的股票按"自成一组"处理）
            'indCover': _r(float((iv >= 0).mean())) if iv.size else None,
            'indOk': bool(ind_ok),
@@ -655,8 +677,9 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
               't 用 AR(1) 有效样本量校正（T_eff = T 乘 (1−ac1)/(1+ac1)）：'
               '实测相关序列 ac1 约 0.93~0.97（风格暴露变化慢），'
               '朴素 t = IR 乘根号 T 会放大数倍，别直接看它'
-              ' · 剥全部 = 对 15 个连续风格（4 自有 + 11 个 Barra）做逐期截面秩回归，'
-              '再把残差按行业内去均值（与"剥总市值 + 行业"同一套算法，只是把 1 个风格扩成 15 个）'),
+              ' · 剥全部 = 对 11 个 Barra 风格做逐期截面秩回归，再把残差按行业内去均值'
+              '（与"剥总市值 + 行业"同一套算法，只是把 1 个风格扩成 11 个）；'
+              '4 个自有风格（对数市值 / 成交额 / 换手率 / 股价）与 Barra 高度重叠，只当参照、不参与回归'),
            'raw': {s: _summ(series['raw'][s]) for s in names},
            'neut': {s: _summ(series['neut'][s]) for s in names},
            'allsty': {s: _summ(series['allsty'][s]) for s in names},
@@ -858,15 +881,22 @@ def main():
         except Exception:
             return True
         def _style_all_ok(dd):
-            """★ 2026-09-18：「剥全部」那一列/那条曲线是否已生成（老文件没有 ⇒ 视为要重算 ✓）"""
-            return bool((dd.get('style') or {}).get('allsty'))
+            """★ 2026-09-18：「剥全部」那一列是否已生成**且口径正确**。
+
+            ⚠ 只检查"有没有 allsty"是不够的 ✗ —— 我第一版是"15 个风格（含 4 个自有）"，
+              用户后来要求改成 **11 个 Barra + 行业** ⇒ 必须比对 `styCal` 标记，
+              否则 `--only-new` 会误判"已算过"、**新口径永远不生效** ✗（实测教训 ✓）
+            """
+            return (dd.get('style') or {}).get('styCal') == ALLSTY_CAL
 
         if a.stage == 'core':
             return 'nav_e' not in d
         if a.stage == 'strip':
             # ★ 剥全部加入后：只有 4 条老曲线的文件也要重算（增量口径必须同步扩 ✓）
+            _sp = d.get('strip') or {}
             return (('strip' not in d)
-                    or (not (d.get('strip') or {}).get('navs', {}).get('allsty')))
+                    or (not _sp.get('navs', {}).get('allsty'))
+                    or (_sp.get('styCal') != ALLSTY_CAL))
         def _style_ok(dd):
             """★ 不只检查"有没有 style"，还要**统计量齐全**（老版本没 `tAdj`/`tYr`
             ⇒ 必须视为"要重算"，否则新旧混在一张表里 ✗ —— 2026-09-16 实测漏过 4 个）
