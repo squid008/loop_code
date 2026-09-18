@@ -1470,7 +1470,20 @@ def _build_fam_blacklist(args, cfg, critic, f, frozen, prev_l1, seeds):
 
     原段落: 结构族黑名单(QuantaAlpha 正交思想, gen31): 上代 L1 霸榜模板族
     """
-    block_fams, fam_black_txt = set(), ''
+    # ★★★★ 2026-09-19 修真 BUG（同 v1.21.6 的那一类 ✗ —— 用户报"上证50还是崩了"后实测：
+    #   `pool_50_gen8_err.log` 667B traceback）：
+    #     File loop_engine.py, line 1511, in _build_fam_blacklist
+    #         return (block_fams, f, fam_black_txt, nd)
+    #     UnboundLocalError: cannot access local variable 'nd'
+    #   `nd` **只在"有上一代"分支的循环里被赋值** ✗ ⇒ **首代（prev_l1 空，如 50 池 bank=0）**
+    #   走到 return 时未绑定 ⇒ 引擎起来即崩 ✗（调度器还会"本轮立刻重试 2 次"⇒ 连崩 3 次 ✗）
+    #   ⚠ 同一批：v0.17.0 `41705f4`「P0-2 拆 run()」**加了 return** 才让这些潜伏变量暴露 ✗
+    #   （与 v1.21.6/v1.21.8 那两处**同类**，本次一并发布为 **v1.21.7** ✓）
+    #   ⇒ 默认 `None`：`nd` 在 `run()` 里只是**复用的临时变量**（L2667 被 `_fsa_stats` 覆盖 ✓），
+    #     首代给它 None 与"没有上一代"的语义一致 ✓
+    #   （另核过：循环里的 `f = root_fam(nd)` 覆盖的是**同名临时变量** `f`，`run()` 在 L2710 用
+    #     到 f 之前会重新赋值 ⇒ **无害** ✓ ⇒ 本次**不动它**，避免改变既有行为 ✗）
+    block_fams, fam_black_txt, nd = set(), '', None
     if prev_l1 is not None and len(prev_l1):
         fam_cnt = {}
         for nd in list(prev_l1['node']):
@@ -2664,6 +2677,20 @@ def run(args):
 
     # ---- FSA 骨架统计(对齐中金: 抽象因子结构/剥离窗口参数) ----
     # 观察样本 = 本代L1通过者 + 前50候选; 统计对象 = 非叶子结构骨架(剥掉窗口数字)
+    # ★★★★ 2026-09-19 修真 BUG（同 v1.21.6/1.21.7 那一类，第三个 ✗ —— 抢读崩溃日志才拿到 traceback ✗）：
+    #     File loop_engine.py, line 2679, in run
+    #         frozen, nd, r, s = _fsa_stats(args, cands, frozen, fsa, l1, nd, r, s, fsa_frz)
+    #     UnboundLocalError: cannot access local variable 's'
+    #   ⇒ **等号两边同名**：右边要读的 `s` 此刻还没绑定，左边才刚给它赋值 ✗
+    #   ★ 为什么首代才会塌：`s` 唯一的"真"赋值在 `s = pick_parent(rng, seeds, …)`，
+    #     而那一句在 `if seeds and r < cut[2]:` 里 ⇒ **首代没有种子（50 池 bank=0）⇒ 走不到** ✗
+    #     （另一处 `for v, s in zip(...)` 是**推导式自己的作用域**，绑不到外面的 s ✗）
+    #   （本处与前一处的修复合并在 **v1.21.7** 一起发布 ✓）
+    #   ★ 已核实这两处 `r`/`s` 都是**死透传**：`_fsa_stats` 内部只把 `s` 当自己的循环变量、
+    #     最后原样吐回 ✓；`_save_state` 里的 `s` 也是**局部**（函数内自己 `s = skeleton(nd)`）⇒
+    #     传进去的参数**从来没被读过** ✓ ⇒ 给安全初值即可，**语义零变化** ✓
+    #   （`r` 不必管：它在 L2163 由 `_critic_review_prev` **无条件**赋值 ✓；只有 `s` 会漏 ✗）
+    s = None                           # 首代没有"亲本节点"这个遗留值 ⇒ None（下游不读 ✓）
     frozen, nd, r, s = _fsa_stats(args, cands, frozen, fsa, l1, nd, r, s, fsa_frz)
 
     # ---- 中金【审查】环节: B角候选级 LLM 精判(硬滤后抽5深判, 与生成侧隔离防自证) ----

@@ -68,6 +68,30 @@ chk('返回 5 元组且 diag 为空', isinstance(out2, tuple) and len(out2) == 5
     'out2=%r' % (out2,))
 
 print()
+print('[2b] 同批隐患：`_build_fam_blacklist` 首代（prev_l1 空）也不许崩')
+print('     （v1.21.7 前：`return (block_fams, f, fam_black_txt, nd)` ⇒ UnboundLocalError: nd ✗）')
+
+
+class FakeArgs2:
+    gen = 8
+    fam_block_thr = 0.5
+    decorr = 0.75
+    fsa_th = 0.15
+    min_stab = 0.30
+    bank_skel_max = 1
+    parent_sel = 'uniform'
+    parent_top_pct = 0.30
+
+
+CFG2 = dict(LE.DEFAULT_CFG)
+import loop_critic as _LC      # noqa: E402  （引擎内部也是函数内 import ✓）
+_bf, _f2, _txt, _nd = LE._build_fam_blacklist(FakeArgs2(), CFG2, _LC, {'fake': 'panel'},
+                                              set(), None, [])
+chk('首代返回 (block_fams=空集, panel 原样返回, 文本空, nd=None)',
+    _bf == set() and _f2 == {'fake': 'panel'} and _txt == '' and _nd is None,
+    'got=(%r, %r, %r, %r)' % (_bf, _f2, _txt, _nd))
+
+print()
 print('[3] 静态守门：初始化必须写在 `if prev_l1 is not None` **之前**')
 src = io.open(os.path.join(ROOT, 'engine', 'loop_engine.py'), encoding='utf-8').read()
 i = src.index('def _critic_review_prev(')
