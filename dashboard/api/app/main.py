@@ -52,7 +52,8 @@ def health():
 def meta():
     return {
         'app': 'loop-code-dashboard',
-        'version': settings.VERSION,       # ★ 项目版本（来自根 `VERSION` 文件）
+        # ★ 2026-09-19：**每次请求重新读**（不再用启动时的常量 ✗）⇒ 改版本后刷新页面即可见 ✓
+        'version': settings.current_version(),
         'settings': settings.describe(),
         'pools': core.POOLS,
         'factorFields': factors.FACTOR_FIELDS,

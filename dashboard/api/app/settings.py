@@ -76,6 +76,19 @@ def _read_version():
 
 VERSION = _read_version()
 
+
+def current_version():
+    """★ 2026-09-19（用户之问："页面我刷新怎么还是 1.19.3 版本？"）—— **每次调用都重新读 `VERSION`** ✓
+
+    真因：`VERSION` 是**模块级常量**（导入时读一次）✗ ⇒ 服务进程启动后版本就**冻结在内存里**，
+      改 `VERSION` 之后**刷新页面没用**，非得重启 API 才变 ✗
+      （实测：API 进程 09-17 12:22 启动 ⇒ 页面一直显示 `1.19.3`，而当时 `VERSION` 已是 `1.21.x` ✗）
+    ⇒ `/api/meta` 与 `describe()` 改用**本函数** ⇒ **刷新即可看到最新版本** ✓
+      （省掉"改一次版本就要重启一次服务"的隐性坑 ✗）
+    ⚠ `VERSION` 常量仍保留：FastAPI 的 `title/version` 在**启动时**定 ✓ 那是元信息，冻结无妨 ✓
+    """
+    return _read_version()
+
 BACKEND_CFG = CFG.get('backend') or {}
 FRONTEND_CFG = CFG.get('frontend') or {}
 
@@ -101,7 +114,8 @@ API_PREFIX = '/api'
 def describe():
     """给 `/api/meta` 用：把"配置从哪来"透明化（便于排查端口冲突）。"""
     return {
-        'version': VERSION,
+        # ★ 动态读（不是启动时那个常量）⇒ 改 VERSION 后**刷新即生效** ✓
+        'version': current_version(),
         'versionSource': os.path.join(PROJECT_ROOT, 'VERSION'),
         'configPath': CONFIG_PATH,
         'projectRoot': PROJECT_ROOT,

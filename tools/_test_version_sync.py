@@ -90,6 +90,22 @@ else:
     else:
         print('  [4] 后端从 VERSION 读、无硬编码 ✓')
 
+# ---------------------------------------------- 4b. ★ 版本必须**动态读**（2026-09-19）
+#   实测事故（用户："页面我刷新怎么还是 1.19.3 版本？"）：
+#     `VERSION = _read_version()` 是**模块级常量** ⇒ 只在**服务启动时读一次**、
+#     之后冻结在进程内存里 ✗ ⇒ 改了 `VERSION` 之后**刷新页面永远不变**，非得重启 API ✗
+#     （那个 API 进程 09-17 12:22 启动 ⇒ 页面卡在 1.19.3，而 VERSION 早已到 1.21.x ✗）
+#   ⇒ 契约：`/api/meta` 必须走 `settings.current_version()`（每次调用重读）✓
+st2 = read('dashboard/api/app/settings.py') or ''
+mn2 = read('dashboard/api/app/main.py') or ''
+if 'def current_version' not in st2:
+    FAILS.append('settings.py 缺 `current_version()` —— 版本会**冻结在进程启动时** ✗'
+                 '（用户实测：改版本后刷新页面不变 ✗）')
+elif 'settings.current_version()' not in mn2:
+    FAILS.append('/api/meta 未使用 `settings.current_version()` ⇒ 刷新页面看不到最新版本 ✗')
+else:
+    print('  [4b] /api/meta 动态读 VERSION（改版本后刷新即生效）✓')
+
 # ---------------------------------------------------------------- 5. 前端 package.json
 pj = read('dashboard/web/package.json')
 if pj is None:
