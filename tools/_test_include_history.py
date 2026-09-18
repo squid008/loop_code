@@ -104,10 +104,18 @@ chk('★★ 退回时**标出来路**（不是冒充"库文档记录" ✗），�
 #   "规范名那份文件"的 `cur`，别名独有的段（如 `F01_1000` 的 `style`）就会被覆盖消失 ✗
 _fc = io.open(os.path.join(ROOT, 'tools', 'factor_curves.py'), encoding='utf-8').read()
 chk('★★ 别名副本**只合并本次算过的键**（`touched`），其余读"它自己那份"旧文件 ✓',
-    'touched = {k: v for k, v in cur.items()' in _fc
+    'touched = {k: cur[k] for k in _touched if k in cur}' in _fc
     and "cc = json.load(io.open(_po, encoding='utf-8'))" in _fc
     and "cc.update(touched)" in _fc,
     '原来 `dict(cur, name=nm_o)` ⇒ 别名独有的段被规范名那份覆盖 ✗（实测 F01_1000 丢 strip/style 之一）')
+chk('★★ `touched` 必须**显式记录**（`_touched.add(...)`）—— 不能靠"对象身份"推断 ✗',
+    "_touched.add('strip')" in _fc and '_touched.add(\'style\')' in _fc,
+    '`strip2` 那步是**原地修改** `cur[strip]` ⇒ 身份不变 ⇒ 会被漏掉（实测两个别名文件补完仍缺 strip2 ✗）')
+chk('★★★ `_style_ok` 必须**放行退化条目**（否则门控恒 False ⇒ 每轮白烧 ~55 分钟全量重算 ✗✗）',
+    "continue            # 退化条目（不可判定）⇒ 不要求三个统计量 ✓" in _fc
+    and _fc.count("if v.get('mean') is None and v.get('ir') is None:") >= 1,
+    '`_summ` 对退化条目只回 6 个键（无 tAdj/tYr/winYr）⇒ 原 `all(...)` 永远判"要重算"'
+    '（实测：--only-new 待算 59/61 ⇒ 白跑 55 分钟 ✗）')
 
 print()
 print('=' * 96)

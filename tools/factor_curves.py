@@ -677,12 +677,27 @@ def main():
             return 'strip' not in d
         def _style_ok(dd):
             """★ 不只检查"有没有 style"，还要**统计量齐全**（老版本没 `tAdj`/`tYr`
-            ⇒ 必须视为"要重算"，否则新旧混在一张表里 ✗ —— 2026-09-16 实测漏过 4 个）"""
+            ⇒ 必须视为"要重算"，否则新旧混在一张表里 ✗ —— 2026-09-16 实测漏过 4 个）
+
+            ⚠⚠ 2026-09-17 修（**这个门控原本恒为 False ⇒ 每次都全量重算 55 分钟** ✗✗）：
+              `_summ` 遇到**退化条目**时只回 6 个键（`mean/meanAbs/ir/t/win/ac1`，**没有** tAdj/tYr/winYr）
+              —— 例如 `barra_comovement`（面板是常数 ⇒ 逐期相关系数恒 0 ⇒ 不可判定 ✓ 这是**设计行为**）
+              ⇒ 原来的 `all(...)` 只要有一条退化就 False ⇒ **永远判"要重算"** ✗
+              （实测：`--stage=style+strip2 --only-new` 待算 **59/61** ⇒ 白跑 55 分钟 ✗）
+              ⇒ 修法：**退化的条目跳过该项检查**（"不可判定"和"老格式"是两回事 ✗）
+            """
             st = dd.get('style') or {}
             if not st.get('styles'):
                 return False
-            return all({'tAdj', 'tYr', 'winYr'} <= set((st.get('raw') or {}).get(s, {}))
-                       for s in st['styles'])
+            for s in st['styles']:
+                v = (st.get('raw') or {}).get(s) or {}
+                if not v:
+                    return False
+                if v.get('mean') is None and v.get('ir') is None:
+                    continue            # 退化条目（不可判定）⇒ 不要求三个统计量 ✓
+                if not {'tAdj', 'tYr', 'winYr'} <= set(v):
+                    return False        # 老格式 ⇒ 要重算 ✓
+            return True
 
         def _need2(dd):
             return not all(k in ((dd.get('strip') or {}).get('navs') or {})
@@ -800,6 +815,7 @@ def main():
         #     `F01_1000.json` 原有的 `style` 段消失了 ✗；因为同公式的另两个编号没有 style）
         #   ⇒ 修法：只把**本次真正算过的键**（`touched`）合并进"**它自己那份**旧文件" ✓
         _pre = dict(cur)
+        _touched = set()                       # ★ 本次**真正算过**的键（显式记录，别靠对象身份推断 ✗）
         try:
             fac, rr, sign = _aligned(it, B, dates, cols, close, a.cost, a.window)
             if rr is None:
@@ -812,14 +828,17 @@ def main():
                     continue
                 c.update(pool=it['pool'], expr=it['expr'], sign=sign, gen=it['gen'])
                 cur.update(c)
+                _touched.update(c.keys())
             if a.stage in ('strip', 'all'):
                 s = strip_for(nm, fac, rr, B, dates, cols, close, a.cost, a.window, STYLE)
                 if s is not None:
                     cur['strip'] = s
+                    _touched.add('strip')
             # ★ 风格相关性画像（15 连续风格 × raw/neut + 31 行业 R²/排行）
             if a.stage in ('style', 'style+strip2', 'all') and STYLE_PROF is not None:
                 cur['style'] = style_for(nm, fac, B, dates, cols, close,
                                          rr['ex'].index, STYLE_PROF)
+                _touched.add('style')
             # ★ 追加剥法：剥流通市值 / 剥总市值+限售比例（并入现有 strip 的 navs）
             if a.stage in ('strip2', 'style+strip2', 'all') and LIM is not None:
                 navs2, cal2 = strip2_for(nm, fac, rr, dates, cols, close,
@@ -833,13 +852,18 @@ def main():
                     st['caliber'] = (st.get('caliber') or '') + \
                         '；floatcap=剥流通市值、caplimit=剥总市值+限售比例 ln(总/流通)'
                     cur['strip'] = st
+                    _touched.add('strip')      # ★ 这步是**原地修改** `st` ⇒ 必须显式记 ✓
             cur.setdefault('pool', it['pool'])
             cur.setdefault('expr', it['expr'])
             cur.setdefault('sign', sign)
             # ★ 每个名字各写一份（别名副本把 `name` 改成**它自己的编号**，免得详情页显示别人的名字）✓
-            # ★★ 2026-09-17 修：**别名副本只合并"本次算过的键"**（`touched`），其余用"它自己那份"旧文件 ✓
-            #    （原实现整份照抄规范名那份 ⇒ 别名独有的段被覆盖掉 ✗，见上面 `_pre` 的说明）
-            touched = {k: v for k, v in cur.items() if k not in _pre or _pre[k] is not v}
+            # ★★ 2026-09-17 修（两处，都实测踩到）：
+            #   ① 别名副本**只合并"本次算过的键"**，其余用"它自己那份"旧文件 ✓
+            #      （原实现整份照抄规范名那份 ⇒ 别名独有的段被覆盖掉 ✗，见上面 `_pre` 的说明）
+            #   ② ⚠ **不能用"对象身份"推断 touched** ✗ —— `strip2` 那步是**原地修改**
+            #      （`st = cur.get('strip')` 后 `st['navs'].update(...)`）⇒ 对象身份不变 ⇒ 会被漏掉 ✗
+            #      （实测：`F01_1000`/`F01_500` 两个别名文件补完后仍缺 `strip2` ✗）⇒ 改为**显式记录** ✓
+            touched = {k: cur[k] for k in _touched if k in cur}
             for nm_o in (alias.get(it['expr']) or [nm]):
                 _po = _path(nm_o)
                 if nm_o == nm:
