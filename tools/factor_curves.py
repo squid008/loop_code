@@ -802,7 +802,9 @@ def _self_test(B, dates, cols, close, STYLE_PROF):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--pools', default='all,300,500,1000')
+    # ★★ 2026-09-18：默认池从 `loop_pools.POOLS` **派生**（原来硬编码 ⇒ 漏了 50 池 ✗）
+    import loop_pools as _LP
+    ap.add_argument('--pools', default=_LP.tool_pools())
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--only-new', action='store_true', help='只补缺该段数据的因子')
     # ★ `style+strip2`：两段**合并一趟跑**（共用同一次回测）⇒ 省掉一半时间 ✓

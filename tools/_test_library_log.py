@@ -215,6 +215,23 @@ def main():
         _tip and '判不了它还在不在库' in _tip
         and not any(s in _tip for s in ('**', '★', '⇒', '✓', '✗')))
 
+    # ---- [8] ★ 收尾三个工具的默认池必须覆盖**全部挖矿池**（2026-09-18 实测缺口）----
+    print('\n[8] ★ 收尾三个工具的默认 `--pools` 必须覆盖全部挖矿池（含 50）')
+    _tp = {}
+    for _f in ('build_facs.py', 'factor_metrics.py', 'factor_curves.py'):
+        with open(os.path.join(ROOT, 'tools', _f), encoding='utf-8-sig') as _h:
+            _tp[_f] = _h.read()
+    _lp = ''
+    with open(os.path.join(ROOT, 'engine', 'loop_pools.py'), encoding='utf-8-sig') as _h:
+        _lp = _h.read()
+    chk('★ 三个工具都从 `loop_pools.tool_pools()` **派生**默认池（不再硬编码 ✗）',
+        all('_LP.tool_pools()' in t for t in _tp.values()),
+        '原来三处各硬编码 all,300,500,1000 ⇒ **漏了 50 池** ✗ ⇒ 50 池有因子入库时收尾不会给它出图/指标 ✗')
+    chk('★★ 不许再出现硬编码的池清单（防回退）',
+        not any("'all,300,500,1000'" in t or '"all,300,500,1000"' in t for t in _tp.values()))
+    chk('★ `tool_pools()` 由池定义（`loop_pools.POOLS`）派生 —— **单一来源**，以后加池不会漏 ✓',
+        'def tool_pools' in _lp and "','.join(['all'] + list(POOLS))" in _lp)
+
     print('\n' + '=' * 96)
     print('通过 {}/{}'.format(OK[0] - OK[1], OK[0]) + ('' if OK[1] else '  ✓ 全部通过'))
     return 1 if OK[1] else 0

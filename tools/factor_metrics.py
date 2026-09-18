@@ -70,7 +70,9 @@ COLS = ['name', 'pool',
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--pools', default='all,300,500,1000')
+    # ★★ 2026-09-18：默认池从 `loop_pools.POOLS` **派生**（原来硬编码 ⇒ 漏了 50 池 ✗）
+    import loop_pools as _LP
+    ap.add_argument('--pools', default=_LP.tool_pools())
     ap.add_argument('--limit', type=int, default=0)
     ap.add_argument('--only-new', action='store_true',
                     help='只补 `factor_metrics.csv` 里还没有的因子（增量；已算的跳过）')

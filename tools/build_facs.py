@@ -269,7 +269,9 @@ def _merge_csv(path, new_rows, cols):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('--pools', default='all,300,500,1000')
+    # ★★ 2026-09-18：默认池从 `loop_pools.POOLS` **派生**（原来硬编码 ⇒ 漏了 50 池 ✗）
+    import loop_pools as _LP
+    ap.add_argument('--pools', default=_LP.tool_pools())
     ap.add_argument('--limit', type=int, default=0, help='只做前 N 个（冒烟用）')
     ap.add_argument('--no-strip', action='store_true', help='跳过剥风格补测')
     ap.add_argument('--ic_tol', type=float, default=0.002, help='IC 自检容差')
