@@ -249,6 +249,10 @@ export interface PoolSlot {
   enabled: boolean      // 是否参与轮转
   stopped: boolean      // 是否被单独停掉
   mining: boolean       // 是否正在跑它这一代
+  /** ★ 2026-09-19：是否正在**收尾审查**（池内收尾指名它，或全局收尾进行中）*/
+  reviewing?: boolean
+  /** ★ 2026-09-19：该池**本轮已完成几代**（不限模式下快池涨得快）*/
+  gensRound?: number
   engine: number[]      // 该池当前引擎 PID
   /** ★ 2026-09-17：最近几次"启动即崩"的代数（空 = 没崩过）。崩了必须在卡片上看得见 */
   crashes: number[]
@@ -265,6 +269,10 @@ export interface MineStateDto {
   engines: { pid: number; pools: string[] | null; memMB?: number }[]
   curPool: string | null
   curGen: number | null
+  /** ★ 2026-09-19：正在做**池内收尾**的那个池（看板显示"审查中"✓）*/
+  tailPool?: string | null
+  /** ★ 2026-09-19：每池**本轮已完成代数** {池: n}（用户要"各池自己的进度"✓）*/
+  gensRound?: Record<string, number>
   /** ★ 每个**正在跑**的池 + 它这一代的代数（来自控制文件 `active`；并行时会有多条） */
   active?: Array<{ pool: string; gen: number | null; pid: number | null }>
   round: number | null
@@ -340,9 +348,31 @@ export interface MinePoolResp {
   note: string
 }
 
+// ---------------------------------------------------------------- 算子手册（首页按钮 + 滚动弹窗）
+export interface OpItem {
+  name: string      // 算子名（含窗口，如 ts_std100）
+  zh: string        // 中文名
+  tip: string       // 一句话说明
+  group: string
+  kind: string      // unary | binary
+  window: number | null
+  sig: string       // 写法示例，如 mul(a, b)
+  winText: string   // 过去 N 期 / 逐点运算
+}
+
+export interface OpsDto {
+  ops: OpItem[]
+  fields: { name: string; zh: string; tip: string }[]
+  notes: { k: string; v: string }[]
+  counts: { ops: number; fields: number }
+  source: string
+}
+
 // ---------------------------------------------------------------- 接口
 export const api = {
   meta: () => get<MetaDto>('/meta'),
+  /** ★ 2026-09-19：算子手册（算子与字段的中文含义；名单唯一事实源仍是 ops_registry） */
+  ops: () => get<OpsDto>('/ops'),
   status: (fresh = false) => get<StatusDto>(`/status${fresh ? '?fresh=true' : ''}`, 40000),
   libraries: () => get<{ libraries: LibraryDto[]; totalFactors: number }>('/library'),
   library: (pool: string) => get<LibraryDto>(`/library/${pool}`),

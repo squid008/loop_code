@@ -308,6 +308,16 @@ def state():
     #   各池最近几次"**启动即崩**"的代数（调度器写在控制文件里）—— 必须让用户**看得见** ✗
     #   （以前只躺在日志里 ⇒ 池子每代秒崩，卡片却照旧"并行中"蓝点 ⇒ 白等一整晚）
     _crashes = c.get('crashes') or {}
+    # ★★★ 2026-09-19（用户："300/500 一直都是并行中，是在审查呢还是在等 50 池挖完？"
+    #   + "池徽标语义是不是加一个审查中？这样跟并行中就能区分开"）⇒ 补两个信号：
+    #   · `tailPool` = **哪个池正在做池内收尾**（`run_tracks.do_pool_tail` 写的 ✓）
+    #   · `phase == 'tail'` = **全局收尾**进行中（轮末 / 全停后那一次 ✓）⇒ 此时参与池都算"审查中"
+    #   · `gensRound` = **每池本轮已跑几代**（`parallel_runner` 写的 ✓）—— 用户要"各池自己的进度"✓
+    #   ⚠ 语义分层（别再混 ✗）：挖掘中 = 有它的引擎在跑；审查中 = 它在收尾；并行中 = 已参与并行、
+    #     但此刻既没在挖也没在审（**在等本轮其它池**或等下一次调度 ✓）
+    _tap = c.get('tailPool')
+    _tail_all = (c.get('phase') == 'tail')
+    _gens = c.get('gensRound') or {}
     for k in known:
         # ★★★★ 2026-09-16 修 BUG I：`mining` 必须**以"真的有它的引擎在跑"为准**，
         #   不能只看调度器的 `curPool` —— 否则会出现
@@ -320,6 +330,10 @@ def state():
             'stopped': k in st,
             'mining': bool(_eng),                    # ★ 有引擎 = 正在跑 ✓
             'engine': _eng,
+            # ★ 该池此刻是否在**收尾审查**（池内收尾指名它，或全局收尾进行中）✓
+            'reviewing': bool(_tail_all or (_tap == k)),
+            # ★ 该池**本轮已完成几代**（不限模式下快池会涨得很快 ✓）
+            'gensRound': int(_gens.get(k) or 0),
             'crashes': [int(x) for x in (_crashes.get(k) or [])
                         if isinstance(x, (int, float))][-3:],
         }
@@ -375,6 +389,8 @@ def state():
                        'memMB': p.get('memMB')} for p in sched],
         'engines': [{'pid': p['pid'], 'pools': p.get('pools'), 'memMB': p.get('memMB')} for p in engs],
         'curPool': cur, 'curGen': c.get('curGen'),
+        # ★ 2026-09-19：正在做池内收尾的那个池（看板显示"审查中"用 ✓）
+        'tailPool': _tap, 'gensRound': {k: int(v or 0) for k, v in _gens.items()},
         # ★★ 2026-09-17（用户："300、500 池并行挖的话…鼠标放上去就显示 正在跑：300·gen54 /
         #   正在跑：500·gen17"）⇒ 需要**每个在跑的池各自的代数** ⇒ 直接透传控制文件里的 `active`
         #   （调度器每启动一个引擎就写一条 `{pool, gen, pid}` —— 这是**最准**的来源，只扣字段不加逻辑）✓
@@ -570,7 +586,13 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
     # ★★ 只在**非默认**时追加 ⇒ 默认命令与改造前**逐字一致**（旧行为一行不改 ✓）
     if exec_mode != 'rotate':
         args += ['--exec_mode=%s' % exec_mode, '--max_parallel=%d' % max_parallel,
-                 '--mem_per_engine=%.1f' % mem_per_engine]
+                 '--mem_per_engine=%.1f' % mem_per_engine,
+            # ★★★★ 2026-09-19（用户："为什么要等三个池一起挖完才审查？不能一个池挖完就
+            #   马上审查、然后接着挖？"）⇒ 两个新开关，看板启动**默认带上**：
+            #   · gens_per_round=0 ⇒ **不限**（谁跑完谁接着领；直到别的池都完成 1 代才收轮 ✓
+            #     用户 09-19："500 跑一代，50 应该能跑七八代"）✓
+            #   · pool_tail=on   ⇒ 某池入库就**立刻**补它的 facs/指标/曲线 ✓
+            '--gens_per_round=0', '--pool_tail=on']
         # ★★★ 2026-09-16：`_mp_auto`（看板没显式指定并行数）⇒ 让调度器**动态重算上限**
         #   —— 否则并行数在**启动那一刻就按池数算死**，后来点「启动本池」加的池**永远只能排队** ✗
         #   （用户实测："点一个启动，再点一个池子，怎么是加入轮转而不是并行？"）

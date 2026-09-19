@@ -364,12 +364,20 @@ tr.outbank .fcode { color: var(--mut); }
       在 10.5px 下的宽度）＋ `tabular-nums` ⇒
       ① 不再有空白（空闲时卡片约 120px 而不是 218px）✓
       ② 轮次从 `1/50` 变到 `9999/9999` **卡宽不变**（上一版"不许抖"的要求仍满足）✓ */
-.ctrls .phase { width: max-content; max-width: 218px; overflow: hidden; }
-/* ↑ `max-width: 218px` 只是**安全上限**（轮转模式会多一个"当前池"段；顶栏不许溢出 ✗）——
-   常规并行模式用不到它：内容短，卡片就短（空闲时约 120px）✓ */
+/* ★★★★ 2026-09-19（用户："这个收尾审查搞到第二行去了，把面板搞宽点，**跟底下在跑的池面板
+   一样宽**吧"）⇒ 相位卡改成**与池卡片同宽的固定 310px**（池网格是 `minmax(310px, 1fr)`
+   ⇒ 卡最小宽 310px ✓），标签**不许折行**（原来"收尾审查中"被挤成两行 ✗），
+   那格放**逐池进度**（`50 第48代 | 300 第24代` ✓）超长则省略号 ✓（完整信息在悬停里 ✓） */
+.ctrls .phase { width: 310px; max-width: none; overflow: hidden; }
+.ctrls .phase b, .ctrls .phase em { white-space: nowrap; }
 .ctrls .phase em { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.ctrls .phase small { flex: none; min-width: 52px; text-align: right;
-                      font-variant-numeric: tabular-nums; }   /* 轮次槽定宽 ⇒ 数字变化不推动卡宽 ✓ */
+/* ★★★ 2026-09-19（用户："轮次显示逻辑按照我想要的改"）：这格从「全局 1/50」改成
+   **逐池进度**（如 `300·85  500·39  50·32`）⇒ 定宽从 52px 提到 **132px**（放得下三池 ✓），
+   仍 `flex:none` + `tabular-nums` ⇒ **数字变化不推动卡宽** ✓；
+   内容超长时**省略号**（完整信息在相位卡鼠标提示里 ✓ —— `.ctrls .phase` 已 `overflow:hidden`）✓ */
+.ctrls .phase small { flex: 1 1 auto; min-width: 0; text-align: right;
+font-variant-numeric: tabular-nums; white-space: nowrap;
+overflow: hidden; text-overflow: ellipsis; }
 .ctrls .res { width: 236px; justify-content: space-between; overflow: hidden; }
 .ctrls .res .mode { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctrls .res .mode.off { color: var(--mut); }        /* 未运行时占位（保持卡宽不变、又说明状态）✓ */
@@ -430,3 +438,25 @@ tr.outbank .fcode { color: var(--mut); }
 .st-tab tbody tr:nth-child(odd) { background: rgba(255, 255, 255, .02); }
 .st-tab td { color: var(--mut); }
 .st-tab td:first-child { color: #c8d3ee; }
+/* ---------------- 算子手册弹窗（2026-09-19，用户要求：带滚动条的弹窗）---------------- */
+.modal { position: fixed; inset: 0; background: rgba(6, 10, 20, .74); display: flex;
+         align-items: center; justify-content: center; z-index: 60; }
+.modal-box { width: min(940px, 94vw); max-height: 82vh; display: flex; flex-direction: column;
+             background: var(--card); border: 1px solid var(--bd); border-radius: 14px;
+             box-shadow: 0 24px 60px -24px #000; overflow: hidden; }
+.modal-h { display: flex; align-items: center; gap: 10px; padding: 12px 14px;
+           border-bottom: 1px solid var(--bd); background: var(--card2); }
+.modal-h b { font-size: 14px; }
+.ops-q { flex: 1 1 auto; min-width: 150px; }
+.ops-cnt { font-size: 11.5px; color: var(--mut); white-space: nowrap; }
+/* 内容区只纵向滚动（不要横向滚动条）*/
+.modal-body { overflow-y: auto; overflow-x: hidden; padding: 12px 14px 18px; }
+.ops-sec { margin: 12px 0 6px; font-size: 12px; font-weight: 650; color: var(--sky); }
+.ops-sec:first-child { margin-top: 2px; }
+.ops-row { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px dashed rgba(255, 255, 255, .06); }
+.ops-k { flex: 0 0 218px; color: #c8d3ee; font-size: 12.5px; word-break: break-all; }
+.ops-v { flex: 1 1 auto; color: var(--mut); font-size: 12.5px; line-height: 1.55; }
+.ops-v b { color: var(--fg); font-weight: 620; }
+.ops-mono { font-family: var(--mono); font-size: 12px; }
+.ops-tag { margin-left: 8px; font-size: 11px; color: var(--mut); border: 1px solid var(--bd);
+           border-radius: 6px; padding: 0 6px; white-space: nowrap; }

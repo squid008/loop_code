@@ -20,11 +20,11 @@ if __package__ in (None, ''):                      # 允许 `python app/main.py`
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from app import settings
     from app import mine
-    from app.sources import core, factors, pools
+    from app.sources import core, factors, pools, ops
 else:
     from . import settings
     from . import mine
-    from .sources import core, factors, pools
+    from .sources import core, factors, pools, ops
 
 T0 = time.time()
 
@@ -60,6 +60,7 @@ def meta():
         'endpoints': [
             '/api/health', '/api/meta', '/api/status', '/api/pools',
             '/api/library', '/api/library/entries', '/api/library/{pool}', '/api/selected',
+            '/api/ops',
             '/api/strip-bank', '/api/pool-obs/{pool}', '/api/factors/flat',
             '/api/mine/state', '/api/mine/start', '/api/mine/stop',
             '/api/mine/start_pool', '/api/mine/global',
@@ -122,6 +123,17 @@ def pool_obs(pool: str, limit: int = Query(300, ge=1, le=5000)):
     if pool not in core.POOL_KEYS:
         raise HTTPException(404, '未知池: %s' % pool)
     return factors.pool_obs(pool, limit=limit)
+
+
+@app.get('/api/ops', summary='算子手册（算子与字段的中文含义、用法）')
+def ops_manual():
+    """★ 2026-09-19（用户之问）：用户看公式时不知道 `cs_demean` 什么意思 ⇒
+    首页加「算子手册」按钮、点开是带滚动条的弹窗 ⇒ 本接口供它取数 ✓
+
+    ⚠ 名单**派生自** `engine/ops_registry.py`（唯一事实源 ⇒ 不会漏算子 ✗），
+      本模块只负责中文说明 ✓；守门 `tools/_test_ops_manual.py` 钉住覆盖度 ✓
+    """
+    return ops.manual()
 
 
 @app.get('/api/factors/flat', summary='扁平化因子记录（面向 PG / 看板导入）')

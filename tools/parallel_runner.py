@@ -136,6 +136,9 @@ def _reap(t):
         _miss = [f for f in _need if not any(x.startswith(f) for x in t['cmd'])]
         if _miss:
             RT.log('        [!][GUARD] 本池**漏传**池内判定的必要参数: {}'.format(', '.join(_miss)))
+        # ★ 2026-09-19（第 2 步用）：本代**入库个数** ⇒ 决定要不要立刻补 pool-local 数据 ✓
+        _bm = re.findall(r'入库 (\d+) 个新因子', txt)
+        t['banked'] = int(_bm[-1]) if _bm else 0
         if re.search(r'入库 0 个新因子', txt):
             RT.log('        [note] 本代入库 0（连续多代如此先看 fail_* 分布再下结论）')
     except Exception:
@@ -201,8 +204,21 @@ def _running_brief(running, now):
 
 def run(pools, rounds, n, l2, extra, inject_spec, no_global,
         max_parallel=3, mem_per_engine=3.0, panel_cache='off', dry=False,
-        auto_parallel=False):
-    """有界并行跑 `rounds` 轮；返回进程退出码。"""
+        auto_parallel=False, gens_per_round=1, pool_tail=False):
+    """有界并行跑 `rounds` 轮；返回进程退出码。
+
+    ★★★★ 2026-09-19 新增两个开关（用户："为什么要等三个池一起挖完才审查？不能一个池挖完就
+    马上审查、然后接着挖？那样效率不是更高？"）：
+      · `gens_per_round=K`（**第 1 步**）—— 每池每轮连跑几代：
+        `K>=1` ⇒ 定量的 K 代；**`K=0` ⇒ 不限**（默认 ✓，用户 09-19 拍板："500 跑一代，
+        50 应该能跑七八代"）——语义 = 谁跑完谁**接着领下一代**，直到**别的启用池都已完成 1 代**
+        才收轮 ✓（于是快池几乎不空转，轮长仍由最慢的池决定 ✓）
+      · `pool_tail=True`（**第 2 步**）—— 某池本代**真有入库**时，**立刻**为它补 pool-local 数据
+        （facs 落地 / 指标表 / 曲线三段 ✓）。为什么可并发：这三段都**按因子落文件**
+        （`facs/*.h5`、`docs/factor_curves/*.json`）⇒ 不同池的文件**互不相干** ✓；
+        而**聚合文件**（登记表 / 跨池审查 / 精选池）仍留在轮末由 `do_global_tail` 统一做 ✓
+        ⇒ 于是"挖到因子 ⇒ 几分钟内就有指标和曲线"，不必等到整轮结束 ✓
+    """
     plan = []
     for p in pools:
         g0, done = RT.next_gen(p)
@@ -258,6 +274,7 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
             #     ★ 只有"**你在 stopped 里、之后又被「启动本池」放回来**"的池才允许马上上
             #       ⇒ 既不会自动顶上来，又让你手动加的那个立刻开挖 ✓✓
             launched = set()                 # 本轮已启动
+            gens = {}                        # ★ 2026-09-19（第 1 步）：池 -> 本轮已完成代数（到 K 就收手 ✓）
             retries = {}                     # ★ 池 -> 本轮"崩溃重试"已用次数（见 `MAX_CRASH_RETRY`）
             deferred = {}                    # 池 -> 顺延那一刻的 stopped 快照（用来认"你重新启用"）
             ran_round = False
@@ -285,6 +302,31 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                         if _reap(t):
                             ran_round = True
                             dirty = True
+                            # ★★★ 2026-09-19（第 1 步）：本代**成功** ⇒ 记数；再决定要不要接着领下一代 ✓
+                            #   · `gens_per_round >= 1`（定量的 K）⇒ 没到 K 代就回候选 ✓
+                            #   · `gens_per_round == 0` ⇒ **不限**：只要**别的启用池还没跑完 1 代**，
+                            #     就继续领 ✓（实测动机：500 一代 30-43 分钟，而 50 一代 3-8 分钟
+                            #     ⇒ 用户说得对——500 跑一代的工夫，50 该能跑七八代 ✗ 而不是干等 ✓）
+                            _gp = t['pool']
+                            gens[_gp] = gens.get(_gp, 0) + 1
+                            if gens_per_round >= 1:
+                                _again = gens[_gp] < gens_per_round
+                            else:
+                                _need_r = [x for x in en if x not in st]
+                                _again = any(gens.get(x, 0) < 1 for x in _need_r)
+                            if _again:
+                                launched.discard(_gp)
+                            RT.write_ctl(gensRound=dict(gens))      # ★ 看板进度随即刷新 ✓
+                            # ★★★ 2026-09-19（第 2 步）：本代**真有入库** ⇒ 立刻补该池的
+                            #   pool-local 数据（facs 落地 / 指标表 / 曲线）⇒ 挖到就能马上看 ✓
+                            #   ⚠ 只在"有入库"时跑（`--only-new` 增量本来也是几秒 ✓）⇒ 平时零开销 ✓
+                            if pool_tail and t.get('banked'):
+                                try:
+                                    RT.do_pool_tail(_gp, 'gen{} 入库 {} 个'.format(
+                                        t['gen'], t['banked']))
+                                except Exception as _e:      # noqa: BLE001
+                                    RT.log('      [!] 池内收尾失败({}) -> 继续挖掘'.format(
+                                        type(_e).__name__))
                         if t.get('killed') and len(deferred) == 0 and not stopped_by_user:
                             _st0 = set(RT.read_ctl().get('stopped') or [])
                             for p in en:
@@ -360,8 +402,11 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                     t['done'] = done
                     running.append(t)
                     # ★ auto 模式下把**当前有效上限**写进控制文件 ⇒ 看板显示的是"真话"（不是启动时的旧值）✓
+                    # ★★ 2026-09-19：同时写 `gensRound`（**每池本轮已跑几代**）—— 用户要"各池自己的
+                    #   轮次/进度"能滚动显示 ✓（不限模式下 50 一轮能跑七八代，这个数就是它的进度 ✓）
                     _kw = {} if not auto_parallel else {'maxParallel': eff_max}
                     RT.write_ctl(round=rnd, curPool=p, curGen=gen, phase='mine',
+                                 gensRound=dict(gens), tailPool=None,
                                  active=[{'pool': x['pool'], 'gen': x['gen'], 'pid': x['pr'].pid}
                                          for x in running], **_kw)
                 if running or cand:

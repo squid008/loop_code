@@ -280,7 +280,107 @@ def _with_ctl_lock(fn, tries=80, wait=0.05):
     return fn()                                  # 拿不到锁也要写（不卡死优先）
 
 
+# ================================================================ 收尾互斥锁 + 池内收尾（第 2 步）
+TAIL_LOCK = os.path.join(LOGD, '_tail.lock')
+TAIL_MIN_FREE_GB = 8.0        # 收尾要载面板（~4.4 GB）⇒ 与引擎抢内存时宁可不跑 ✓
+
+
+class tail_lock:
+    """★ 收尾互斥（跨进程文件锁）：**池内收尾**与**全局收尾**共用一把 ⇒ 永不重叠 ✓
+
+    ★ 为什么需要（2026-09-19，第 2 步）：池内收尾是"某池入库就立刻跑"⇒ 可能与另一个池的池内收尾、
+      或轮末的全局收尾**同时**发生 ⇒ 它们都会写 `docs/` 下的文件（曲线是每因子一个 ✓，
+      但 `factor_metrics.csv` 等是**共享**的 ✗）⇒ 必须串行化 ✓
+    ⚠ 不为了锁卡死：超时（~20s）照样进（并清掉陈旧锁 >120s ✓）—— 与 `_with_ctl_lock` 同思路 ✓
+    """
+
+    def __enter__(self):
+        for _ in range(200):
+            try:
+                fd = os.open(TAIL_LOCK, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+                os.close(fd)
+                return self
+            except FileExistsError:
+                try:
+                    if time.time() - os.path.getmtime(TAIL_LOCK) > 120:
+                        os.unlink(TAIL_LOCK)
+                        continue
+                except OSError:
+                    pass
+                time.sleep(0.1)
+        log('  [!] 收尾锁等待超时（20s）⇒ 仍继续（宁可能重一点，不卡死）')
+        return self
+
+    def __exit__(self, *a):
+        try:
+            os.unlink(TAIL_LOCK)
+        except OSError:
+            pass
+        return False
+
+
+def do_pool_tail(pool, tag='', min_free_gb=TAIL_MIN_FREE_GB, force=False):
+    """★★★ 2026-09-19（第 2 步）：**该池刚有入库 ⇒ 立刻补它的 pool-local 数据** ✓
+
+    只跑"**按因子落文件**"的三类（与其它池不冲突 ✓）：
+      ① `build_facs --only-new --pools=<pool>`（因子值落地）
+      ③ `factor_metrics --only-new --pools=<pool>`（指标表）
+      ④⑤⑥ `factor_curves --only-new --stage=core|strip|style+strip2 --pools=<pool>`（曲线）
+    **不跑** ⓪ 登记表 / ② 跨池审查 / 精选池 —— 那几件是**全局语义**（要"看全所有池"✓）
+    ⇒ 仍由轮末的 `do_global_tail` 统一做 ✓
+
+    ⚠ 内存护栏：可用内存 < `min_free_gb` 时**跳过**（收尾要载面板；引擎优先 ✓，
+      `--only-new` 增量本来就不丢事，下一轮/轮末补上 ✓）。`force=True` 可越过（人工调用用 ✓）
+    """
+    if not force:
+        free = avail_gb()
+        if free is not None and free < min_free_gb:
+            log('  [池内收尾] 跳过 pool={}：可用 {:.1f} GB < {:.1f} GB（引擎优先，留到轮末 ✓）'
+                .format(pool, free, min_free_gb))
+            return False
+    with tail_lock():
+        # ★★★ 2026-09-19（用户："池徽标语义是不是加一个审查中？这样跟并行中就能区分开，
+        #   我就知道它挖完了正在审查"）⇒ 把"哪个池在审查"写进控制文件 ⇒ 看板能如实显示 ✓
+        write_ctl(tailPool=pool)
+        log('')
+        log('  [池内收尾] ★ pool={} {}（只做该池的 facs/指标/曲线 ⇒ 与其它池不冲突 ✓）'
+            .format(pool, ('（' + tag + '）') if tag else ''))
+        _jobs = [
+            ('①', 'facs 落地', [PY, '-u', 'tools/build_facs.py', '--only-new',
+                               '--pools=%s' % pool]),
+            ('③', '指标表', [PY, '-u', 'tools/factor_metrics.py', '--only-new',
+                           '--panel_cache=use', '--pools=%s' % pool]),
+            ('④', '曲线 core', [PY, '-u', 'tools/factor_curves.py', '--only-new',
+                              '--stage=core', '--panel_cache=use', '--pools=%s' % pool]),
+            ('⑤', '剥风格', [PY, '-u', 'tools/factor_curves.py', '--only-new',
+                           '--stage=strip', '--panel_cache=use', '--pools=%s' % pool]),
+            ('⑥', '风格画像', [PY, '-u', 'tools/factor_curves.py', '--only-new',
+                            '--stage=style+strip2', '--panel_cache=use', '--pools=%s' % pool]),
+        ]
+        for _tag, _what, _cmd in _jobs:
+            try:
+                r = subprocess.run(_cmd, cwd=ROOT, capture_output=True, text=True,
+                                   encoding='utf-8', errors='replace', timeout=7200,
+                                   creationflags=NO_WIN)
+                _tail = [x for x in (r.stdout or '').splitlines() if x.strip()]
+                log('      [{}] {:<10s} {}'.format(
+                    _tag, _what, (_tail[-1][:96] if _tail else 'rc=%d' % r.returncode)))
+                if r.returncode != 0:
+                    log('      [!] {} 非零退出={} -> 继续（轮末会再补 ✓）'.format(_what, r.returncode))
+            except Exception as e:                        # noqa: BLE001
+                log('      [!] {} 失败({}) -> 继续'.format(_what, type(e).__name__))
+        log('  [池内收尾] 完成 pool={} ✓'.format(pool))
+        write_ctl(tailPool=None)        # ★ 收尾结束立刻复位（看板随即回到 并行中/挖掘中）✓
+    return True
+
+
 def do_global_tail(tag=''):
+    """★ **全局收尾**（带互斥锁 ⇒ 与池内收尾不重叠 ✓）。"""
+    with tail_lock():
+        return _global_tail_impl(tag)
+
+
+def _global_tail_impl(tag=''):
     """★ **全局收尾**：facs 落地 + 跨池审查 + 精选池。
 
     ⚠ 为什么必须"单独一次、无人并行"：跨池审查要做**跨池去重**，必须"看全所有池"才能做
@@ -435,6 +535,14 @@ def main():
     from_ctl = False
     mem_per_engine = 3.0      # 每引擎内存预算 GB（仅 parallel 模式；不足就排队等）
     panel_cache = 'off'       # 透传给引擎：off(默认,现状) / use / build（见 tools/build_panel_cache.py）
+    # ★★★★ 2026-09-19 两个新开关（用户："为什么要等三个池一起挖完才审查？…效率不是更高？"）
+    #   · `--gens_per_round=K`（第 1 步）每池每轮连跑几代：`K>=1` 定量；**`0` = 不限**（默认 ✓）
+    #     用户 09-19 拍板："500 跑一代，50 应该能跑七八代或者四五代？"
+    #     ⇒ 不限模式：谁跑完谁接着领下一代，直到**别的启用池都完成 1 代**才收轮 ✓
+    #       （实测：500 一代 30-43 min · 50 一代 3-8 min ⇒ 50 一轮能跑七八代 ✓）
+    #   · `--pool_tail=on|off`（第 2 步）**某池入库就立刻补它的 facs/指标/曲线**（默认 on ✓）
+    gens_per_round = 0
+    pool_tail = True
     # ★★ 2026-09-16 新增 `--engine_arg=...`（可重复）：**追加**到默认 extra。
     #   为什么需要：`--extra=` 是"**整体替换**"默认那组引擎参数 ⇒ 一旦用它加个小参数，
     #   就会把 `--pool_obs --min_pool_calmar --pool_gate_or_all ...`（池内判定必需）一起丢掉 ✗✗
@@ -547,6 +655,10 @@ def main():
             mem_per_engine = float(a.split('=', 1)[1])
         elif a.startswith('--panel_cache='):
             panel_cache = a.split('=', 1)[1].strip().lower()
+        elif a.startswith('--gens_per_round='):
+            gens_per_round = max(0, min(50, int(a.split('=', 1)[1])))    # 0 = 不限 ✓
+        elif a.startswith('--pool_tail='):
+            pool_tail = str(a.split('=', 1)[1]).strip().lower() in ('1', 'true', 'yes', 'on')
         elif a.startswith('--extra='):
             extra = [x for x in a.split('=', 1)[1].split() if x]
         elif a.startswith('--engine_arg='):
@@ -591,7 +703,8 @@ def main():
         return _PR.run(pools=pools, rounds=rounds, n=n, l2=l2, extra=extra,
                        inject_spec=inject_spec, no_global=no_global,
                        max_parallel=max_parallel, mem_per_engine=mem_per_engine,
-                       panel_cache=panel_cache, dry=dry, auto_parallel=auto_parallel)
+                       panel_cache=panel_cache, dry=dry, auto_parallel=auto_parallel,
+                       gens_per_round=gens_per_round, pool_tail=pool_tail)
     if dry:
         log('（--dry：只列计划，不执行）')
         return 0

@@ -135,15 +135,25 @@ chk('极窄屏**优雅降级**（先省次要文字，而不是折行或横滑�
 # ★★★ 2026-09-17 第三批（**推翻上面那条**）：「这个卡片是不是可以窄很多了？空闲跟 1/50 之间
 #   隔了太宽了，留的宽度够"空闲 9999/9999"的位置就行了」
 #   ⇒ 现在 = **贴合内容**（不再有那段空白）+ **轮次槽定宽**（仍不抖 ✓）；旧断言同步改掉 ✓
-chk('★★ 相位卡**贴合内容**（撤掉"定宽 218px + 轮次靠右"那一段空白 —— 用户："隔太宽了"）',
-    re.search(r'\.ctrls \.phase \{ width: max-content', css) is not None
-    and 'margin-left: auto' not in css.split('.ctrls .phase small')[1][:120],
-    '仍是 218px / 轮次 `margin-left:auto` ⇒ 空闲时右边空一大段 ✗')
-chk('★ 轮次槽**定宽**（"9999/9999" 也放得下，且数字变化**不推动卡宽**）',
-    re.search(r'\.ctrls \.phase small \{ flex: none; min-width: 52px', css) is not None
-    and 'tabular-nums' in css)
-chk('★ 轮次槽**永远渲染**（没轮次时是**空槽** ⇒ 卡宽不抖，也不显示假数据）',
-    "? `${compactRound(mine.roundText)}/${mine?.rounds ?? '?'}` : ''" in src)
+# ★★★★ 2026-09-19（用户："这个收尾审查搞到第二行去了，把面板搞宽点，**跟底下在跑的池面板
+#   一样宽**吧"）—— **推翻** 09-17 的"贴合内容"：相位卡改为**固定 310px**
+#   （与池网格 `minmax(310px, 1fr)` 的卡最小宽一致 ✓），标签不折行 ✓，
+#   那格放逐池进度、超长省略号 ✓（完整信息在悬停里 ✓）
+chk('★★ 相位卡**固定 310px**（与池卡片同宽；标签不折行、超长省略号 —— 用户 09-19 要求）',
+re.search(r'\.ctrls \.phase \{ width: 310px', css) is not None
+and 'white-space: nowrap' in css.split('.ctrls .phase b')[1][:80])
+# ★★★★ 2026-09-19 第二批（用户："这里就显示 50 第48代 | 300 第24代 | 500 第12代"，
+#   并明确"不显示 300·86 50·34 500·40 —— 底下池子已经能看到 挖掘中 · gen86 了"）
+#   ⇒ 这格 = **该池本轮已跑完几代**（`gensRound` ✓，不与卡片的"当前 gen"重复 ✗），
+#     格式 `池名 第N代` + ` | ` 分隔 + 进度多的排前面 ✓；
+#   ★ 契约不变：**永远渲染**（空值=空槽 ⇒ 卡宽不抖，不显示假数据）+ 超长省略号 ✓
+chk('★ 轮次槽**定宽不抖**（卡固定 310px，槽 flex:1 + 省略号 + 等宽数字）',
+re.search(r'\.ctrls \.phase small \{ flex: 1 1 auto; min-width: 0', css) is not None
+and 'tabular-nums' in css and 'text-overflow: ellipsis' in css)
+chk('★ 轮次槽**永远渲染**，内容是逐池进度「池名 第N代」（空值也渲染成空槽）',
+'<small title=' in src and '{rollText}</small>' in src
+and 'const rollText = useMemo' in src and '`${r.p} 第${r.n}代`' in src)
+
 chk('★ 内存卡**定宽 236px**（文案简化后收窄；仍按"运行中"最宽内容定 ⇒ 开始挖掘时不变宽）',
     re.search(r'\.ctrls \.res \{ width: 236px', css) is not None)
 # ★★ 2026-09-17 用户第二批：「`并行×1（自动） · 共享` 改成 `并行 · 共享`」

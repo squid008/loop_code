@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   api,
   type CurvesDto, type LibraryDto, type LibraryEntriesDto, type LibraryEntryDto,
-  type LibraryFactor, type MetaDto, type MineStateDto,
+  type LibraryFactor, type MetaDto, type MineStateDto, type OpsDto,
   type PoolStatus, type SelectedDto, type SelectedFactor, type StatusDto,
 } from './api'
 
@@ -39,6 +39,12 @@ export default function App() {
   const [err, setErr] = useState<string | null>(null)
   const [nowMs, setNowMs] = useState(Date.now())
   const [lastAt, setLastAt] = useState<string | null>(null)
+  // ★ 2026-09-19（用户之问：公式里的 cs_demean 不知道什么意思）：
+  //   首页「立即刷新 / 自动 Ns」旁加「算子手册」按钮 ⇒ 点开是**带滚动条的弹窗**，
+  //   列各算子与字段的中文含义 ✓（数据来自后端 /api/ops，名单派生自 ops_registry ✓）
+  const [opsOpen, setOpsOpen] = useState(false)
+  const [opsData, setOpsData] = useState<OpsDto | null>(null)
+  const [opsQ, setOpsQ] = useState('')
   const busyRef = useRef(false)
   // ★ 挖掘控制
   const [mine, setMine] = useState<MineStateDto | null>(null)
@@ -179,6 +185,31 @@ export default function App() {
     if (live.length) return live.map(p => ({ pool: p, gen: p in genOf ? genOf[p] : null }))
     return []
   }, [mine])
+  // ★★★ 2026-09-19（用户："鼠标放上去也显示各池自己的轮次"）：**逐池一行**
+  //   每行 = 池 · 此刻在干嘛 · 本轮已跑几代 · 当前代数 ✓（三者都来自后端，不是编的 ✓）
+  const poolLines = useMemo(() => {
+    const en = mine?.enabled ?? []
+    const gen: Record<string, number | null> = {}
+    for (const a of (mine?.active ?? [])) if (a && a.pool) gen[String(a.pool)] = a.gen ?? null
+    return en.map(p => {
+      const s = mine?.byPool?.[p]
+      const what = s?.mining ? '挖掘中'
+        : (s?.reviewing ? '审查中'
+          : (mine?.running ? '并行中（在等本轮其它池）' : '未在跑'))
+      const g = (p in gen && gen[p] !== null) ? ` · 当前 gen ${gen[p]}` : ''
+      return `${p} · ${what} · 本轮已跑 ${s?.gensRound ?? 0} 代${g}`
+    })
+  }, [mine])
+  // ★★★★ 2026-09-19 第二批（用户："这里就显示 50 第48代 | 300 第24代 | 500 第12代"，
+  //   并明确"不显示 300·86 50·34 500·40，因为底下池子已经能看到 挖掘中 · gen86 了"）：
+  //   ⇒ 顶部这格只放**该池本轮已跑完几代**（不与卡片上的"当前 gen"重复 ✓），
+  //     格式 `池名 第N代`、` | ` 分隔，**进度多的排前面**（快池一眼可见 ✓）
+  const rollText = useMemo(() => {
+    const en = mine?.enabled ?? []
+    const rows = en.map((p, i) => ({ p, i, n: Math.max(0, mine?.byPool?.[p]?.gensRound ?? 0) }))
+    rows.sort((a, b) => (b.n - a.n) || (a.i - b.i))
+    return rows.map(r => `${r.p} 第${r.n}代`).join(' | ')
+  }, [mine])
   const runColor = status?.anyRunning ? 'var(--ok)' : 'var(--idle)'
 
   return (
@@ -208,6 +239,9 @@ export default function App() {
               ? runningList.map(x => `正在跑：${x.pool}${x.gen !== null ? ` · gen ${x.gen}` : ''}`)
                   .join('\n') + '\n'
               : '') +
+            // ★★★ 2026-09-19（用户："鼠标放上去也显示各池自己的轮次"）：逐池一行列出
+            //   **每个池自己的状态 + 本轮已跑几代 + 当前代数** ✓
+            (poolLines.length ? poolLines.join('\n') + '\n' : '') +
             (mine?.roundText ? `${mine.roundText}，共 ${mine?.rounds ?? '?'} 轮\n` : '') +
             `参与的池：${(mine?.enabled ?? []).join(',') || '无'}\n` +
             ((mine?.stopped ?? []).length ? `已停的池：${(mine?.stopped ?? []).join(',')}\n` : '') +
@@ -225,8 +259,8 @@ export default function App() {
                 轮次槽**永远渲染**（宽度钉在 CSS 的 `min-width` 里）——
                 ① 卡宽贴合内容、不再有那段空白 ② 没轮次时是个**空槽**（不显示假数据）
                    ⇒ 轮次变化时卡宽**不变**（不抖）✓ */}
-            <small>{mine?.roundText
-              ? `${compactRound(mine.roundText)}/${mine?.rounds ?? '?'}` : ''}</small>
+            <small title={mine?.roundText
+              ? `全局 ${mine.roundText}，共 ${mine?.rounds ?? '?'} 轮` : ''}>{rollText}</small>
           </span>
           {/* ★★ 2026-09-16（用户："顶上 19.4 GB 5 池已配置这里的鼠标提示还有引号…干脆把这里的提示
               全部删掉"）⇒ **那个 tooltip 直接去掉**（`memNote` 后端仍在，只是不再挂在悬停上）✓
@@ -290,8 +324,68 @@ export default function App() {
           <select value={interval} onChange={e => setIntervalSec(Number(e.target.value))} className="sel">
             {[5, 10, 30, 60].map(s => <option key={s} value={s}>{s}s</option>)}
           </select>
+          {/* ★ 2026-09-19：算子手册（点开是带滚动条的弹窗，查算子与字段的中文含义）✓ */}
+          <button className="btn" onClick={() => { setOpsOpen(true); if (!opsData) api.ops().then(setOpsData).catch(() => setErr('算子手册载入失败，稍后再试')) }}
+                  title="查算子与字段的中文含义：ts_ 沿时间算、cs_ 当天在股票之间算，末尾数字是窗口期数">
+            算子手册
+          </button>
         </div>
       </header>
+
+      {opsOpen && (
+        <div className="modal" onClick={() => setOpsOpen(false)}>
+          <div className="modal-box" onClick={e => e.stopPropagation()}>
+            <div className="modal-h">
+              <b>算子手册</b>
+              <input className="sel ops-q" value={opsQ} onChange={e => setOpsQ(e.target.value)}
+                     placeholder="搜索算子或字段，例如 cs_demean" />
+              <span className="ops-cnt">
+                {opsData ? `算子 ${opsData.counts.ops} 个 · 字段 ${opsData.counts.fields} 个` : '载入中…'}
+              </span>
+              <button className="btn" onClick={() => setOpsOpen(false)}>关闭</button>
+            </div>
+            <div className="modal-body">
+              {!opsData && <div className="ops-v">正在载入算子手册…</div>}
+              {opsData && (() => {
+                const q = opsQ.trim().toLowerCase()
+                const hit = (s: string) => !q || s.toLowerCase().includes(q)
+                const ops = opsData.ops.filter(o => hit(o.name + o.zh + o.tip))
+                const fld = opsData.fields.filter(o => hit(o.name + o.zh + o.tip))
+                return (
+                  <>
+                    <div className="ops-sec">先看几条通用规则</div>
+                    {opsData.notes.map(n => (
+                      <div className="ops-row" key={n.k}>
+                        <span className="ops-k">{n.k}</span><span className="ops-v">{n.v}</span>
+                      </div>
+                    ))}
+                    <div className="ops-sec">算子（{ops.length} / {opsData.counts.ops}）</div>
+                    {ops.map(o => (
+                      <div className="ops-row" key={o.name}>
+                        <span className="ops-k ops-mono">{o.sig}</span>
+                        <span className="ops-v">
+                          <b>{o.zh}</b>{o.tip ? `：${o.tip}` : ''}
+                          <span className="ops-tag">{o.winText}</span>
+                        </span>
+                      </div>
+                    ))}
+                    <div className="ops-sec">字段（{fld.length} / {opsData.counts.fields}）</div>
+                    {fld.map(o => (
+                      <div className="ops-row" key={o.name}>
+                        <span className="ops-k ops-mono">{o.name}</span>
+                        <span className="ops-v"><b>{o.zh}</b>{o.tip ? `：${o.tip}` : ''}</span>
+                      </div>
+                    ))}
+                    {ops.length === 0 && fld.length === 0 && (
+                      <div className="ops-v">没有匹配的算子或字段，换个词试试</div>
+                    )}
+                  </>
+                )
+              })()}
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div className={toast.kind === 'err' ? 'err' : toast.kind === 'ok' ? 'ok' : 'info'}>
@@ -444,24 +538,45 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
   // ★ 2026-09-16（用户："怎么它又加入轮转、没有马上开挖？"）：**文案要跟实际模式一致**
   //   —— 并行模式下说"轮转中/加入轮转"会让人以为"要排队等"，而实际是**马上就会起引擎** ✗
   const qword = mine?.execMode === 'parallel' ? '并行' : '轮转'
-  const badge = mining ? (leaving ? '运行中·已移出' : '挖掘中')
-    : (inRotation ? (qword + '中')
-      : (configured ? '待启动' : (stopped ? '已停止' : '空闲')))
+  // ★★★★ 2026-09-19（用户："300/500 一直都是并行中，是在审查呢还是在等 50 池挖完？" +
+  //   "池徽标语义是不是加一个审查中？这样跟并行中就能区分开"）：
+  //   把「挖掘中 / 审查中 / 并行中」分清 ✗ —— 三者语义：
+  //     · 挖掘中 = **有它的引擎在跑**（真的在算）
+  //     · 审查中 = 它**刚挖完、正在做收尾**（facs 落地 / 指标表 / 曲线；池内收尾指名它，
+  //                或轮末全局收尾进行中）
+  //     · 并行中 = 已参与并行，但此刻**既没在挖也没在审** —— 典型是"本轮它已跑完，
+  //                在等其它池那一代结束"（以前这三种都显示"并行中" ⇒ 用户看不出在干嘛 ✗）
+  const reviewing = !!slot?.reviewing
+  const myGen = (mine?.active ?? []).find(a => String(a.pool) === String(p.key))?.gen ?? null
+  const badge = mining ? (leaving ? '运行中·已移出'
+                                  : (myGen !== null ? `挖掘中 · gen${myGen}` : '挖掘中'))
+    : (reviewing ? '审查中'
+      : (inRotation ? (qword + '中')
+        : (configured ? '待启动' : (stopped ? '已停止' : '空闲'))))
   // ★★★★ 2026-09-17（用户实测："几个池子显示蓝点、只有 300 是绿点，像轮转"）：
   //   那几个池其实是**每代秒崩**（`None * float`）⇒ 永远等不到绿点 ✗
   //   ⇒ 卡片必须**明说"启动即崩"**，否则"蓝点（并行中）"会被误读成"在排队/轮转" ✗✗
   const crashN = slot?.crashes?.length ?? 0
   const crashed = !mining && crashN > 0
   const dotColor = mining ? 'var(--ok)'
-    : (crashed ? '#ef4444'
-      : (inRotation ? 'var(--sky)' : (configured ? 'var(--amber)' : 'var(--idle)')))
+    : (reviewing ? 'var(--amber)'
+      : (crashed ? '#ef4444'
+        : (inRotation ? 'var(--sky)' : (configured ? 'var(--amber)' : 'var(--idle)'))))
   return (
     <div className={cls}>
       <div className="card-h">
         <span className="dot" style={{ background: dotColor }} />
         <b>{p.label}</b>
         <span className="pid">{p.key === 'all' ? '全A' : p.key}</span>
-        <span className="state">{badge}</span>
+        <span className="state"
+              title={`${p.label} 本轮已跑 ${slot?.gensRound ?? 0} 代` +
+                     (myGen !== null ? ` · 当前 gen ${myGen}` : '') +
+                     (mining ? ' · 正在挖这一代' :
+                      reviewing ? ' · 刚挖完，正在做收尾（facs 落地 / 指标表 / 曲线）' :
+                      (inRotation ? ' · 已参与并行，此刻在等本轮其它池（它是快池，会立刻领下一代）'
+                                  : ''))}>
+          {badge}
+        </span>
         {crashed && (
           <span className="crash"
                 title={`${p.label} 最近 ${crashN} 次一启动就崩（gen ${slot!.crashes.join(',')}）——` +
@@ -474,6 +589,9 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
         <Field k="当前库（权威）" v={fmt(p.librarySize)} strong />
         <Field k="已测候选" v={fmt(p.tested)} />
         <Field k="跑过代数" v={fmt(p.journal.gens)} />
+        {/* ★ 2026-09-19（用户："轮次显示逻辑按照我想要的改"）：**该池自己的进度**
+            —— 不限模式下快池一轮能跑七八代，这个数就是它的"本轮轮次" ✓ */}
+        <Field k="本轮已跑" v={`${slot?.gensRound ?? 0} 代`} />
         <Field k="最新代" v={p.journal.maxGen === null ? '—' : `gen ${p.journal.maxGen}`} />
         <Field k="L2 候选流水" v={fmt(p.archive.rows)} />
         <Field k="其中通过" v={fmt(p.archive.passed)} />
