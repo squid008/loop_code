@@ -135,24 +135,33 @@ chk('极窄屏**优雅降级**（先省次要文字，而不是折行或横滑�
 # ★★★ 2026-09-17 第三批（**推翻上面那条**）：「这个卡片是不是可以窄很多了？空闲跟 1/50 之间
 #   隔了太宽了，留的宽度够"空闲 9999/9999"的位置就行了」
 #   ⇒ 现在 = **贴合内容**（不再有那段空白）+ **轮次槽定宽**（仍不抖 ✓）；旧断言同步改掉 ✓
-# ★★★★ 2026-09-19（用户："这个收尾审查搞到第二行去了，把面板搞宽点，**跟底下在跑的池面板
-#   一样宽**吧"）—— **推翻** 09-17 的"贴合内容"：相位卡改为**固定 310px**
-#   （与池网格 `minmax(310px, 1fr)` 的卡最小宽一致 ✓），标签不折行 ✓，
-#   那格放逐池进度、超长省略号 ✓（完整信息在悬停里 ✓）
-chk('★★ 相位卡**固定 310px**（与池卡片同宽；标签不折行、超长省略号 —— 用户 09-19 要求）',
-re.search(r'\.ctrls \.phase \{ width: 310px', css) is not None
-and 'white-space: nowrap' in css.split('.ctrls .phase b')[1][:80])
+# ★★★★★ 2026-09-19 第三批（用户："挖掘中的面板太宽啦，跟下面的在跑的池没对齐啊"）：
+#   结论 —— **写死像素永远对不齐**（下面那行是自适应网格 `minmax(160px, 1fr)`，
+#   列宽随窗口与条目数变 ✗）⇒ 唯一可靠做法 = **把相位卡放进同一行网格**（同格 = 同宽 ✓）
+#   ⇒ 相位卡现在是 `section.summary` 的**第一个格子**，CSS 让它撑满格子 ✓
+# ★★★★★ 2026-09-19 第七批（用户："还是没对齐"）—— 定稿：**相位卡整卡复用 `.kpi`**
+#   （`div.kpi.phasecard` + `.kpi-v` 状态行 + `.kpi-l` 逐池进度行 ✓）⇒ 与邻居**同一套 CSS**
+#   ⇒ 字号/行距/内边距逐像素一致 ⇒ **天然对齐** ✓✓（不再靠调像素 ✗ —— 调一次错一次 ✗）
+chk('★★★ 相位卡 = **复用 `.kpi` 整卡**（与"在跑的池"卡同一套 CSS ⇒ 天然对齐 ✓）',
+'<section className="summary">' in src and 'kpi phasecard t-' in src
+and re.search(r'\.kpi\.phasecard \.kpi-v \{ display: flex', css) is not None
+and 'kpi-l' in src)
 # ★★★★ 2026-09-19 第二批（用户："这里就显示 50 第48代 | 300 第24代 | 500 第12代"，
 #   并明确"不显示 300·86 50·34 500·40 —— 底下池子已经能看到 挖掘中 · gen86 了"）
 #   ⇒ 这格 = **该池本轮已跑完几代**（`gensRound` ✓，不与卡片的"当前 gen"重复 ✗），
 #     格式 `池名 第N代` + ` | ` 分隔 + 进度多的排前面 ✓；
 #   ★ 契约不变：**永远渲染**（空值=空槽 ⇒ 卡宽不抖，不显示假数据）+ 超长省略号 ✓
-chk('★ 轮次槽**定宽不抖**（卡固定 310px，槽 flex:1 + 省略号 + 等宽数字）',
-re.search(r'\.ctrls \.phase small \{ flex: 1 1 auto; min-width: 0', css) is not None
-and 'tabular-nums' in css and 'text-overflow: ellipsis' in css)
-chk('★ 轮次槽**永远渲染**，内容是逐池进度「池名 第N代」（空值也渲染成空槽）',
-'<small title=' in src and '{rollText}</small>' in src
-and 'const rollText = useMemo' in src and '`${r.p} 第${r.n}代`' in src)
+# ★★★★★ 2026-09-19 第四批（用户："…这个显示不下有省略号了，你把 50 第2代 | 300 第…
+#   放到**第二行**。就跟在跑的池、入库因子合计那些字体一样"）⇒ 相位卡改**两行**：
+#   第二行 = 逐池进度，**与 `.kpi-l` 同款字体**（12px 灰字 ✓）且 `white-space: normal`
+#   ⇒ 显示不下就**换行**，**不许省略号** ✗
+chk('★ 两行结构 = `.kpi-v`（状态，随 `.kpi-v` 的 24px ✓）+ `.kpi-l`（逐池进度 12px ✓）',
+'className="kpi-v"' in src and 'className="kpi-l"' in src
+and '.kpi-v { font-size: 24px' in css and '.kpi-l { color: var(--mut); font-size: 12px' in css
+and '${r.p} ${r.n + 1}代' in src)
+chk('★ 第二行**永远渲染**，内容是逐池进度「池 N代」（N **从 1 起** = 正在挖第 N 代 ✓）',
+'<div className="kpi-l">{rollText}</div>' in src
+and 'const rollText = useMemo' in src and '`${r.p} ${r.n + 1}代`' in src)
 
 chk('★ 内存卡**定宽 236px**（文案简化后收窄；仍按"运行中"最宽内容定 ⇒ 开始挖掘时不变宽）',
     re.search(r'\.ctrls \.res \{ width: 236px', css) is not None)
@@ -161,8 +170,10 @@ chk('★ 内存卡模式文案**简化成"并行 · 共享"**（并行数/是否
     re.search(r"\(mine\.execMode === 'parallel' \? '并行' : '轮转'\)", src) is not None
     and "' · 共享'" in src)
 # ★★ 用户之问：「挖掘中 500 gen17 是 500 池在挖的意思吗？我不是并行了吗？」
-chk('★ 并行时相位卡**不显示单个池名**（只显示 轮次；否则会被读成"只跑一个池"✗）',
-    'mine.execMode !== ' in src and 'mine?.running && mine.execMode !== ' in src)
+# ★ 2026-09-19 第七批起：卡片**恒为两行**（`.kpi-v` + `.kpi-l`）⇒ "轮转模式的当前池"那个小字
+#   已从卡里撤掉 ✓（否则会变第三行、与邻居对不齐 ✗）—— 那个信息在**鼠标提示**里 ✓
+chk('★ 相位卡**恒为两行**（当前池那行已撤 ⇒ 不再三行 ⇒ 与邻居对齐 ✓）',
+    '<em>{compactCur' not in src)
 chk('★ 相位卡鼠标提示**逐池列出**"正在跑：<池> · gen <代数>"',
     '正在跑：${x.pool}' in src and 'runningList' in src)
 # ★ 2026-09-17（用户问"要不要 MAD 去极值"引出）：两条 IC 的口径差必须写在图上

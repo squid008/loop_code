@@ -368,16 +368,35 @@ tr.outbank .fcode { color: var(--mut); }
    一样宽**吧"）⇒ 相位卡改成**与池卡片同宽的固定 310px**（池网格是 `minmax(310px, 1fr)`
    ⇒ 卡最小宽 310px ✓），标签**不许折行**（原来"收尾审查中"被挤成两行 ✗），
    那格放**逐池进度**（`50 第48代 | 300 第24代` ✓）超长则省略号 ✓（完整信息在悬停里 ✓） */
-.ctrls .phase { width: 310px; max-width: none; overflow: hidden; }
-.ctrls .phase b, .ctrls .phase em { white-space: nowrap; }
+.phase { white-space: nowrap; }
+/* ★★★★★ 2026-09-19 第三批（用户："挖掘中的面板太宽啦，跟下面的在跑的池没对齐啊"）：
+   相位卡已移入下面那行 KPI 网格（App.tsx 的 `section.summary` 第一格 ✓）
+   ⇒ 这里让它**撑满格子**（同格 = 同宽 ⇒ 与"在跑的池"卡**左右边缘自动对齐** ✓），
+      并长得像张 KPI 卡（同样的圆角/内边距），不再写死 310px ✗ */
+/* ★★★★★ 2026-09-19 第六批（用户定稿："`50 4代 | 300 2代 | 500 1代` 这个得保持在**第二行**"；
+   上一版错的点：① 改成单行 ⇒ 那段被挤到第一行 ✗ ② 上一版竖排时**圆点自己占了一行** ✗）
+   ⇒ 定稿 = **两行**：
+      第 1 行 `.ph1` = **圆点 + 状态**（圆点与标签同一行 ✓，字号用原来的 12.5px ✓ 不许放大 ✗）
+      第 2 行 `small` = 逐池进度（12px 灰字，与"在跑的池"那行小字同款 ✓）
+   整卡仍是 KPI 风、撑满格子 ⇒ 与"在跑的池"卡同宽对齐 ✓ */
+/* ★★★★★ 2026-09-19 第七批（用户："还是没对齐"）—— ★ 我不再调像素了 ✗（调一次错一次 ✗），
+   正解是**整卡复用 `.kpi`**：相位卡就是 `div.kpi.phasecard`，里面同样是
+   `.kpi-v`（大数值行）/ `.kpi-l`（小标签行）✓ ⇒ 与邻居**共享同一套 CSS**
+   ⇒ 字号/字重/行距/内边距**逐像素一致** ⇒ **天然对齐** ✓✓（颜色走 KPI 的 `t-*` ✓）*/
+.kpi.phasecard .kpi-v { display: flex; align-items: center; gap: 8px; }
+.kpi.phasecard .pdot { width: 10px; height: 10px; border-radius: 50%;
+background: currentColor; flex: none; }
+.kpi.phasecard.t-ok .pdot { animation: pulse 1.4s ease-out infinite; }
+.kpi.phasecard .kpi-l { font-variant-numeric: tabular-nums; }
 .ctrls .phase em { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* ★★★ 2026-09-19（用户："轮次显示逻辑按照我想要的改"）：这格从「全局 1/50」改成
    **逐池进度**（如 `300·85  500·39  50·32`）⇒ 定宽从 52px 提到 **132px**（放得下三池 ✓），
    仍 `flex:none` + `tabular-nums` ⇒ **数字变化不推动卡宽** ✓；
    内容超长时**省略号**（完整信息在相位卡鼠标提示里 ✓ —— `.ctrls .phase` 已 `overflow:hidden`）✓ */
-.ctrls .phase small { flex: 1 1 auto; min-width: 0; text-align: right;
-font-variant-numeric: tabular-nums; white-space: nowrap;
-overflow: hidden; text-overflow: ellipsis; }
+/* 第 2 行 = 逐池进度：**与 `.kpi-l`（"在跑的池"那行小字）同款字体** ✓
+   文案是 `池 N代`（短）⇒ 一行放得下 ✓（不做省略号截断 ✗；真放不下才换行 ✓） */
+/* ★ 第七批：逐池进度现在就是 `.kpi-l`（与"在跑的池"那行**同一个类** ✓ 12px 灰字 ✓）
+   —— 不用再单独写字体规则了 ✓（对齐由"同一套 CSS"保证 ✓） */
 .ctrls .res { width: 236px; justify-content: space-between; overflow: hidden; }
 .ctrls .res .mode { flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctrls .res .mode.off { color: var(--mut); }        /* 未运行时占位（保持卡宽不变、又说明状态）✓ */

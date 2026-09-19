@@ -68,8 +68,9 @@ chk("挖掘中带上该池自己的 gen（滚动感 ✓）", '挖掘中 · gen' 
 chk("审查中给的是浅黄点（与挖掘中的绿点区分 ✓）", "reviewing ? 'var(--amber)'" in APP)
 chk("有逐池明细 poolLines（悬停可见 ✓）", 'const poolLines = useMemo' in APP
     and 'poolLines.join' in APP)
-chk("相位卡那格改逐池滚动 rollText", 'const rollText = useMemo' in APP
-    and 'rollText' in APP and '<small title=' in APP)
+chk("相位卡那格改逐池滚动 rollText（第七批起：卡片整卡复用 `.kpi` ⇒ 第二行是 `.kpi-l` ✓）",
+    'const rollText = useMemo' in APP and 'rollText' in APP
+    and 'className="kpi-l"' in APP and 'className="kpi-v"' in APP)
 chk("卡片有「本轮已跑」字段", '本轮已跑' in APP)
 chk("api.ts DTO 补了 reviewing / gensRound / tailPool",
     'reviewing?: boolean' in API and 'gensRound?: number' in API and 'tailPool?: string | null' in API)

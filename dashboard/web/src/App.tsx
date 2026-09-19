@@ -200,15 +200,15 @@ export default function App() {
       return `${p} · ${what} · 本轮已跑 ${s?.gensRound ?? 0} 代${g}`
     })
   }, [mine])
-  // ★★★★ 2026-09-19 第二批（用户："这里就显示 50 第48代 | 300 第24代 | 500 第12代"，
-  //   并明确"不显示 300·86 50·34 500·40，因为底下池子已经能看到 挖掘中 · gen86 了"）：
-  //   ⇒ 顶部这格只放**该池本轮已跑完几代**（不与卡片上的"当前 gen"重复 ✓），
-  //     格式 `池名 第N代`、` | ` 分隔，**进度多的排前面**（快池一眼可见 ✓）
+  // ★★★★ 2026-09-19 第五批（用户："索性改成：`50 3代 | 300 1代 | 500 1代`，
+  //   **注意起始从 1 开始，不是 0** —— 1 表示正在挖第 1 代"）
+  //   ⇒ N = **正在挖第几代** = 本轮已完成代数 + 1（`gensRound` 是"已完成" ⇒ +1 ✓）
+  //     格式 `池 N代` + ` | ` 分隔 + 进度多的排前面 ✓（不与卡片上的"当前 gen"重复 ✓）
   const rollText = useMemo(() => {
     const en = mine?.enabled ?? []
     const rows = en.map((p, i) => ({ p, i, n: Math.max(0, mine?.byPool?.[p]?.gensRound ?? 0) }))
     rows.sort((a, b) => (b.n - a.n) || (a.i - b.i))
-    return rows.map(r => `${r.p} 第${r.n}代`).join(' | ')
+    return rows.map(r => `${r.p} ${r.n + 1}代`).join(' | ')
   }, [mine])
   const runColor = status?.anyRunning ? 'var(--ok)' : 'var(--idle)'
 
@@ -228,40 +228,10 @@ export default function App() {
           </div>
         </div>
         <div className="ctrls">
-          {/* 顶部状态条：空闲 / 挖掘中 / 收尾审查中 */}
-          {/* ★★ 2026-09-17（用户："这个一坨会随着轮次、内存数据变动而改变长度，搞成固定宽度吧"）：
-              相位卡与内存卡都**定宽**（CSS），这里把相位卡的文案**压缩**以便塞进 218px ✓
-              （完整信息仍在鼠标提示里 ✓） */}
-          <span className={`phase ${mine?.phase ?? 'idle'}`} title={
-            `当前状态：${mine?.phaseLabel ?? '—'}\n` +
-            // ★ 逐池列出（并行时会有多个）—— 原来只显示**最后一个**启动的池 ⇒ 看着像"只跑一个"✗
-            (runningList.length
-              ? runningList.map(x => `正在跑：${x.pool}${x.gen !== null ? ` · gen ${x.gen}` : ''}`)
-                  .join('\n') + '\n'
-              : '') +
-            // ★★★ 2026-09-19（用户："鼠标放上去也显示各池自己的轮次"）：逐池一行列出
-            //   **每个池自己的状态 + 本轮已跑几代 + 当前代数** ✓
-            (poolLines.length ? poolLines.join('\n') + '\n' : '') +
-            (mine?.roundText ? `${mine.roundText}，共 ${mine?.rounds ?? '?'} 轮\n` : '') +
-            `参与的池：${(mine?.enabled ?? []).join(',') || '无'}\n` +
-            ((mine?.stopped ?? []).length ? `已停的池：${(mine?.stopped ?? []).join(',')}\n` : '') +
-            (mine?.updated ? `状态更新于 ${mine.updated}` : '')}>
-            <i className="pdot" />
-            <b>{mine?.phaseLabel ?? '—'}</b>
-            {/* ★★ 2026-09-17（用户："挖掘中 500 gen17 是 500 池在挖的意思吗？我不是并行了吗？
-                300、500 并行挖的话，那它就显示 挖掘中 1/50 不就行了"）
-                ⇒ **并行模式不显示单个池名**（那只是最后启动的那个，会让人以为只跑一个 ✗）；
-                   逐池明细移到鼠标提示；**轮转模式**仍然显示当前池（那时确实只跑一个）✓
-                ⚠ 而且只在**真在跑**时才显示 —— 否则会拿 `curPool` 的**陈旧值**当现状 ✗ */}
-            {mine?.running && mine.execMode !== 'parallel' && mine.curText
-              && <em>{compactCur(mine.curText)}</em>}
-            {/* ★★ 2026-09-17（用户："空闲跟 1/50 之间隔了太宽了，留够'空闲 9999/9999'的位置就行"）：
-                轮次槽**永远渲染**（宽度钉在 CSS 的 `min-width` 里）——
-                ① 卡宽贴合内容、不再有那段空白 ② 没轮次时是个**空槽**（不显示假数据）
-                   ⇒ 轮次变化时卡宽**不变**（不抖）✓ */}
-            <small title={mine?.roundText
-              ? `全局 ${mine.roundText}，共 ${mine?.rounds ?? '?'} 轮` : ''}>{rollText}</small>
-          </span>
+          {/* ★★★★★ 2026-09-19 第三批（用户："挖掘中的面板太宽啦，跟下面的在跑的池没对齐啊"）：
+              相位卡**已移出这一排**，放进下面那行 `KPI 网格`（`section.summary`）的**第一个格子**
+              —— 原因：写死像素**永远对不齐**（那行是自适应网格 `minmax(160px, 1fr)`，
+              列宽随窗口/条目数变 ✗）⇒ 只有"同格"才能"同宽" ✓（那行第一个是"在跑的池"卡 ✓）*/}
           {/* ★★ 2026-09-16（用户："顶上 19.4 GB 5 池已配置这里的鼠标提示还有引号…干脆把这里的提示
               全部删掉"）⇒ **那个 tooltip 直接去掉**（`memNote` 后端仍在，只是不再挂在悬停上）✓
               —— 该说明（并行数怎么算、面板共享省多少内存）属于"配置/口径"信息，
@@ -399,6 +369,47 @@ export default function App() {
 
       {status && (
         <section className="summary">
+          {/* ★★★★★ 2026-09-19 第三批（用户："挖掘中的面板太宽啦，跟下面的在跑的池没对齐啊"）：
+              相位卡放这里 = **和"在跑的池"卡同格**（同一网格模板 ⇒ **同宽、左右边缘自动对齐** ✓）。
+              写死像素做不到这点 ✗（那行 `repeat(auto-fit, minmax(160px, 1fr))` 的列宽随窗口变 ✗） */}
+          {/* ★★★★★ 2026-09-19 第七批（用户："还是没对齐" —— 我一直在调像素 ✗，那是治不好的 ✗）
+              ⇒ 正解：**直接复用旁边那张卡的组件本身** = 同一个 `.kpi` 类 + 同样的
+                `.kpi-v`（大数值行）/ `.kpi-l`（小标签行）⇒ 逐像素一致 ⇒ **天然对齐** ✓✓
+              （`t-ok` 绿 / `t-sky` 蓝 跟着相位走 ⇒ 颜色也与 KPI 一致 ✓） */}
+          <div className={`kpi phasecard t-${mine?.phase === 'mine' ? 'ok'
+            : (mine?.phase === 'tail' ? 'sky' : 'idle')}`} title={
+            `当前状态：${mine?.phaseLabel ?? '—'}\n` +
+            // ★ 逐池列出（并行时会有多个）—— 原来只显示**最后一个**启动的池 ⇒ 看着像"只跑一个"✗
+            (runningList.length
+              ? runningList.map(x => `正在跑：${x.pool}${x.gen !== null ? ` · gen ${x.gen}` : ''}`)
+                  .join('\n') + '\n'
+              : '') +
+            // ★★★ 2026-09-19（用户："鼠标放上去也显示各池自己的轮次"）：逐池一行列出
+            //   **每个池自己的状态 + 本轮已跑几代 + 当前代数** ✓
+            (poolLines.length ? poolLines.join('\n') + '\n' : '') +
+            (mine?.roundText ? `${mine.roundText}，共 ${mine?.rounds ?? '?'} 轮\n` : '') +
+            `参与的池：${(mine?.enabled ?? []).join(',') || '无'}\n` +
+            ((mine?.stopped ?? []).length ? `已停的池：${(mine?.stopped ?? []).join(',')}\n` : '') +
+            (mine?.updated ? `状态更新于 ${mine.updated}` : '')}>
+            {/* ★★★★★ 2026-09-19 第六批（用户："`50 4代 | 300 2代 | 500 1代` 这个得保持在**第二行**"）
+                且"圆点必须跟'挖掘中'同一行" ✓ —— 所以把 **圆点 + 标签**包成一组 `.ph1`
+                （否则卡片是竖排时，圆点会自己占一行 ✗ 那是上一版的错 ✗） */}
+            <div className="kpi-v">
+              <i className="pdot" />
+              {mine?.phaseLabel ?? '—'}
+            </div>
+            {/* ★★ 2026-09-17（用户："挖掘中 500 gen17 是 500 池在挖的意思吗？我不是并行了吗？
+                300、500 并行挖的话，那它就显示 挖掘中 1/50 不就行了"）
+                ⇒ **并行模式不显示单个池名**（那只是最后启动的那个，会让人以为只跑一个 ✗）；
+                   逐池明细移到鼠标提示；**轮转模式**仍然显示当前池（那时确实只跑一个）✓
+                ⚠ 而且只在**真在跑**时才显示 —— 否则会拿 `curPool` 的**陈旧值**当现状 ✗ */}
+            {/* ★ 轮转模式那个"当前池"小字**拿掉** —— 它会让这张卡变成三行、与邻居对不齐 ✗
+                （要看当前池：悬停这张卡就有 ✓） */}
+            {/* ★★ 2026-09-17（用户："空闲跟 1/50 之间隔了太宽了，留够'空闲 9999/9999'的位置就行"）：
+                轮次槽**永远渲染** —— 没数据时是**空槽**（不显示假数据 ✓）；超长则省略号 ✓
+                （完整内容在鼠标提示里 ✓）*/}
+            <div className="kpi-l">{rollText}</div>
+          </div>
           <Kpi label="在跑的池" value={`${status.summary.runningPoolCount} / ${status.summary.poolCount}`}
                tone={status.anyRunning ? 'ok' : 'idle'} />
           <Kpi label="入库因子合计" value={fmt(status.summary.totalLibrary)} tone="indigo" />
