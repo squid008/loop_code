@@ -4176,3 +4176,51 @@ leaf_w={'barra_residual_volatility': 0.25, 'barra_momentum': 0.25}
 > (3) mix=[0.15,0.35,0.15,0.2,0.15],depth=[3,4,4],min_stab=0.25,decorr=0.7:略降交叉、抬变异,放宽stab与decorr以跳出ema60同质池。
 > 
 > 否决: 无
+
+## 第 87 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2 | 0.022 | 0.032 | 0.997 | 0.000 | 1.000 | 1.000 | 1 | 0.000 | 2 | 0 | -0.066 | 0.000 | 0.150 | 1.000 | 1.000 | 0.500 | 0.000 | 1.000 | 0.000 | 1.000 | 1.000 | 0.195 | 0.355 | 0.249 | 0.249 | 0.195 | 0.355 | 0.249 | 0.249 |
+
+叶子使用: {'barra_momentum': 2, 'fa_inv_turn': 1, 'vwap': 1, 'overnight': 1, 'barra_residual_volatility': 1}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r1_leaf_conc] LLM 已【永久】否决，后续各代一律不再施加 —— 叶子过度集中 -> 压低该叶子权重
+- —— 本代共拦截 1 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.3  decorr=0.75  fsa_th=0.15  bank_skel_max=1
+leaf_w={'barra_residual_volatility': 0.25, 'barra_momentum': 0.25}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [12, 15, 16] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [12, 13, 15] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [12, 13] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r7_zero_pass`, `r1_leaf_conc`
+
+**LLM 引导(A角 87代)**: 调用3次, 解析通过44条, 引导位使用44条
+> 在残差波动与动量风格暴露主导的环境下,5日截面收益更容易被'波动路径结构'与'主动资金方向'的错配所预测——即趋势平滑度(路径直线性)、偏度方向、以及大单资金净流入相对价格趋势的背离,比单纯的量价水平更能捕捉下一周的截面分化。
+
+
+**LLM 候选审查(B角 87代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ema60(sub(barra_momentum, corr200(corr200(corr200(ts_mean10(ts_skew20(corr200(overnight, vwap))), fa_inv_turn), fa_inv_turn), fa_inv_turn)))`
+  > 理由: 三层同源corr200嵌套冗余，经济含义拼凑难解释，属参数海捞针
+- KILL `ema60(ts_mean5(add(corr200(corr200(fa_sell_exp, barra_size), ret), barra_momentum)))`
+  > 理由: 嵌套corr200与ema/ts_mean多层同源冗余，经济含义拼凑难解释，疑似参数海捞针
+- KILL `ema60(ts_min20(add(corr200(corr200(fa_sell_exp, fa_inv_turn), low), barra_momentum)))`
+  > 理由: 多层嵌套corr与ema叠加，经济含义拼凑难解释，属参数海捞针高冗余
+- KILL `ema60(ts_mean5(sub(barra_momentum, corr200(corr200(barra_momentum, fa_inv_turn), fa_inv_turn))))`
+  > 理由: 动量与换手率双重相关再相减，经济含义拼凑，200窗口嵌套冗余，疑过拟合
+
+
+**AI 审查(DeepSeek deepseek-flash, 1s)**:
+
+> (1) 病根:IC≈0.02却calmar全负、neg_yr高达6-8,信号是"高稳定噪声",方向或周期完全错配,与叶子集中无关。
+> 
+> (2) r1_leaf_conc已被永久否决,本轮无实际动作,规则层等于空转;真正该管的是neg_yr与calmar,而非叶子权重。当前建议未触及病根,继续压低叶子只会更无效。
+> 
+> (3) mix=[0.15,0.35,0.2,0.2,0.1] depth=[2,3,4] min_stab=0.5 decorr=0.6:降depth防过拟合、提min_stab筛真信号、降decorr逼出正交结构。
+> 
+> 否决: 无

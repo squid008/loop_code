@@ -501,7 +501,7 @@ export default function App() {
         <span>·</span>
         <span>版本来自 <code>VERSION</code></span>
         <span>·</span>
-        <span>端口来自 <code>dashboard/config.json</code>（各改一处）</span>
+        <span>端口来自 <code>dashboard/config.json</code></span>
       </footer>
     </div>
   )
@@ -1132,7 +1132,15 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
   const [c, setC] = useState<CurvesDto | null>(null)
   const [err, setErr] = useState<string | null>(null)
   // ★ 曲线文件名 = `tools/factor_curves.py::_name_of` 的同一条规则（all 不带后缀，其它池带 `_<池>`）
-  const file = (pool && pool !== 'all') ? `${name}_${pool}` : name
+  // ★★★★★ 2026-09-19 第八批（用户："我发现精选池还有好几个因子没有曲线嘛！"）
+  //   查实：**不是没算曲线，是文件名拼重了** ✗ ——
+  //     精选池里 `F07_1000`（pool=1000）与 `F05_500`（pool=500）：代码**本身已带池后缀** ⇒
+  //     再拼一次 ⇒ 去找 `F07_1000_1000.json` / `F05_500_500.json`，
+  //     而磁盘上确实是 `F07_1000.json` / `F05_500.json` ✓ ⇒ 面板显示"暂无曲线数据" ✗
+  //   ⇒ 修：**已经带该池后缀就不再重复拼** ✓（生成侧规则不变 ✓ `factor_curves.py::_name_of`）
+  const file = (pool && pool !== 'all')
+    ? (name.endsWith(`_${pool}`) ? name : `${name}_${pool}`)
+    : name
   useEffect(() => {
     let dead = false
     setC(null); setErr(null)
