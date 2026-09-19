@@ -313,7 +313,20 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                                 _again = gens[_gp] < gens_per_round
                             else:
                                 _need_r = [x for x in en if x not in st]
-                                _again = any(gens.get(x, 0) < 1 for x in _need_r)
+                                # ★★★★★ 2026-09-19（用户拍板："慢池还在跑 ⇒ 快池就继续领活，
+                                #   对，就这样"）—— 在原条件上**再加一条**：
+                                #   只要**别的启用池此刻还有引擎在跑**（= 轮还没收口 ✓），
+                                #   快池就**继续领下一代** ✓
+                                #   为什么必须加：原条件只看"有没有池还没跑完第 1 代" ✗ ⇒
+                                #   **所有池都≥1 代之后，快池就空转了** ✗
+                                #   实录（14:09）：50 刚跑完 gen41 就空着，而 300 的 gen88 还在跑
+                                #   ⇒ 并行上限 3 却只用了 1 个槽位 ✗（50 一代 4~6min、300 一代 20~40min
+                                #   ⇒ 这段等待本该产出 5~8 代 ✓）
+                                #   ⚠ 不改变"轮长由最慢的池决定"（收轮仍要等所有在跑的引擎结束 ✓）
+                                _others = [x for x in running
+                                           if x.get('pool') != _gp and x.get('pool') not in st]
+                                _again = (any(gens.get(x, 0) < 1 for x in _need_r)
+                                          or bool(_others))
                             if _again:
                                 launched.discard(_gp)
                             RT.write_ctl(gensRound=dict(gens))      # ★ 看板进度随即刷新 ✓
