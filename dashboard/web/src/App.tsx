@@ -193,9 +193,15 @@ export default function App() {
     for (const a of (mine?.active ?? [])) if (a && a.pool) gen[String(a.pool)] = a.gen ?? null
     return en.map(p => {
       const s = mine?.byPool?.[p]
-      const what = s?.mining ? '挖掘中'
-        : (s?.reviewing ? '审查中'
-          : (mine?.running ? '并行中（在等本轮其它池）' : '未在跑'))
+      // ★★★★ 2026-09-19 第九批：**已停的池不许再写"并行中"** ✗ ——
+      //   实测（用户截图）：50 池明明已停，悬停里却写"并行中（在等本轮其它池）" ✗
+      //   ⇒ 分三种：真在跑 ⇒ 挖掘中 ✓；已停但这一代还在跑 ⇒ 说清"跑完就退出"✓；
+      //     已停且没在跑 ⇒ 已停止 ✓（只有真正参与轮转的池才配"并行中/审查中"✓）
+      const what = s?.stopped
+        ? (s?.mining ? '已停止（这一代跑完就退出）' : '已停止')
+        : (s?.mining ? '挖掘中'
+          : (s?.reviewing ? '审查中'
+            : (mine?.running ? '并行中（在等本轮其它池）' : '未在跑')))
       const g = (p in gen && gen[p] !== null) ? ` · 当前 gen ${gen[p]}` : ''
       return `${p} · ${what} · 本轮已跑 ${s?.gensRound ?? 0} 代${g}`
     })
@@ -388,7 +394,12 @@ export default function App() {
             //   **每个池自己的状态 + 本轮已跑几代 + 当前代数** ✓
             (poolLines.length ? poolLines.join('\n') + '\n' : '') +
             (mine?.roundText ? `${mine.roundText}，共 ${mine?.rounds ?? '?'} 轮\n` : '') +
-            `参与的池：${(mine?.enabled ?? []).join(',') || '无'}\n` +
+            // ★★★★★ 2026-09-19 第九批（用户："如果我停掉上证50、开启中证1000，这个面板会正确显示吗？"
+            //   截图实证：悬停里 `参与的池：300,50,500` 与 `已停的池：50` **同时出现** ✗）——
+            //   根因：`enabled`（长期配置）**不会**把刚停的池立刻剔掉 ✗（要等下一轮重配）
+            //   ⇒ 显示时**从"参与的池"里剔除 `stopped`** ✓（两份名单不再打架 ✓）
+            `参与的池：${(mine?.enabled ?? []).filter(
+              p => !(mine?.stopped ?? []).includes(p)).join(',') || '无'}\n` +
             ((mine?.stopped ?? []).length ? `已停的池：${(mine?.stopped ?? []).join(',')}\n` : '') +
             (mine?.updated ? `状态更新于 ${mine.updated}` : '')}>
             {/* ★★★★★ 2026-09-19 第六批（用户："`50 4代 | 300 2代 | 500 1代` 这个得保持在**第二行**"）

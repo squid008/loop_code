@@ -118,6 +118,23 @@ def load_bank_nodes(pool):
     # ---- ① registry（进 git；换机器时是**唯一**来源 ✓；进程内**只解析一次** ✓）----
     out = dict(_registry_nodes().get(pool) or {})
     n_reg = len(out)
+    # ---- ①b ★★★★★ 2026-09-20 新增：`docs/library_entries.jsonl`（**入库那一刻**写的
+    #   append-only 历史 ✓）—— 用户之问："刚入库又被移出的因子，都不会自动算指标/曲线吗？"
+    #   真因：① registry 与 ② pkl 都只反映"**现在的归属**" ✗ ⇒ 一个因子若在
+    #   「**入库** → 收尾」这段空窗里离开 bank（且 md 还没登记它 ✗）⇒ 三工具都看不见它 ✗
+    #   ⇒ 收尾名单的口径必须含**曾入库过的全部历史** ✓（= 这份 JSONL ✓ 它由引擎在入库那一刻写 ✓）
+    #   ⚠ 解析用 `max_size=10**9`（`parse_expr` 的**官方**用法 ✓ 见其 docstring：
+    #     尺寸上限本是"防 LLM 生成超大式子"的护栏 ✗，对**已过全部门槛的入库因子**没有意义 ✗，
+    #     却会让合法公式**静默返回 None** ✗ —— 2026-09-14 全A `F01` 就栽在这 ✓）
+    _ent = _entries_nodes().get(pool) or {}
+    n_ent_new = 0
+    for k, v in _ent.items():
+        if k not in out:
+            n_ent_new += 1
+        out.setdefault(k, v)
+    if n_ent_new:
+        print('  [{}] 入库历史(JSONL) 补上 {} 个（registry 里没有的 ⇒ 曾入库、后移出 ✓）'
+              .format(pool, n_ent_new))
     # ---- ② pkl（本机才有；补上 registry 里还没有的新因子 ✓）----
     sfx = '' if pool == 'all' else '_' + pool
     sf = os.path.join(ENG, 'loop_state{}.pkl'.format(sfx))
@@ -173,6 +190,58 @@ def _registry_nodes():
         except Exception as e:
             print('  [!] 读 {} 失败: {}: {}'.format(os.path.basename(p), type(e).__name__, e))
     _REG_CACHE[0] = out
+    return out
+
+
+_ENT_CACHE = [None]
+
+
+def _entries_nodes():
+    """`docs/library_entries.jsonl` ⇒ `{pool: {expr: Node}}`（★ **进程内只解析一次**）。
+
+    ★★★★★ 2026-09-20 新增（用户之问："刚入库又被移出的因子，都不会自动算指标/曲线吗？"）——
+      这份 JSONL 是**引擎在入库那一刻**写的 append-only 日志 ✓（`loop_engine.py::_log_lib_entries` ✓）
+      ⇒ 它是"**曾入库过**"的**唯一完整名单** ✓（registry / pkl 都只反映现在 ✗）
+      ⇒ 收尾三工具（facs / 指标 / 曲线）的口径必须含它 ✓ ⇒ 再也不会掉进「入库→收尾」的空窗 ✗
+    ⚠ 与 registry 的差别：JSONL 只有 `expr` 文本（没有 Node 结构 ✗）⇒ 必须**解析** ✓，
+      且**必须给 `max_size=10**9`** ✓（否则合法公式会被尺寸护栏静默丢弃 ✗ 见 `parse_expr` docstring ✓）
+    ⚠ 任何失败只告警、不炸（与 `_registry_nodes` 同一条纪律 ✓）
+    """
+    if _ENT_CACHE[0] is not None:
+        return _ENT_CACHE[0]
+    out = {}
+    p = os.path.join(DOCS, 'library_entries.jsonl')
+    if os.path.exists(p):
+        LE = _LE()
+        n_bad = 0
+        try:
+            for ln in io.open(p, encoding='utf-8'):
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    rec = json.loads(ln)
+                except Exception:
+                    continue
+                pool, expr = rec.get('pool'), rec.get('expr')
+                if not pool or not expr:
+                    continue
+                if str(expr) in (out.get(pool) or {}):
+                    continue
+                try:
+                    nd = LE.parse_expr(str(expr), max_size=10 ** 9)
+                except Exception:
+                    nd = None
+                if nd is None:
+                    n_bad += 1
+                    continue
+                out.setdefault(pool, {})[str(expr)] = nd
+        except Exception as e:
+            print('  [!] 读 {} 失败: {}: {}'.format(os.path.basename(p), type(e).__name__, e))
+        if n_bad:
+            print('  [!] {} 里有 {} 条 expr 解析失败（已跳过，其余照用 ✓）'
+                  .format(os.path.basename(p), n_bad))
+    _ENT_CACHE[0] = out
     return out
 
 
