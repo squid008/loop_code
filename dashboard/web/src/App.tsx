@@ -684,6 +684,43 @@ const libStateTip = (inBank?: boolean | null) =>
     : inBank === false ? '入库过，但已不在当前有效库（只剩历史记录）。点详情仍能看到公式与指标'
       : '指标表与库文档都没收录这条编号，所以判不了它还在不在库（不默认成已入库）'
 
+/** ★★★★ 2026-09-20（用户："因子库页加个 A、B、C 标签就好了，这样我一看就知道啥档位的；
+ *   入库日志那里我看也放得下，也加上吧"）—— **剥风格档位标签** ✓
+ *
+ * 档位来自库文档/指标表里的 `detail.strip`（`loop_pools.STRIP_DESC` 生成，**单一事实源** ✓），
+ * 它的开头就是档位字母（`A 独立有效…` / `B 弱独立…` / `C 纯风格…` / `D 未测…`）✓
+ * ⇒ 取首字母即可，**不自己重算**（重算就有两个口径、迟早漂移 ✗）
+ * ⚠ 语义提醒（用户 09-20 之问："弱有效不应该移出吗？"）：**档位只做标注，不改留库** ✓ ——
+ *   有效库（bank）收的是"过了 L2 入库门槛"的因子（含 B/C ✓，它同时是引擎的**去重对照集** ✓），
+ *   "只收 A"的是**精选池 L3** ✓ ⇒ 所以 B 档因子留在库里是**按设计** ✓
+ */
+const gradeOf = (strip?: string | null): string | null => {
+  const m = /^\s*([ABCD])\b/.exec(strip || '')
+  return m ? m[1] : null
+}
+const GRADE_COLOR: Record<string, string> = { A: '#10b981', B: '#f59e0b', C: '#ef4444', D: '#94a3b8', 未测: '#94a3b8' }
+const GRADE_TIP: Record<string, string> = {
+  A: 'A 独立有效：剥掉 11 个 Barra 风格后，日频 Calmar 仍不低于 0.30，且日频回撤优于 -0.20',
+  B: 'B 弱独立：剥风格后日频 Calmar 在 0 到 0.30 之间，或回撤劣于 -0.20，因此不进精选池',
+  C: 'C 纯风格：剥掉 lncap 与 lnamt 后超额和 Calmar 转负，指数增强不可用',
+  D: 'D 未测：该代没开 --strip_style，没做剥风格检验',
+  未测: '未测：库文档与指标表里都没有它的剥风格结果（多为早期入库，或入库那一代没开 --strip_style）',
+}
+
+function GradeTag({ strip }: { strip?: string | null }) {
+  const g = gradeOf(strip)
+  // ★★★★ 2026-09-20（用户："补一个未测标签"）—— **没记录也要看得见** ✓
+  //   灰标「未测」= 库文档/指标表里**没有**它的剥风格结果（早期入库，或入库那代没开 --strip_style ✓）
+  //   ⚠ 仍然**不臆造档位** ✓ —— 之前是"不显示"✗，那会被读成"漏了/没这功能" ✗；
+  //     标成"未测"才是实话 ✓（"不知道"和"没有记录"是两件事 ✓）
+  const t = (g === 'A' || g === 'B' || g === 'C') ? g : '未测'
+  const c = GRADE_COLOR[t] ?? '#94a3b8'
+  return (
+    <span className="tag grade" title={GRADE_TIP[t] || ''}
+          style={{ background: c + '22', color: c, borderColor: c + '55' }}>{t}</span>
+  )
+}
+
 function EntryLogCard({ d, onDetail }:
   { d: LibraryEntriesDto | null; onDetail: (e: LibraryEntryDto) => void }) {
   const rows = d?.entries ?? []
@@ -710,6 +747,8 @@ function EntryLogCard({ d, onDetail }:
               </span>
               <span className="lp">{e.pool === 'all' ? '全A' : e.pool}</span>
               <span className="lc">{e.code ?? '无编号'}</span>
+              {/* ★ 2026-09-20：入库日志也带上档位（用户："那里我看也放得下，也加上吧"）✓ */}
+              <GradeTag strip={(e as { detail?: { strip?: string } }).detail?.strip} />
               {/* ★ 入库过 ≠ 还在库里（跨池去重会移出）⇒ 编号旁边直接标出来，省得去别的页签对 ✗
                   （三态：已入库 / 已移出 / 状态未知；判不了就写未知，绝不默认成已入库 ✓） */}
               <span className={`stag ${e.inBank === true ? 'ok' : e.inBank === false ? 'out' : 'unk'}`}
@@ -803,6 +842,8 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
           {lib.factors.map((f, i) => (
             <tr key={`${f.code}-${i}`} className={f.inBank === false ? 'outbank' : ''}>
               <td className="mono strong">
+                {/* ★ 2026-09-20（用户："因子库页加个 A、B、C 标签"）⇒ 编号旁边直接标档位 ✓ */}
+                <GradeTag strip={f.detail?.strip} />
                 <button className="fcode" onClick={() => setSel(f)}
                         title={f.inBank === false
                           ? '该编号已不在当前有效库，只剩历史编号（文件只增不改）。点开仍能看到公式与指标'

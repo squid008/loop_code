@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "generatedAt": "2026-09-20 08:14:51",
+ "generatedAt": "2026-09-20 09:37:15",
  "source": "docs/factor_library*.md（编号/代数/家族/一句话/公式/指标）+ engine/loop_state*.pkl（入库 Node 结构，权威口径）",
  "why": "pkl 不进 git ⇒ 换机器（家里 pull）时本文件是\"重建 facs/指标/曲线\"的**唯一入口** ✓",
  "counts": {
@@ -12,10 +12,10 @@
    "bank_only": 0
   },
   "300": {
-   "listed": 3,
-   "overview": 3,
-   "detail": 3,
-   "bank": 2,
+   "listed": 4,
+   "overview": 4,
+   "detail": 4,
+   "bank": 3,
    "bank_only": 0
   },
   "500": {
@@ -46,8 +46,8 @@
    "expr": "ts_mean150(corr100(ts_mean5(div(mf_m_bqty, hl_ratio)), ts_mean60(ts_mean5(turn_ratio))))"
   }
  ],
- "n_factors": 62,
- "n_with_node": 62,
+ "n_factors": 63,
+ "n_with_node": 63,
  "factors": [
   {
    "pool": "all",
@@ -2759,6 +2759,75 @@
        {
         "op": "mf_m_bqty",
         "args": []
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "300",
+   "no": "F04",
+   "gen": 129,
+   "family": "财报、市值",
+   "oneLiner": "ts_mean10(ema60(corr200(fa_sell_exp, cs_r…",
+   "status": "已入库(auto)",
+   "expr": "ts_mean10(ema60(corr200(fa_sell_exp, cs_rank(ema12(cs_rank(ema12(ema12(mktcap))))))))",
+   "sign": null,
+   "poolTag": "all3",
+   "note": null,
+   "ic": 0.0099,
+   "icIr": 0.099,
+   "annEx": 0.059000000000000004,
+   "dd": -0.08199999999999999,
+   "calmar": 0.727,
+   "sharpe": 0.899,
+   "recentYear": 0.145,
+   "turn": 0.08199999999999999,
+   "inBank": true,
+   "node": {
+    "op": "ts_mean10",
+    "args": [
+     {
+      "op": "ema60",
+      "args": [
+       {
+        "op": "corr200",
+        "args": [
+         {
+          "op": "fa_sell_exp",
+          "args": []
+         },
+         {
+          "op": "cs_rank",
+          "args": [
+           {
+            "op": "ema12",
+            "args": [
+             {
+              "op": "cs_rank",
+              "args": [
+               {
+                "op": "ema12",
+                "args": [
+                 {
+                  "op": "ema12",
+                  "args": [
+                   {
+                    "op": "mktcap",
+                    "args": []
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
        }
       ]
      }

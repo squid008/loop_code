@@ -1,6 +1,6 @@
 # 因子库（池 = 300）
 
-> 当前 **2 个入库**
+> 当前 **3 个入库**
 > 本文件由引擎在**每代末尾自动同步**（`--mine_pool=300` 时生效；实现见 `_lib_sync`）。
 > ⚠ 与全A 轨道的 `docs/factor_library.md` **互不读写**（池隔离，见 roadmap §8.42）。
 
@@ -26,6 +26,7 @@
 | F01 | gen4 | 资金流、资金流、跳空、振幅 | sub(corr100(mf_x_sell, mf_s_bqty), min(ov… | 已入库(auto) |
 | F02 | gen1 | 资金流、资金流 | corr100(cs_scale(mf_x_sell), mf_l_sell) | 已入库(auto) |
 | F03 | gen10 | 资金流、资金流 | cs_scale(corr60(mf_l_sell, mf_m_bqty)) | 已入库(auto) |
+| F04 | gen129 | 财报、市值 | ts_mean10(ema60(corr200(fa_sell_exp, cs_r… | 已入库(auto) |
 ## 因子明细
 
 ### F01 · gen4 入库（引擎自动同步，家族命名待人工精炼）
@@ -66,6 +67,21 @@ cs_scale(corr60(mf_l_sell, mf_m_bqty))
 - 骨架：`cs_scale(corr(mf_l_sell,mf_m_bqty))`
 - 池标签：**`csi300_1000_all`** —— 全A + **300/1000** 池通过
 - 费后指标（full，成本 0.004往返(主用档)）：IC 0.0412 / IC_IR 0.451 / 年化超额 +5.0% / 回撤 -7.0% / Calmar 0.713 / Sharpe 0.801 / 最近年 +2.9% / 单期换手 21.8% / 负年 0
+
+---
+
+
+### F04 · gen129 入库（引擎自动同步，家族命名待人工精炼）
+```
+ts_mean10(ema60(corr200(fa_sell_exp, cs_rank(ema12(cs_rank(ema12(ema12(mktcap))))))))
+```
+- 符号 `sign`：**未记录**（缺失时不臆造，见 roadmap §8.45 铁律）
+- 家族：财报、市值（auto）
+- 叶子：fa_sell_exp、mktcap
+- 骨架：`ts_mean(ema60(corr(fa_sell_exp,cs_rank(ema12(cs_rank(ema12(ema12(mktcap))))))))`
+- 池标签：**`all3`** —— 全A **且所有池都通过**（真 alpha）
+- 剥风格：**`A`** 独立有效（剥风格后**日频** Calmar >= 0.30，且**日频**回撤 > -0.20）（原 Calmar 0.727 → 剥后 0.649；超额 +5.9% → +5.1%；**日频** 剥后 Calmar 0.564，日频回撤 -9.1%）
+- 费后指标（full，成本 0.004往返(主用档)）：IC 0.0099 / IC_IR 0.099 / 年化超额 +5.9% / 回撤 -8.2% / Calmar 0.727 / Sharpe 0.899 / 最近年 +14.5% / 单期换手 8.2% / 负年 2
 
 ---
 

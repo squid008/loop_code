@@ -24,7 +24,7 @@
 > 而 `--decorr` / `--dup_ex_corr` 正是拿 `bank` 当对照集的，对照集变弱，引擎更容易重复挖，又被拦，就成了死循环。
 > 所以：**`bank` 照旧增长（它是对照集，越大去重越强）**，另设本精选层。
 
-## 精选清单（7 个）
+## 精选清单（8 个）
 
 > ★ **表达式是完整的**（不截断）—— 本文件可直接给下游用，不必回各池库翻。
 > 需要**可复制的全文** / `sign` / h5 路径 → 见下方「[精选因子明细](#精选因子明细可直接复制使用)」。
@@ -32,12 +32,13 @@
 | # | 因子 | 剥风格档 | 剥Calmar | 剥超额 | 原Calmar | 表达式（完整） |
 |---|---|---|---|---|---|---|
 | 1 | `F07` | **A** | **1.228** | +5.3% | 0.820 | `ts_std100(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))` |
-| 2 | `F35` | **A** | **0.604** | +2.6% | 1.077 | `mul(ts_max20(max(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std100(barra_residual_volatility))))), corr100(true_range, mf_m_buy))` |
-| 3 | `F25` | **A** | **0.551** | +3.9% | 1.295 | `max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage)), ts_min20(cs_rank(barra_leverage)))), barra_residual_volatility)` |
-| 4 | `F07_1000` | **A** | **0.519** | +6.3% | 0.506 | `ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))` |
-| 5 | `F33` | **A** | **0.400** | +3.9% | 0.847 | `ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_beta), ts_std150(mf_x_bqty))))` |
-| 6 | `F21` | **A** | **0.351** | +2.2% | 0.868 | `max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_ocf_yoy, fa_gm))), barra_residual_volatility))` |
-| 7 | `F05_500` | **A** | **0.349** | +2.3% | 0.802 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` |
+| 2 | `F04_300` | **A** | **0.649** | +5.1% | 0.727 | `ts_mean10(ema60(corr200(fa_sell_exp, cs_rank(ema12(cs_rank(ema12(ema12(mktcap))))))))` |
+| 3 | `F35` | **A** | **0.604** | +2.6% | 1.077 | `mul(ts_max20(max(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std100(barra_residual_volatility))))), corr100(true_range, mf_m_buy))` |
+| 4 | `F25` | **A** | **0.551** | +3.9% | 1.295 | `max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage)), ts_min20(cs_rank(barra_leverage)))), barra_residual_volatility)` |
+| 5 | `F07_1000` | **A** | **0.519** | +6.3% | 0.506 | `ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))` |
+| 6 | `F33` | **A** | **0.400** | +3.9% | 0.847 | `ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_beta), ts_std150(mf_x_bqty))))` |
+| 7 | `F21` | **A** | **0.351** | +2.2% | 0.868 | `max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_ocf_yoy, fa_gm))), barra_residual_volatility))` |
+| 8 | `F05_500` | **A** | **0.349** | +2.3% | 0.802 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` |
 
 ---
 
@@ -65,7 +66,26 @@ ts_std100(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
 | 剥风格后 Calmar / 超额 | **1.228** / +5.3% |
 | 原（未剥）Calmar / 超额 / IC | 0.820 / +6.0% / 0.052 |
 
-### 2. `F35`
+### 2. `F04_300`
+
+**完整表达式**
+```
+ts_mean10(ema60(corr200(fa_sell_exp, cs_rank(ema12(cs_rank(ema12(ema12(mktcap))))))))
+```
+
+| 项 | 值 |
+|---|---|
+| **`sign`（方向，必须乘）** | **1** |
+| 因子值 h5 | `facs/11/F04_300/values.h5` |
+| 快查副本（uint8，截面秩） | `facs/11/F04_300/values_q.h5` |
+| 形状 | 3309 日 × 5384 股 |
+| 来源 | `lib:300:genNone` |
+| 建于 | 2026-09-20 09:37:45 |
+| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后 Calmar 0.649 ≥ 0.30）|
+| 剥风格后 Calmar / 超额 | **0.649** / +5.1% |
+| 原（未剥）Calmar / 超额 / IC | 0.727 / +5.9% / 0.010 |
+
+### 3. `F35`
 
 **完整表达式**
 ```
@@ -84,7 +104,7 @@ mul(ts_max20(max(max(barra_residual_volatility, div(barra_residual_volatility, b
 | 剥风格后 Calmar / 超额 | **0.604** / +2.6% |
 | 原（未剥）Calmar / 超额 / IC | 1.077 / +4.6% / 0.037 |
 
-### 3. `F25`
+### 4. `F25`
 
 **完整表达式**
 ```
@@ -103,7 +123,7 @@ max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage)), ts_min20(cs_rank(bar
 | 剥风格后 Calmar / 超额 | **0.551** / +3.9% |
 | 原（未剥）Calmar / 超额 / IC | 1.295 / +5.6% / 0.055 |
 
-### 4. `F07_1000`
+### 5. `F07_1000`
 
 **完整表达式**
 ```
@@ -122,7 +142,7 @@ ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatili
 | 剥风格后 Calmar / 超额 | **0.519** / +6.3% |
 | 原（未剥）Calmar / 超额 / IC | 0.506 / +7.0% / 0.017 |
 
-### 5. `F33`
+### 6. `F33`
 
 **完整表达式**
 ```
@@ -141,7 +161,7 @@ ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_be
 | 剥风格后 Calmar / 超额 | **0.400** / +3.9% |
 | 原（未剥）Calmar / 超额 / IC | 0.847 / +11.3% / 0.027 |
 
-### 6. `F21`
+### 7. `F21`
 
 **完整表达式**
 ```
@@ -160,7 +180,7 @@ max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_
 | 剥风格后 Calmar / 超额 | **0.351** / +2.2% |
 | 原（未剥）Calmar / 超额 / IC | 0.868 / +5.5% / 0.053 |
 
-### 7. `F05_500`
+### 8. `F05_500`
 
 **完整表达式**
 ```
