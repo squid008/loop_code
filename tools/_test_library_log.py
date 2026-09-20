@@ -210,7 +210,11 @@ def main():
         '卡片只 ~310px；徽标不可收缩 + `overflow-x: hidden` ⇒ 按钮被裁掉、用户点不到 ✗')
     chk('★ 详情弹层里"已不在当前有效库"只在**确证 false** 时显示（原来 `!f.inBank` ⇒ null 也误报 ✗）',
         'f.inBank === false && <span className="out">' in src_tsx)
-    _tip = src_tsx[src_tsx.find('const libStateTip'):src_tsx.find('function EntryLogCard')]
+    # ★★ 2026-09-20 修（v1.21.15 回归暴露 ✗）：原窗口取到 `function EntryLogCard` 为止 ✗ ——
+    #   v1.21.15 在两者之间插入了 `GradeTag` 组件（注释里有 ★/⇒ ✓ 属维护者可见、非用户文案 ✓）
+    #   ⇒ 被误判成"文案有机味符号" ✗ ⇒ 窗口收窄到 **`libStateTip` 这一个语句** ✓
+    _tip = src_tsx[src_tsx.find('const libStateTip'):]
+    _tip = re.split(r'\n(?:const |function |/\*\*)', _tip)[0]
     chk('徽标鼠标提示**不臆断**（未知时明说"判不了"），且文案里没有 `**`/★/⇒ 这类符号（AI 味守门 ✗）',
         _tip and '判不了它还在不在库' in _tip
         and not any(s in _tip for s in ('**', '★', '⇒', '✓', '✗')))

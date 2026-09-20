@@ -15,6 +15,37 @@
 
 ---
 
+## [1.21.16] — 2026-09-20
+
+> 主题：**修守门提取窗口** + 记一条流程教训（测试必须先跑完再提交）
+
+### ① 守门 `_test_library_log` 的窗口过宽 ✗（v1.21.15 回归暴露）
+```python
+# 原来（错的 ✗）：取 libStateTip → EntryLogCard 之间的**一切**
+_tip = src_tsx[src_tsx.find('const libStateTip'):src_tsx.find('function EntryLogCard')]
+```
+v1.21.15 正好在这两者之间插入了 `GradeTag` 组件 ✓，其**注释**里有 `★` / `⇒` ✓
+（注释是给维护者看的 ✗，**不是用户文案** ✓）⇒ 被误判成"文案有机味符号" ✗
+
+**修**：窗口收窄到 `libStateTip` **这一个语句** ✓
+```python
+_tip = src_tsx[src_tsx.find('const libStateTip'):]
+_tip = re.split(r'\n(?:const |function |/\*\*)', _tip)[0]
+```
+
+### ② ★ 流程教训（同一晚犯第二次 ✗）
+v1.21.13 与 v1.21.15 **两次**都是："**测试 + git commit 写在同一条命令里**" ✗
+⇒ 测试失败时，提交与 tag **已经跑掉了** ✗✗（于是又得补一个 patch 版 ✓）
+
+**从本版起的硬规矩**：
+```
+1) 先单独跑：_test_version_sync + ai_test/_run_all_tests.py   ⇒ 必须全绿
+2) 全绿之后，才执行 git add / commit / tag / push
+```
+（理由：回归是"发布门禁"✗，把它和发布动作绑在一条命令里 = **门禁形同虚设** ✗）
+
+---
+
 ## [1.21.15] — 2026-09-20
 
 > 主题：**因子库页 + 入库日志都加「剥风格档位」标签（A/B/C + 未测灰标）**
