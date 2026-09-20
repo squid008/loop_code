@@ -72,10 +72,16 @@ UNARY_SPECS = [
     ('ts_std',   [20, 60, 100, 150, 200],              ('fo', 'ts_std'),   'core'),
     ('ts_max',   [20, 100],                            ('fo', 'ts_max'),   'core'),
     ('ts_min',   [20, 100],                            ('fo', 'ts_min'),   'core'),
-    ('ts_rank',  [20, 60, 100, 200],                   ('fo', 'ts_rank'),  'core'),
+    # ★★★ 2026-09-20（用户："精确复原（Alpha191 的 Alpha143），加算子"）：
+    #   原式要 `ts_rank(close, 10)` 与 `delta(delay(close,5),5)` —— 而 10 这个窗口原先**不存在** ✗
+    #   ⇒ 两族各补 **10** ✓（实现本就是带窗口的通用函数 `fastops.ts_rank(x,w)` / `le.ts_delta(x,n)` ✓
+    #      ⇒ 只需在这里登记名字 ✓）
+    #   ⚠ **这会扩大搜索空间**（生成端从此也能用 `ts_rank10` / `ts_delta10` ✓）⇒ 用户已拍板接受 ✓
+    #   ⚠ 对**正在跑的**引擎无效 ✓ —— 引擎是启动时加载算子表的 ✓，要生效需重启调度器 ✓
+    ('ts_rank',  [10, 20, 60, 100, 200],               ('fo', 'ts_rank'),  'core'),
     # ★ ts_delay/ts_delta 用 pandas 实现（不是 fastops）—— 保持原样，勿改语义
     ('ts_delay', [1],                                  ('le', 'ts_delay'), 'core'),
-    ('ts_delta', [5, 20, 60, 120],                     ('le', 'ts_delta'), 'core'),
+    ('ts_delta', [5, 10, 20, 60, 120],                 ('le', 'ts_delta'), 'core'),
     ('ts_sum',   [20, 100],                            ('fo', 'ts_sum'),   'core'),
     # 无窗口的通用变换（紧跟 core 名单，与 prompt 一致）
     ('log',      None,                                 ('fn', _log),       'core'),

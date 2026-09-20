@@ -69,15 +69,39 @@ def main():
     fs = js.get('factors') or []
     chk('schema=1 且条目数 > 0（实得 %d 条）' % len(fs), js.get('schema') == 1 and fs)
 
+    # ★★★ 2026-09-20（用户："搞成已移出吧"）：**"已移出"的因子不算"漏算"** ✓
+    #   语义：md 总览表那行的**状态列**写着"已移出"的编号 ⇒ 它**不在当前库**了
+    #   （`docs/factor_metrics.csv` 的 `in_bank=0` + 退出 `library_entries.jsonl` 名单 ✓）
+    #   ⇒ 收尾不再把它当库内因子 ⇒ 本守门要把它从"md 列出的因子"与"现状"**两边都排除** ✗
+    #   ⚠ 只认**状态列**里的"已移出"（明细块里那句"状态：已移出"是历史留档 ✓ 不算 ✗）
+    _MD_OF = {'all': 'docs/factor_library.md'}
+    for _p in ('50', '300', '500', '1000'):
+        _MD_OF[_p] = 'docs/factor_library_%s.md' % _p
+
+    def _retired(pool):
+        try:
+            md = io.open(os.path.join(ROOT, _MD_OF[pool]), encoding='utf-8').read()
+        except Exception:                                     # noqa: BLE001
+            return set()
+        out = set()
+        for ln in md.splitlines():
+            if ln.startswith('|') and '已移出' in ln:
+                cells = [c.strip() for c in ln.strip('|').split('|')]
+                if cells and cells[0] and set(cells[0]) != set('-'):
+                    out.add(cells[0])
+        return out
+
     # ---- [1] 清单完整：覆盖各池 md 总览表的每个编号 ----
-    print('\n[1] 清单完整（JSON ⊇ 各池 md 总览表）')
+    print('\n[1] 清单完整（JSON ⊇ 各池 md 总览表；**已移出**的不计 ✓）')
     tot_md = 0
     for pool in POOLS:
-        ov = ER.parse_overview(pool)
+        ret = _retired(pool)
+        ov = [n for n in ER.parse_overview(pool) if n not in ret]
         have = {(f['pool'], f['no']) for f in fs}
         miss = sorted(n for n in ov if (pool, n) not in have)
         tot_md += len(ov)
-        chk('池 %-5s：md 列出 %2d 条 ⇒ JSON 全覆盖' % (pool, len(ov)), not miss,
+        chk('池 %-5s：md 列出 %2d 条（已移出 %d 条不计）⇒ JSON 全覆盖'
+            % (pool, len(ov), len(ret)), not miss,
             '缺 %s（家里会少这些因子 ✗）' % miss[:5])
     chk('各池 md 合计 %d 条，JSON 有 %d 条' % (tot_md, len(fs)), len(fs) >= tot_md)
 
@@ -138,7 +162,12 @@ def main():
     # ---- [4] 同步：忘了重导出会当场红 ----
     print('\n[4] 与当前 md/pkl 同步（收尾管线每轮自动重导）')
     cur = ER.build()
-    probs = ER.compare(cur['factors'], js)
+    # ★★ 同上：**已移出**的编号不算"现状" ✓（JSON 里本来就没有它 ⇒ 不排除就永远红 ✗）
+    _ret_all = set()
+    for _p in POOLS:
+        _ret_all |= {(_p, n) for n in _retired(_p)}
+    _cur = [f for f in cur['factors'] if (f.get('pool'), f.get('no')) not in _ret_all]
+    probs = ER.compare(_cur, js)
     chk('JSON 与现状一致（实得 %d 处差异）' % len(probs), not probs, '; '.join(probs[:4]))
 
     # ---- [5] ★ 规模化（用户之问："将来几千个因子会不会爆炸/读崩溃？"）----
@@ -154,7 +183,7 @@ def main():
     js2 = json.loads(json.dumps(js, ensure_ascii=False))          # 深拷贝
     js2['generatedAt'] = '1970-01-01 00:00:00'                    # 只改时间戳
     chk('★ `compare` **不看时间戳** ⇒ 内容没变就能"跳过写入"（少给 git 添版本 ✓）',
-        not ER.compare(cur['factors'], js2),
+        not ER.compare(_cur, js2),        # ★ 同上：已移出的编号不算现状 ✓
         '若它把时间戳算成差异 ⇒ 每轮收尾都会重写文件 ✗')
     chk('★ `load_bank_nodes` 走**进程内缓存**（`_registry_nodes`，5 池不再重复解析 ✓）',
         'def _registry_nodes(' in io.open(os.path.join(ROOT, 'tools', 'build_facs.py'),

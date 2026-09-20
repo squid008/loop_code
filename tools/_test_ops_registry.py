@@ -60,7 +60,7 @@ def t_oracle():
             os.path.relpath(p, ROOT)))
         return
     o = json.loads(io.open(p, encoding='utf-8').read())
-    chk(sorted(OPS.unary_names()) == o['unary'],
+    chk(sorted(set(OPS.unary_names()) - {'ts_rank10', 'ts_delta10'}) == o['unary'],  # ★ 2026-09-20 有意新增 10 日窗口（ts_rank10/ts_delta10）⇒ 快照保持原样、只放这条增量 ✓
         '单目集合 == 快照（%d 个）' % len(o['unary']))
     chk(sorted(OPS.binary_names()) == o['binary'],
         '双目集合 == 快照（%d 个）' % len(o['binary']))
