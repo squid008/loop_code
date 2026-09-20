@@ -230,7 +230,11 @@ chk('新增两个剥法（剥流通市值 / 剥总市值+限售）已接进图�
     all(k in src for k in ('floatcap', 'caplimit')))
 # ★★ 2026-09-18（用户之问）：「风格相关性表加一列剥全部、剥前/剥后对比」+「净值曲线加一条剥全部，
 #   第 7 个就叫剥全部」+「图例放一列就好了」
-chk('★ 第 7 条剥法 `allsty`「剥全部」已接进图例', 'allsty' in src and '剥全部' in src and 'indneu' in src and '行业中性' in src)
+chk('★ 第 7 条剥法 `allsty`「剥全部」已接进图例', 'allsty' in src and '剥全部' in src and 'indneu' in src and '行业中性' in src
+    # ★★ 2026-09-20 补硬断言：**图例那个写死的数组**必须真的带上 indneu ✗
+    #   （用户实测"全A 库也没有"⇒ 真因 = 我只加了 STRIP_LABEL、漏了图例数组 ✗）
+    and "['raw', 'lncap', 'lnamt', 'both', 'floatcap', 'caplimit'," in src
+    and "'allsty', 'indneu']" in src)
 # ★★ 2026-09-18 用户看过截图后**否掉了竖排**（"底下图例不要搞那么多行，跟原来一样放一行"）✗
 #   ⇒ 图例回到默认横向流式（`ch-lg` 的 flex-wrap）✓；口径解释搬到 `ChSeries.tip` 鼠标提示 ✓
 chk('★ 剥风格图图例**回到一行（默认横向流式）**，不再竖排（用户否掉 ✗）',

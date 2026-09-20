@@ -1136,12 +1136,15 @@ function BarChart({ rows, rowH = 15, domain, fmt, tag2 = '剥后', tag3 = '剥�
   )
 }
 
-/** 风格名 → 中文（Barra 11 + 自有 4） */
+/** 风格名 → 中文（Barra 11 + 自有 4）
+ *  ★★ 2026-09-21（用户："其他标签都是英文的，全都搞成中文吧"）
+ *  ⇒ 把此前**中英混排**的三条也收干净 ✓：`规模 size` → `规模`、
+ *    `成长 growth` → `成长`、`Beta` → `贝塔`（用户要的是全中文，不留英文尾巴 ✓）*/
 const STYLE_LABEL: Record<string, string> = {
   lncap: '对数总市值', lnamt: '对数成交额', lntr: '对数换手率', lnpx: '对数股价',
-  barra_size: '规模 size', barra_non_linear_size: '非线性规模', barra_momentum: '动量',
+  barra_size: '规模', barra_non_linear_size: '非线性规模', barra_momentum: '动量',
   barra_liquidity: '流动性', barra_book_to_price: '账面市值比', barra_leverage: '杠杆',
-  barra_growth: '成长 growth', barra_earnings_yield: '盈利收益率', barra_beta: 'Beta',
+  barra_growth: '成长', barra_earnings_yield: '盈利收益率', barra_beta: '贝塔',
   barra_residual_volatility: '残差波动率', barra_comovement: '共动性',
 }
 const styleName = (s: string) => STYLE_LABEL[s] ?? s.replace('barra_', '')
@@ -1296,7 +1299,8 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
         <>
           <div className="ch-t">剥风格对比（期频超额净值）</div>
           <Chart dates={st.dates} yFmt={v => v.toFixed(1)}
-                 series={['raw', 'lncap', 'lnamt', 'both', 'floatcap', 'caplimit', 'allsty']
+                 series={['raw', 'lncap', 'lnamt', 'both', 'floatcap', 'caplimit',
+                          'allsty', 'indneu']
                    .filter(k => (st.navs[k] ?? []).length > 0)
                    .map((k, i) => ({
                      label: STRIP_LABEL[k] ?? k,
@@ -1312,7 +1316,8 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
               <>
                 <br />
                 <b>剥全部 {fmtN3(st.calmars.allsty)}</b>
-                （对照：只剥风格不剥行业 {fmtN3(st.calmars.allsty_noind)}）
+                （对照：只剥风格不剥行业 {fmtN3(st.calmars.allsty_noind)}
+                {st.calmars.indneu !== undefined && <> · <b>行业中性 {fmtN3(st.calmars.indneu)}</b></>}）
               </>
             )}
           </div>
@@ -1331,20 +1336,43 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
       {c?.expo && c.expo.styles.length > 0 && (() => {
         const ex = c.expo
         const vis = expoVis ?? new Set(ex.styles)
-        const picked = ex.styles.filter(s => vis.has(s))
+        // ★★ 2026-09-21（用户："comovement 是啥，为啥是一条水平线"）—— 排查结论：
+        //   数据源里 **`barra_comovement` 全库恒为 1**（418 期 std = 0 · 唯一值 = 1 ✗）
+        //   = **占位值 / 该风格没算出数据** ✗（其余 10 个风格 std 0.11 ~ 0.57 ✓ 都是真值 ✓）
+        //   ⇒ 画出来就是一条死直线 ✓（不是"它真的平稳" ✗）⇒ 前端**把它从图里隐去** ✓
+        //     并给一行说明 ⇒ 免得看着像我们的图画错了 ✗（等接入真实共动性数据会自动出现 ✓）
+        const _flat = (s: string) => {
+          const a = (ex.series[s] ?? []).filter(v => v !== null && Number.isFinite(v)) as number[]
+          if (a.length < 30) return true
+          return Math.max(...a) - Math.min(...a) < 1e-6
+        }
+        const dead = ex.styles.filter(_flat)
+        const live = ex.styles.filter(s => !dead.includes(s))
+        const picked = live.filter(s => vis.has(s))
+        // ★★★★★ 2026-09-21（用户："这个全部显示全部隐藏按钮有点丑啊，改成跟其他按钮一样的多好看，
+        //   然后其他标签都是英文的，全都搞成中文吧"）
+        //   ⇒ ① 两个批量按钮**改成与风格芯片同一套药丸样式** ✓（此前是 `className="state"`
+        //        那个米色方按钮 ⇒ 跟右边一排药丸不同族，看着突兀 ✗）
+        //      ② 芯片与图例**一律走 `styleName()`** ⇒ 中文 ✓（此前直接 `s.replace('barra_','')` ✗）
+        //      ③ 顺带清掉标题里原本露给用户看的 `✗`（用户可见文案不许带符号 ✓）
+        const chip = (active: boolean, col: string) => ({
+          cursor: 'pointer', padding: '2px 10px', borderRadius: 999, fontSize: 11.5,
+          background: 'transparent', border: '1px solid ' + (active ? col : 'var(--bd)'),
+          color: active ? col : 'var(--mut)', opacity: active ? 1 : 0.55,
+        })
         return (
           <>
             <div className="ch-t">
-              动态风格暴露（{ex.styles.length} 个 Barra 风格 · {ex.dates.length} 期换仓日）——
+              动态风格暴露（{live.length} 个 Barra 风格 · {ex.dates.length} 期换仓日）——
               值 = 组合在 Barra <b>原生暴露</b>上的均值，<b>0 = 中性</b>
-              （原生值即市值加权 0 均值口径 ⇒ 市值加权全市场天然为 0；不能拿池内等权均值当参照 ✗）
+              （原生值即市值加权 0 均值口径 ⇒ 市值加权全市场天然为 0；不能拿池内等权均值当参照）
             </div>
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 8px' }}>
-              <button className="state" style={{ cursor: 'pointer' }}
-                      onClick={() => setExpoVis(new Set(ex.styles))}>全部显示</button>
-              <button className="state" style={{ cursor: 'pointer' }}
+              <button style={chip(vis.size < live.length, 'var(--mut)')}
+                      onClick={() => setExpoVis(new Set(live))}>全部显示</button>
+              <button style={chip(vis.size > 0, 'var(--mut)')}
                       onClick={() => setExpoVis(new Set())}>全部隐藏</button>
-              {ex.styles.map((s, i) => {
+              {live.map((s, i) => {
                 const on = vis.has(s)
                 const col = CPAL[i % CPAL.length]
                 return (
@@ -1352,24 +1380,24 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
                     const n = new Set(vis)
                     if (on) { n.delete(s) } else { n.add(s) }
                     setExpoVis(n)
-                  }}
-                          style={{ cursor: 'pointer', padding: '2px 8px', borderRadius: 999,
-                                   fontSize: 11.5, background: 'transparent',
-                                   border: '1px solid ' + (on ? col : 'var(--bd)'),
-                                   color: on ? col : 'var(--mut)',
-                                   opacity: on ? 1 : 0.55 }}>
-                    {s.replace('barra_', '')}
+                  }} style={chip(on, col)}>
+                    {styleName(s)}
                   </button>
                 )
               })}
             </div>
+            {dead.length > 0 && (
+              <div className="ch-note">
+                {dead.map(styleName).join('、')}：当前数据源里这列是常量（没有真实暴露值），已从图中隐去
+              </div>
+            )}
             {picked.length > 0 ? (
               <Chart dates={ex.dates} zero yFmt={v => v.toFixed(1)}
                      series={picked.map(s => ({
-                       label: s.replace('barra_', ''),
+                       label: styleName(s),
                        color: CPAL[ex.styles.indexOf(s) % CPAL.length],
                        data: (ex.series[s] ?? []).map(v => (v === null ? NaN : v)),
-                       tip: '组合在 ' + s + ' 的原生暴露（0 = 中性 ✓）',
+                       tip: '组合在' + styleName(s) + '上的原生暴露（0 = 中性）',
                      }))} />
             ) : (
               <div className="ch-note">11 条全收起了 —— 点上面的风格芯片就能只看某一个 ✓</div>

@@ -109,6 +109,84 @@ def _launch(pool, gen, n, l2, extra, inject_spec, pools, panel_cache):
             'logf': logf, 'errf': errf, 'cmd': cmd, 't0': time.time()}
 
 
+# ---------------------------------------------------------------- 退出原因（诊断）
+# ★★★★★ 2026-09-21（待办 C 遗留 · 用户："调度器日志里要能看出**为什么**退出"）
+#   原状：只有一行 `[END] pool=… gen=… 退出码=… err=…B` +（异常时）一句"疑似崩溃" ✗
+#   ⇒ 用户早上来看日志**只能知道崩了、不知道崩在哪** ✗（例如"启动即崩"到底是
+#     内存不够 / 权限被挡 / 参数传错 / 数据缺列，全看不出来 ✗）
+#   ⇒ 这里把"**退出原因**"拼成一条能读懂的结论：① 退出码语义 ② stderr 关键词 ③ 日志尾部最后一句 ✓
+#   并**持久化**（`_engine_exits.log` + 控制文件 `exits` 字段）⇒ 前端以后也能直接显示 ✓
+_WIN_RC = {
+    3221225477: '访问冲突（0xC0000005）—— 多为 C 扩展/驱动层异常，看 stderr',
+    3221225725: '栈溢出（0xC00000FD）—— 递归过深',
+    3221225786: '被强制结束（0xC000013A）—— terminate / Ctrl+C 一类',
+    3221226505: '快速失败（0xC0000409）—— 运行库检测到致命错误',
+    3221225620: '整数除零（0xC0000094）',
+    137: '被 SIGKILL —— 多半是内存被杀（OOM）',
+    9: '被 SIGKILL —— 多半是内存被杀（OOM）',
+    2: '命令行/文件用法错误（argparse）',
+    -1: '被信号结束',
+}
+_ERR_HINTS = (
+    ('MemoryError', '内存不足（MemoryError）'),
+    ('bad_alloc', '内存不足（bad_alloc）'),
+    ('No space left', '磁盘满'),
+    ('PermissionError', '权限/占用（PermissionError）—— 常见于杀软或他进程占用同一文件'),
+    ('FileNotFoundError', '文件不存在（路径/数据缺）'),
+    ('KeyError', '缺列/缺键（数据口径不匹配）'),
+    ('ImportError', '依赖导入失败'),
+    ('ModuleNotFoundError', '依赖缺失'),
+    ('Traceback', 'Python 异常（看 stderr 尾部）'),
+)
+
+
+def _tail_lines(p, n=1, maxlen=110):
+    """安全读文件尾 n 行（编码/占用都可能出问题 ⇒ 一律吞掉异常 ✓）。"""
+    try:
+        if not (p and os.path.exists(p)):
+            return []
+        with io.open(p, 'r', encoding='utf-8', errors='replace') as f:
+            lines = [l.strip() for l in f.read().splitlines() if l.strip()]
+        return [l[:maxlen] for l in lines[-n:]]
+    except Exception:                                          # noqa: BLE001
+        return []
+
+
+def _exit_reason(rc, errf, logf, killed):
+    """把一次异常退出拼成一条可读结论（被用户停的另说 ✓）。"""
+    if killed:
+        return '被停止（看板/调度器主动停，该代作废、下次重跑）'
+    bits = []
+    if rc in _WIN_RC:
+        bits.append(_WIN_RC[rc])
+    elif rc > 1000:
+        bits.append('退出码 %d（0x%X，未知 NTSTATUS）' % (rc, rc))
+    else:
+        bits.append('退出码 %d' % rc)
+    etxt = ' '.join(_tail_lines(errf, n=40, maxlen=200))
+    for kw, hi in _ERR_HINTS:
+        if kw in etxt:
+            bits.append(hi)
+            break
+    last = _tail_lines(errf, n=1) or _tail_lines(logf, n=1)
+    if last:
+        bits.append('末行: ' + last[0])
+    return ' · '.join(bits)
+
+
+def _log_exit(pool, gen, rc, mins, errsz, killed, why):
+    """追加一行到一个**只记退出**的日志（比在 1 MB 调度器日志里翻好找 ✓）。"""
+    try:
+        os.makedirs(RT.LOGD, exist_ok=True)
+        p = os.path.join(RT.LOGD, '_engine_exits.log')
+        with io.open(p, 'a', encoding='utf-8') as f:
+            f.write('%s  pool=%-5s gen=%-3s rc=%-11s %5.1fmin err=%-7s %s  %s\n'
+                    % (time.strftime('%Y-%m-%d %H:%M:%S'), pool, gen, rc, mins, errsz,
+                       '被停' if killed else '异常', why))
+    except Exception:                                          # noqa: BLE001
+        pass
+
+
 def _reap(t):
     """收一个已结束的任务：打印摘要 + 同样的 GUARD + 判定是否算"本轮真实进展"。"""
     try:
@@ -151,6 +229,21 @@ def _reap(t):
         t['killed'] = bool(killed)
         # ★ 2026-09-17：**崩溃**（不是被用户停的）⇒ 调用方**本轮就重试**（不必等下一轮）✓
         t['crashed'] = not killed
+        # ★★★★★ 2026-09-21（待办 C 遗留）：把"**为什么退出**"写成一条结论 ✓
+        #   三处落地：① 调度器日志一行（人看 ✓）② `_engine_exits.log` 专档（好翻 ✓）
+        #            ③ 控制文件 `exits` 字段（结构化，前端以后能直接显示 ✓）
+        _why = _exit_reason(rc, t['errf'], t['logf'], killed)
+        t['exit_reason'] = _why
+        RT.log('[退出原因] pool={} gen={} rc={} :: {}'.format(t['pool'], t['gen'], rc, _why))
+        _log_exit(t['pool'], t['gen'], rc, mins, errsz, killed, _why)
+        try:
+            _ex = dict((RT.read_ctl() or {}).get('exits') or {})
+            _ex[t['pool']] = {'gen': t['gen'], 'rc': rc, 'killed': bool(killed),
+                              'at': time.strftime('%Y-%m-%d %H:%M:%S'),
+                              'reason': _why[:200]}
+            RT.write_ctl(exits=_ex)
+        except Exception as _e2:                                # noqa: BLE001
+            RT.log('        [warn] 退出原因写控制文件失败: {!r}'.format(_e2))
         RT.log('[!] pool={} 本代非正常结束{} -> **只跳过本池本轮**。人工看 {}'.format(
             t['pool'], '（★ 被用户停止，该代作废下次重跑）' if killed else '（疑似崩溃）',
             os.path.basename(t['errf'])))

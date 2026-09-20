@@ -42,6 +42,84 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 DOCS = os.path.join(ROOT, 'docs')
 CURVE_DIR = os.path.join(DOCS, 'factor_curves')
+
+# ================================================================ 写盘互斥 + 原子写
+# ★★★★★ 2026-09-21（待办 D）：**多个 stage 并发会互相覆盖** ✗
+#   每个 stage 都是"**读旧 JSON → 只改自己那段 → 整份写回**" ⇒ 两个 stage 同时跑时，
+#   后写者手里的"旧快照"会把先写者的新段**冲掉** ✗（实测：`--stage=strip` 跑完，
+#   别名文件原有的 `style` 段消失 ✗ 的同族问题 ✓）
+#   ⇒ ① 一个**文件锁**把"写"串起来（谁在写、等它 ✓；进程死了/超时 ⇒ 自动接管 ✓）
+#      ② 写盘改**原子写**（`.tmp` + `os.replace`）⇒ 接口不会再读到**半截 JSON** ✗
+#      （`loop_engine` 早就用同款加固 ✓，这里补齐 ✓）
+_LOCK_NAME = '.write.lock'
+
+
+def _lock_path():
+    return os.path.join(CURVE_DIR, _LOCK_NAME)
+
+
+def _pid_alive(pid):
+    """非破坏性探活（⚠ 不能用 `os.kill(pid, 0)` —— Windows 上它**会真的杀进程** ✗）。"""
+    try:
+        if os.name == 'nt':
+            import subprocess
+            r = subprocess.run(['tasklist', '/FI', 'PID eq %d' % pid, '/NH'],
+                               capture_output=True, text=True, errors='replace')
+            return str(pid) in (r.stdout or '')
+        os.kill(pid, 0)
+        return True
+    except Exception:                                          # noqa: BLE001
+        return False
+
+
+def _acquire_write_lock(tag, wait_s=7200, stale_s=4 * 3600):
+    """阻塞直到拿到写锁 ⇒ 返回锁文件路径（**进程退出时用 atexit 释放** ✓）。
+
+    · 陈旧锁（记录的 pid 已死 / 文件超过 `stale_s`）⇒ **自动接管** ✓（被杀时不至于永久卡住 ✓）
+    · 等不到就等到 `wait_s` 超时 ⇒ 报清楚"谁在写、怎么手动清" ✗
+    """
+    os.makedirs(CURVE_DIR, exist_ok=True)
+    p = _lock_path()
+    t0 = time.time()
+    while True:
+        try:
+            fd = os.open(p, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            os.write(fd, ('%d %s %s\n' % (os.getpid(), tag,
+                                          time.strftime('%Y-%m-%d %H:%M:%S'))).encode('utf-8'))
+            os.close(fd)
+            print('[锁] 拿到写锁（stage=%s · pid=%d）⇒ 其它 stage 会排队等 ✓' % (tag, os.getpid()))
+            return p
+        except FileExistsError:
+            info, old_pid = '', None
+            try:
+                info = io.open(p, encoding='utf-8', errors='replace').read().strip()[:80]
+                old_pid = int((info.split(' ')[0] or '0'))
+            except Exception:                                  # noqa: BLE001
+                pass
+            age = time.time() - (os.path.getmtime(p) if os.path.exists(p) else time.time())
+            dead = (old_pid is not None) and (not _pid_alive(old_pid))
+            if dead or age > stale_s:
+                print('[锁] 陈旧锁（%s · 已 %.0f 分钟%s）⇒ 接管 ✓'
+                      % (info, age / 60.0, '、持有进程已不在' if dead else ''))
+                try:
+                    os.remove(p)
+                except Exception:                              # noqa: BLE001
+                    pass
+                continue
+            if time.time() - t0 > wait_s:
+                raise SystemExit('[锁] 等锁超过 %d 秒 —— 若确认无人占用，删掉 %s 再跑 ✓'
+                                 % (wait_s, p))
+            print('[锁] 有别的 stage 在写（%s）⇒ 等 20 秒再看 ✓' % info)
+            time.sleep(20)
+
+
+def _release_write_lock(p):
+    try:
+        if p and os.path.exists(p):
+            os.remove(p)
+            print('[锁] 已释放写锁 ✓')
+    except Exception:                                          # noqa: BLE001
+        pass
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, 'engine'))
 
@@ -771,9 +849,11 @@ def expo_for(nm, fac, dates, cols, close, rb, STYLE_PROF, verbose=True):
     return {'dates': ds, 'styles': styles, 'series': out,
             'neutral': 0.0,                      # ★ 中性线（Barra 原生值口径 ✓，不是池内等权均值 ✗）
             'styCal': ALLSTY_CAL,
-            'caliber': ('组合=因子最强十分之一等权；暴露=11 个 Barra 风格的**原生值**等权平均；'
-                        '中性线=0（原生值即市值加权 0 均值口径 ⇒ 市值加权全市场天然为 0；'
-                        '⚠ 不可用池内等权均值当参照）；仅换仓日 %d 期' % len(ds))}
+            # ★ 2026-09-21（用户："其他标签都是英文的，全都搞成中文吧" 同一批）：
+            #   这条口径串会**原样显示给用户** ⇒ 不许带 `**` / `⚠`（那是给代码里注释用的符号 ✗）
+            'caliber': ('组合=因子最强十分之一等权；暴露=各 Barra 风格的原生值等权平均；'
+                        '中性线=0（原生值即市值加权 0 均值口径，市值加权全市场天然为 0；'
+                        '不可用池内等权均值当参照）；仅换仓日 %d 期' % len(ds))}
 
 
 def strip2_for(nm, fac, rr, dates, cols, close, cost, window, LIM, verbose=True):
@@ -1099,6 +1179,13 @@ def main():
     if a.self_test:
         return _self_test(B, dates, cols, close, STYLE_PROF)
 
+    # ★★★★★ 2026-09-21（待办 D）：**进入写盘阶段先拿锁** ✓
+    #   （放在 `--self-test` 之后 —— 那个模式**不写任何文件** ⇒ 不该占锁 ✓，
+    #     否则回归里的自检会被正在跑的 stage 卡住 ✗）
+    import atexit as _ae
+    _lk = _acquire_write_lock(a.stage)
+    _ae.register(_release_write_lock, _lk)     # 正常退出/抛异常都会释放 ✓
+
     ok, bad = 0, []
     for i, it in enumerate(uniq, 1):
         nm = it['_nm']
@@ -1190,8 +1277,13 @@ def main():
                         cc.setdefault(_k, cur.get(_k))
                     cc['name'] = nm_o
                 cc.setdefault('name', nm_o)
-                with io.open(_po, 'w', encoding='utf-8') as f:
+                # ★ 2026-09-21（待办 D）：**原子写** —— 原来直接 `open('w')` 会先清空文件 ✗
+                #   ⇒ 接口/看板可能读到**半截 JSON**（解析失败 ⇒ 详情页空白 ✗）
+                #   ⇒ `.tmp` 写完再 `os.replace`（同盘替换是原子的 ✓）
+                _tmp = _po + '.tmp'
+                with io.open(_tmp, 'w', encoding='utf-8') as f:
                     json.dump(cc, f, ensure_ascii=False, separators=(',', ':'))
+                os.replace(_tmp, _po)
             ok += 1
         except Exception as e:
             print('    [!] 失败 %s: %s: %s' % (nm, type(e).__name__, e))

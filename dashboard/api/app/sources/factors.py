@@ -480,6 +480,21 @@ def curves(name, max_pts=700):
                  'calmars': st.get('calmars') or {},
                  # ★ 口径串会**原样显示在看板上** ⇒ 出口处同样清洗 ✓
                  'caliber': _plain(st.get('caliber'))}
+    # ★★★★★ 2026-09-20（用户："图出来了，但是风格暴露的时序图怎么没有呢？"）
+    #   ⇒ **真因就在这个函数** ✗：它把响应拼成**固定白名单** ⇒ 文件里明明有 `expo`（418 期 · 11 风格 ✓）
+    #     却**没被透传** ⇒ 前端 `c.expo` 永远是 undefined ⇒ 那张图自然不出现 ✗
+    #   （⚠ 与我早先的判断不同：**不是数据、不是打包、不是前端渲染** ✓ —— 是这一层过滤 ✓）
+    ex = d.get('expo') or None
+    expo = None
+    if ex:
+        ed, _ = _down(ex.get('dates') or [], max_pts)
+        expo = {'dates': ed,
+                'styles': list(ex.get('styles') or []),
+                'series': {k: _down(_nums(v), max_pts)[0]
+                           for k, v in (ex.get('series') or {}).items()},
+                # ★ 中性线 = 0（Barra 原生值口径 ✓）；口径串照出口规矩清洗 ✓
+                'neutral': float(ex.get('neutral') or 0.0),
+                'caliber': _plain(ex.get('caliber'))}
     return {
         'found': True, 'name': d.get('name') or name, 'pool': d.get('pool'),
         'expr': d.get('expr'), 'sign': d.get('sign'), 'gen': d.get('gen'),
@@ -492,7 +507,7 @@ def curves(name, max_pts=700):
         # ★ 风格相关性画像（2026-09-16）：数值原样透传，但**口径串要清洗** ✓
         'style': _plain_style(d.get('style')),
         'mtime': core.mtime_iso(p),
-        'daily': daily, 'period': period, 'strip': strip,
+        'daily': daily, 'period': period, 'strip': strip, 'expo': expo,
     }
 
 
