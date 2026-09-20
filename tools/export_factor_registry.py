@@ -252,13 +252,18 @@ def compare(cur, old):
     #   ⇒ 用 `no or ''` 兜底、并把 `expr` 拼进去（同一池同一条式子唯一定位 ✓）
     key = lambda f: (f['pool'], f.get('no') or '', f.get('expr') or '')      # noqa: E731
     c, o = {key(f): f for f in cur}, {key(f): f for f in (old or {}).get('factors', [])}
+    # ★★★★ 2026-09-20 修真 bug（`_test_registry` 第 4 项崩了 ⇒ 回归 32/33 ✗）：
+    #   `key` 是**三元组** `(pool, no, expr)` ✓，而下面三处格式串只写了 **两个 `%s`** ✗
+    #   ⇒ `'...%s/%s' % k` 抛 `TypeError: not all arguments converted during string
+    #     formatting` ✗✗ ⇒ **一旦真的不同步，比较函数不是"报告差异"而是"当场崩"** ✗
+    #   （实况：收尾还没重导 registry ⇒ JSON 确实缺条目 ⇒ 正好踩中这一支 ✗）
     for k in sorted(set(c) - set(o)):
-        problems.append('JSON 缺条目 %s/%s' % k)
+        problems.append('JSON 缺条目 %s/%s（式子 %s）' % k)
     for k in sorted(set(o) - set(c)):
-        problems.append('JSON 多了条目 %s/%s（md 里已没有）' % k)
+        problems.append('JSON 多了条目 %s/%s（式子 %s，md 里已没有）' % k)
     for k in sorted(set(c) & set(o)):
         if c[k]['expr'] != o[k]['expr']:
-            problems.append('%s/%s 公式与 md 不一致' % k)
+            problems.append('%s/%s 公式与 md 不一致（式子 %s）' % k)
         if o[k].get('node') and not c[k].get('node'):
             problems.append('%s/%s 丢了 node（重建能力退化）' % k)
     return problems

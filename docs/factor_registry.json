@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "generatedAt": "2026-09-17 10:41:23",
+ "generatedAt": "2026-09-20 08:14:51",
  "source": "docs/factor_library*.md（编号/代数/家族/一句话/公式/指标）+ engine/loop_state*.pkl（入库 Node 结构，权威口径）",
  "why": "pkl 不进 git ⇒ 换机器（家里 pull）时本文件是\"重建 facs/指标/曲线\"的**唯一入口** ✓",
  "counts": {
@@ -19,10 +19,10 @@
    "bank_only": 0
   },
   "500": {
-   "listed": 6,
-   "overview": 6,
-   "detail": 6,
-   "bank": 4,
+   "listed": 7,
+   "overview": 7,
+   "detail": 7,
+   "bank": 5,
    "bank_only": 0
   },
   "1000": {
@@ -46,8 +46,8 @@
    "expr": "ts_mean150(corr100(ts_mean5(div(mf_m_bqty, hl_ratio)), ts_mean60(ts_mean5(turn_ratio))))"
   }
  ],
- "n_factors": 61,
- "n_with_node": 61,
+ "n_factors": 62,
+ "n_with_node": 62,
  "factors": [
   {
    "pool": "all",
@@ -3087,6 +3087,50 @@
        {
         "op": "turn_ratio",
         "args": []
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "500",
+   "no": "F07",
+   "gen": 55,
+   "family": "风格、财报",
+   "oneLiner": "ts_mean150(corr100(barra_momentum, ts_mea…",
+   "status": "已入库(auto)",
+   "expr": "ts_mean150(corr100(barra_momentum, ts_mean5(fa_gm)))",
+   "sign": null,
+   "poolTag": "all3",
+   "note": null,
+   "ic": 0.0125,
+   "icIr": 0.123,
+   "annEx": 0.043,
+   "dd": -0.086,
+   "calmar": 0.502,
+   "sharpe": 0.647,
+   "recentYear": 0.068,
+   "turn": 0.077,
+   "inBank": true,
+   "node": {
+    "op": "ts_mean150",
+    "args": [
+     {
+      "op": "corr100",
+      "args": [
+       {
+        "op": "barra_momentum",
+        "args": []
+       },
+       {
+        "op": "ts_mean5",
+        "args": [
+         {
+          "op": "fa_gm",
+          "args": []
+         }
+        ]
        }
       ]
      }

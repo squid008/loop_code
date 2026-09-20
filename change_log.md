@@ -15,6 +15,43 @@
 
 ---
 
+## [1.21.13] — 2026-09-20
+
+> 主题：**修 `export_factor_registry.compare()` 的格式化崩溃**（v1.21.12 的回归暴露 ✗）
+
+### 现象
+发 v1.21.12 时全量回归 **32/33** ✗：
+```
+[FAIL] _test_registry.py rc=1 :: [4] 与当前 md/pkl 同步（收尾管线每轮自动重导）
+  File "tools/export_factor_registry.py", line 256, in compare
+    problems.append('JSON 缺条目 %s/%s' % k)
+TypeError: not all arguments converted during string formatting
+```
+
+### 真因（**不是** v1.21.12 引入的 ✗）
+```python
+key = lambda f: (f['pool'], f.get('no') or '', f.get('expr') or '')   # ← 三元组 ✓
+problems.append('JSON 缺条目 %s/%s' % k)        # ← 只写了 2 个 %s ✗ ⇒ TypeError ✗✗
+```
+⇒ ★ **比较函数一旦真的发现不同步，就不是"报告差异"而是"当场崩"** ✗
+（把自己的诊断能力废掉了 ✗ —— 这也是它一直没被发现的原因 ✓：平时都是"同步 ⇒ 空列表"✓）
+
+### 修法与实证
+- 三处格式串补齐成三元 ✓（缺条目 / 多了条目 / 公式不一致 ✓）
+- 修好后它立刻**如实报出**（且正好命中用户那个因子 ✓）：
+```
+与旧文件的差异（更新理由）：
+  · JSON 缺条目 500/F07（式子 ts_mean150(corr100(barra_momentum, ts_mean5(fa_gm)))）
+已写 docs\factor_registry.json（75.5 KB）✓
+```
+- 同版**重导 registry**（收尾每轮本就会做 ✓）⇒ `_test_registry` **20/20 ✓** ⇒ 全量回归复原 ✓
+
+### 教训
+★ **"只在异常分支才会走到"的代码，最需要被测试照顾** ✗ —— 这段平时永远返回空列表 ✓，
+  真要看它报错时，它自己先崩了 ✗。凡"诊断/报错路径"，写的时候就该**跑一次真异常** ✓。
+
+---
+
 ## [1.21.12] — 2026-09-20
 
 > 主题：**补掉"入库 → 收尾"的空窗**（收尾名单口径扩成"曾入库过的全部历史 ∪ 当前 bank"）
