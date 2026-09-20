@@ -296,18 +296,25 @@ def _allsty_one(x, sty_ranks, g, n_ind, min_n=200):
 
 
 def _allsty_neutral(fv, ranks, ind, min_n=200):
-    """**逐日**做「剥全部」→ 两个 (T,S) float32（A=含行业去均值 / B=不含）。
+    """**逐日**做「剥全部」→ 三个 (T,S) float32（A=含行业去均值 / B=不含 / C=**只剥行业**）。
 
     ⚠⚠ `_allsty_one` 返回的是**有效样本子集**上的数组（长度 = 当期有效股票数）——
       写回整行时**必须用位置索引 `idx`**，不能拿"子集长度的掩码"去索引宽度 S 的行 ✗
       （实测踩到：`IndexError: boolean index did not match ... dimension is 5384 but ... 2621`）
+
+    ★★★★ 2026-09-20（用户："把行业中性纳入正式回测可以的" ⇒ 方案 A ✓，新增口径并存 ✓）：
+      新增 **C = 只剥行业（= 行业中性 ✓）** —— 口径 = 去全市场均值 → **行业内去均值** → 再排秩
+      （= "行业内相对强弱" ⇒ 选股自然行业均衡 ✓），与上面 A 的口径**同构**，
+      但**无需回归**（空风格集 ⇒ 设计矩阵只剩截距 ⇒ 残差就是去均值 ✓）⇒ 几乎零成本 ✓
     """
+    import pandas as pd
     v = np.asarray(fv, dtype='float64')
     T, S = v.shape
     ind = np.asarray(ind)
     n_ind = int(ind.max()) + 1 if ind.size else 0
     outA = np.full((T, S), np.nan, dtype='float32')
     outB = np.full((T, S), np.nan, dtype='float32')
+    outC = np.full((T, S), np.nan, dtype='float32')
     for t in range(T):
         m = np.isfinite(v[t])
         for r in ranks:
@@ -320,7 +327,15 @@ def _allsty_neutral(fv, ranks, ind, min_n=200):
             continue
         outA[t, idx] = A
         outB[t, idx] = B
-    return outA, outB
+        # ---- C：只剥行业 = 行业中性（去均值 → 行业内去均值 → 排秩，全部是向量化的 ✓）----
+        yv = pd.Series(np.asarray(v[t], dtype='float64')[idx]).rank(pct=True).values
+        yv = yv - yv.mean()
+        g = np.where(np.asarray(ind[t], dtype='int64')[idx] < 0,
+                     n_ind, np.asarray(ind[t], dtype='int64')[idx])
+        cc = np.bincount(g, minlength=n_ind + 1)
+        ss = np.bincount(g, weights=yv, minlength=n_ind + 1)
+        outC[t, idx] = pd.Series(yv - (ss / np.maximum(cc, 1))[g]).rank(pct=True).values
+    return outA, outB, outC
 
 
 def strip_for(nm, fac, rr, B, dates, cols, close, cost, window, STYLE, ALLSTY=None, verbose=True):
@@ -339,13 +354,15 @@ def strip_for(nm, fac, rr, B, dates, cols, close, cost, window, STYLE, ALLSTY=No
     _stycal = None
     if ALLSTY is not None:
         _ranks, _ind, _sty_names, _stycal = ALLSTY
-        _A, _Bv = _allsty_neutral(fv, _ranks, _ind)
+        _A, _Bv, _C = _allsty_neutral(fv, _ranks, _ind)
         # ⚠ 覆盖率守卫：因子被风格完全解释时 `_allsty_one` 会判退化（整行 NaN ✓ 铁律）；
         #   若退化比例过高 ⇒ **不加这两条**（而不是让它们把整段 strip 拖成 None ✗）
         _cov = float(np.isfinite(_A).mean()) / max(1e-9, float(np.isfinite(fv).mean()))
         if _cov >= 0.5:
             newv['allsty'] = pd.DataFrame(_A, index=dates, columns=cols)
             newv['allsty_noind'] = pd.DataFrame(_Bv, index=dates, columns=cols)
+            # ★ 2026-09-20（方案 A）：**行业中性**（只剥行业）—— 与上面两条同批产出 ✓
+            newv['indneu'] = pd.DataFrame(_C, index=dates, columns=cols)
         elif verbose:
             print('    [i] 剥全部：退化比例过高（覆盖 %.0f%%）⇒ 不生成这两条（不臆造 ✗）'
                   % (_cov * 100))
@@ -374,15 +391,17 @@ def strip_for(nm, fac, rr, B, dates, cols, close, cost, window, STYLE, ALLSTY=No
     if verbose:
         # ⚠ 不要用"格式串拼接"：`条件表达式对格式串` 会让参数个数与占位符对不上 ⇒ TypeError ✗
         _ex = ('' if 'allsty' not in calmars
-               else ' / 剥全部 %s（只剥风格不剥行业 %s）'
-                    % (calmars.get('allsty'), calmars.get('allsty_noind')))
+               else ' / 剥全部 %s（只剥风格不剥行业 %s · 行业中性 %s）'
+                    % (calmars.get('allsty'), calmars.get('allsty_noind'),
+                       calmars.get('indneu')))
         print('    strip ✓ 剥Calmar 原 %s / 市值 %s / 成交额 %s / 两者 %s%s'
               % (calmars.get('raw'), calmars.get('lncap'), calmars.get('lnamt'),
                  calmars.get('both'), _ex))
     return {'dates': _dates_of(rr['ex'].index), 'navs': navs, 'calmars': calmars,
             # ★ 口径标记（增量判定要用 ✓）：口径变了就必须重算，不能只看"有没有 allsty" ✗
             'styCal': _stycal,
-            'caliber': '期频超额净值（成本已扣）；剥市值=对 lncap 截面秩中性化，'
+            'caliber': '期频超额净值（成本已扣）；行业中性=去掉市场均值后再按行业内去均值'
+                       '（= 行业内相对强弱，选股自然行业均衡）后重排；剥市值=对 lncap 截面秩中性化，'
                        '剥成交额=lnamt，剥两者=同时做；'
                        '剥全部=对 11 个 Barra 连续风格做逐期截面秩回归，再把残差按行业内去均值'
                        '（两者都重排后再选股）；只剥风格不剥行业=同样回归但不做行业去均值（仅作对照）；'
