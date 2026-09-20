@@ -723,6 +723,59 @@ def style_for(nm, fac, B, dates, cols, close, rb, STYLE, verbose=True):
     return out
 
 
+def expo_for(nm, fac, dates, cols, close, rb, STYLE_PROF, verbose=True):
+    """★ 2026-09-20（用户："能不能加个图，看 11 个风格的**动态暴露曲线**？鼠标移动显示每个风格
+    的动态暴露值，再加个按钮**全部隐藏/全部显示**"）—— **组合的动态风格暴露** ✓
+
+    口径（三条都按用户 2026-09-20 的纠正 ✓）：
+      · 组合 = 该因子 **Top 10% 等权**（与十档/多空同源 ✓）
+      · 暴露值 = **Barra 原生值**的**等权平均**（不是秩 ✗、不是"相对池内等权基准" ✗）
+      · ★ **中性线 = 0** —— Barra 原生值本身就是"**市值加权 0 均值**"口径 ⇒ 市值加权全市场天然 = 0 ✓
+        ⚠ 绝不能用"池内等权均值"当参照 ✗（那会把 −0.8 读成"大盘"，用户已点破 ✓：
+        我们面板实测 size 等权均值 −1.68 / 市值加权 +0.09 ✓）
+    只在**换仓日**上算（~660 点 ⇒ JSON 小 ✓）；样本不足 ⇒ 返回 None（不臆造 ✗）
+    """
+    import pandas as pd
+    import factor_miner as fm
+    styles = [s for s in STYLE_PROF['styles'] if s.startswith(ALLSTY_PREFIX)]
+    if not styles:
+        return None
+    idx = close.index[close.index >= fm.START]
+    pos = {int(d): i for i, d in enumerate(idx)}
+    fv = fac.reindex(index=idx, columns=close.columns).values
+    uv = fm.get_universe().reindex(index=idx, columns=cols).fillna(False).values
+    # ⚠ 风格面板是**整块面板网格**(dates)，这里的行号是 **idx 子网格** ⇒ 必须显式对齐 ✓
+    _full = {int(d): j for j, d in enumerate(dates)}
+    _rows = [_full[int(d)] for d in idx]
+    sv = {s: np.asarray(STYLE_PROF['feat'][s], dtype='float32')[_rows] for s in styles}
+    out = {s: [] for s in styles}
+    ds = []
+    for d in rb:
+        i = pos.get(int(d))
+        if i is None:
+            continue
+        u = uv[i]
+        x = fv[i]
+        m = u & np.isfinite(x)
+        k = int(m.sum())
+        if k < 200:
+            continue
+        idxs = np.nonzero(m)[0]
+        top = idxs[np.argsort(-x[idxs])[:max(1, k // 10)]]     # ★ Top 10%（因子最强端 ✓）
+        ds.append(int(d))
+        for s in styles:
+            v = sv[s][i][top]
+            out[s].append(round(float(np.nanmean(v)), 4) if np.isfinite(v).any() else None)
+    if len(ds) < 30:
+        return None
+    return {'dates': ds, 'styles': styles, 'series': out,
+            'neutral': 0.0,                      # ★ 中性线（Barra 原生值口径 ✓，不是池内等权均值 ✗）
+            'styCal': ALLSTY_CAL,
+            'caliber': ('组合=因子最强十分之一等权；暴露=11 个 Barra 风格的**原生值**等权平均；'
+                        '中性线=0（原生值即市值加权 0 均值口径 ⇒ 市值加权全市场天然为 0；'
+                        '⚠ 不可用池内等权均值当参照）；仅换仓日 %d 期' % len(ds))}
+
+
 def strip2_for(nm, fac, rr, dates, cols, close, cost, window, LIM, verbose=True):
     """★ 追加两个剥法（直接回答用户「用流通市值剥总市值剥不干净」在**因子层**的影响）：
        · `floatcap` = 剥**流通市值**（market_cap_2）
@@ -828,7 +881,7 @@ def main():
     ap.add_argument('--only-new', action='store_true', help='只补缺该段数据的因子')
     # ★ `style+strip2`：两段**合并一趟跑**（共用同一次回测）⇒ 省掉一半时间 ✓
     ap.add_argument('--stage', default='all',
-                    choices=['core', 'strip', 'style', 'strip2', 'style+strip2', 'all'])
+                    choices=['core', 'strip', 'style', 'strip2', 'style+strip2', 'expo', 'all'])
     ap.add_argument('--self-test', action='store_true',
                     help='★ 只做**恒等不变量自检**（不写任何文件）：拿"已知答案"的合成因子上验风格画像')
     ap.add_argument('--include_history', action='store_true',
@@ -912,6 +965,9 @@ def main():
 
         if a.stage == 'core':
             return 'nav_e' not in d
+        if a.stage == 'expo':
+            # ★ 2026-09-20：动态暴露（新增键 ✓）；口径串变了就要重算 ✓（同 allsty 的铁律）
+            return (d.get('expo') or {}).get('styCal') != ALLSTY_CAL
         if a.stage == 'strip':
             # ★ 剥全部加入后：只有 4 条老曲线的文件也要重算（增量口径必须同步扩 ✓）
             _sp = d.get('strip') or {}
@@ -1083,6 +1139,12 @@ def main():
                     cur['strip'] = s
                     _touched.add('strip')
             # ★ 风格相关性画像（15 连续风格 × raw/neut + 31 行业 R²/排行）
+            # ★★★★ 2026-09-20（用户："加个图看 11 个风格的动态暴露曲线" ✓ 方案：新增键 `expo` ✓）
+            if a.stage in ('expo', 'all') and STYLE_PROF is not None:
+                e = expo_for(nm, fac, dates, cols, close, rr['ex'].index, STYLE_PROF)
+                if e is not None:
+                    cur['expo'] = e
+                    _touched.add('expo')
             if a.stage in ('style', 'style+strip2', 'all') and STYLE_PROF is not None:
                 cur['style'] = style_for(nm, fac, B, dates, cols, close,
                                          rr['ex'].index, STYLE_PROF)

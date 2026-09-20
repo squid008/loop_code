@@ -1193,6 +1193,8 @@ const STRIP_TIP: Record<string, string> =
  */
 function FactorCharts({ name, pool }: { name: string; pool?: string }) {
   const [c, setC] = useState<CurvesDto | null>(null)
+  // ★ 2026-09-20：动态暴露图里"哪些风格显示"—— null = 还没点过 ⇒ 默认**全部显示** ✓
+  const [expoVis, setExpoVis] = useState<Set<string> | null>(null)
   const [err, setErr] = useState<string | null>(null)
   // ★ 曲线文件名 = `tools/factor_curves.py::_name_of` 的同一条规则（all 不带后缀，其它池带 `_<池>`）
   // ★★★★★ 2026-09-19 第八批（用户："我发现精选池还有好几个因子没有曲线嘛！"）
@@ -1320,6 +1322,61 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
           剥风格曲线还没生成 —— 跑 python tools/factor_curves.py --stage=strip
         </div>
       )}
+      {/* ★★★★★ 2026-09-20（用户："加个图，可以看 11 个风格的动态暴露曲线？鼠标移动的时候显示
+          每个风格的动态暴露值，然后加个按钮全部隐藏、全部显示，这样我可以只看某一个风格暴露的曲线"）
+          · 值 = Barra **原生值** ⇒ **中性线 0** ✓（原生值即"市值加权 0 均值"口径 ⇒ 市值加权全市场天然 0 ✓；
+            ⚠ 绝不能拿池内等权均值当参照 ✗ —— 实测 size 等权均值 −1.68 / 市值加权 +0.09 ✓）
+          · 组合 = 该因子**最强十分之一等权**（后端 `expo_for` 已算好 ✓）
+          · 交互：一排风格芯片可**逐个开关** ✓ ＋ 全部显示 / 全部隐藏 ✓ ＋ 悬停显示各条当值 ✓ */}
+      {c?.expo && c.expo.styles.length > 0 && (() => {
+        const ex = c.expo
+        const vis = expoVis ?? new Set(ex.styles)
+        const picked = ex.styles.filter(s => vis.has(s))
+        return (
+          <>
+            <div className="ch-t">
+              动态风格暴露（{ex.styles.length} 个 Barra 风格 · {ex.dates.length} 期换仓日）——
+              值 = 组合在 Barra <b>原生暴露</b>上的均值，<b>0 = 中性</b>
+              （原生值即市值加权 0 均值口径 ⇒ 市值加权全市场天然为 0；不能拿池内等权均值当参照 ✗）
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, margin: '6px 0 8px' }}>
+              <button className="state" style={{ cursor: 'pointer' }}
+                      onClick={() => setExpoVis(new Set(ex.styles))}>全部显示</button>
+              <button className="state" style={{ cursor: 'pointer' }}
+                      onClick={() => setExpoVis(new Set())}>全部隐藏</button>
+              {ex.styles.map((s, i) => {
+                const on = vis.has(s)
+                const col = CPAL[i % CPAL.length]
+                return (
+                  <button key={s} onClick={() => {
+                    const n = new Set(vis)
+                    if (on) { n.delete(s) } else { n.add(s) }
+                    setExpoVis(n)
+                  }}
+                          style={{ cursor: 'pointer', padding: '2px 8px', borderRadius: 999,
+                                   fontSize: 11.5, background: 'transparent',
+                                   border: '1px solid ' + (on ? col : 'var(--bd)'),
+                                   color: on ? col : 'var(--mut)',
+                                   opacity: on ? 1 : 0.55 }}>
+                    {s.replace('barra_', '')}
+                  </button>
+                )
+              })}
+            </div>
+            {picked.length > 0 ? (
+              <Chart dates={ex.dates} zero yFmt={v => v.toFixed(1)}
+                     series={picked.map(s => ({
+                       label: s.replace('barra_', ''),
+                       color: CPAL[ex.styles.indexOf(s) % CPAL.length],
+                       data: (ex.series[s] ?? []).map(v => (v === null ? NaN : v)),
+                       tip: '组合在 ' + s + ' 的原生暴露（0 = 中性 ✓）',
+                     }))} />
+            ) : (
+              <div className="ch-note">11 条全收起了 —— 点上面的风格芯片就能只看某一个 ✓</div>
+            )}
+          </>
+        )
+      })()}
       {sp && sp.n_periods > 0 && (
         <>
           <div className="ch-t">

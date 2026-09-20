@@ -202,6 +202,20 @@ export interface CurvesDto {
     caliber?: string
   } | null
   /** ★ 风格相关性画像（逐期截面 Spearman；raw=原始 / neut=剥总市值+行业） */
+  /**
+   * ★★★★★ 2026-09-20（用户："加个图，可以看 11 个风格的动态暴露曲线，鼠标移动显示每个风格的
+   * 动态暴露值，再加个按钮全部隐藏/全部显示"）—— **组合的动态风格暴露** ✓
+   *   · 值 = Barra **原生值**（市值加权 0 均值口径 ⇒ **中性线 0** ✓，不可拿池内等权均值当参照 ✗）
+   *   · 组合 = 该因子最强十分之一等权（后端 `factor_curves.expo_for` 算好 ✓，仅换仓日 ✓）
+   */
+  expo?: {
+    dates: number[]
+    styles: string[]
+    series: Record<string, (number | null)[]>
+    neutral?: number
+    caliber?: string
+    styCal?: string
+  } | null
   style?: StyleProfileDto | null
 }
 
