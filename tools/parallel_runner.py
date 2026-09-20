@@ -169,6 +169,22 @@ def _reap(t):
                 RT.write_ctl(crashes=_cr)
             except Exception as _e:                           # 记不上也不能影响调度 ✓
                 RT.log('        [warn] 崩溃计数写控制文件失败: {!r}'.format(_e))
+    else:
+        # ★★★★★ 2026-09-20（用户："中证500 怎么启动即崩了？"）：**跑通一代就撤掉该池的崩溃标记** ✓
+        #   原先这个标记**只追加、从不清除** ✗ ⇒ 早上 10:26 那一次**偶发**崩溃
+        #   （`PermissionError [WinError 5]`：写 `loop_state_500.pkl.tmp` 原子替换时被文件锁挡住 ✗
+        #    —— Windows 上杀软 / 索引器 / 别处在读该 pkl 的进程抢锁，durable 环境噪声 ✓）
+        #   会让 500 的卡片**一直**挂"启动即崩"红字 ✗✗（实际它此后 gen74/75/76 全部 rc=0 ✓）
+        #   ⇒ 语义修正：这个徽标表示"**此刻启动即崩**" ⇒ 成功一代即撤 ✓；
+        #     真·必崩的池每代都会崩 ⇒ 标记立刻被重新写上 ⇒ 照样看得见 ✓（能力不减 ✗）
+        try:
+            ctl = RT.read_ctl()
+            _cr = {k: list(v)[-3:] for k, v in (ctl.get('crashes') or {}).items()}
+            if _cr.pop(t['pool'], None) is not None:
+                RT.write_ctl(crashes=_cr)
+                RT.log('        [清除] pool={} 跑通一代 ⇒ 撤掉启动即崩标记 ✓'.format(t['pool']))
+        except Exception:                                     # 撤不掉也不能影响调度 ✓
+            pass
     return ok
 
 
@@ -204,7 +220,7 @@ def _running_brief(running, now):
 
 def run(pools, rounds, n, l2, extra, inject_spec, no_global,
         max_parallel=3, mem_per_engine=3.0, panel_cache='off', dry=False,
-        auto_parallel=False, gens_per_round=1, pool_tail=False):
+        auto_parallel=False, gens_per_round=1, pool_tail=False, min_gens_per_round=3):
     """有界并行跑 `rounds` 轮；返回进程退出码。
 
     ★★★★ 2026-09-19 新增两个开关（用户："为什么要等三个池一起挖完才审查？不能一个池挖完就
@@ -213,6 +229,16 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
         `K>=1` ⇒ 定量的 K 代；**`K=0` ⇒ 不限**（默认 ✓，用户 09-19 拍板："500 跑一代，
         50 应该能跑七八代"）——语义 = 谁跑完谁**接着领下一代**，直到**别的启用池都已完成 1 代**
         才收轮 ✓（于是快池几乎不空转，轮长仍由最慢的池决定 ✓）
+     · ★★★★ **2026-09-20（方案 B，用户："最少的都跑 3 代了，按理说应该至少 3 轮了"
+       ⇒ "按方案 B 改掉收轮判据"）**：上面这条"1 代"的判据被**证伪** ✗ ——
+       它配合下面那句 `or bool(_others)` ⇒ 只要还有别的池在跑，刚跑完的池就立刻重排队
+       ⇒ `cand` 永不为空 ⇒ 内层唯一出口 `not running and not cand` 几乎永不成立
+       ⇒ **轮永远收不了口** ✗（实测：本轮 4.5 小时、25 代，`round` 仍 = 1 ✗；
+       而**轮末全局收尾**因此从不执行 ✗ —— 跨池审查/精选池/指标表/**登记表重导**/
+       剥风格/风格画像，实测上次是 09:37，之后 9 小时没跑 ✓）
+       ⇒ 新判据 = **每个启用池都完成 `min_gens_per_round` 代（默认 3 ✓，可用
+       `--min_gens_per_round=` 调）才收轮** ✓：收口前快池**照旧一直领** ✓（09-19 的
+       诉求不丢 ✓），最慢的池攒够 K 代后不再重排队 ⇒ 等它跑完 ⇒ 自然 break ⇒ 收尾 ⇒ round+1 ✓
       · `pool_tail=True`（**第 2 步**）—— 某池本代**真有入库**时，**立刻**为它补 pool-local 数据
         （facs 落地 / 指标表 / 曲线三段 ✓）。为什么可并发：这三段都**按因子落文件**
         （`facs/*.h5`、`docs/factor_curves/*.json`）⇒ 不同池的文件**互不相干** ✓；
@@ -325,8 +351,20 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                                 #   ⚠ 不改变"轮长由最慢的池决定"（收轮仍要等所有在跑的引擎结束 ✓）
                                 _others = [x for x in running
                                            if x.get('pool') != _gp and x.get('pool') not in st]
-                                _again = (any(gens.get(x, 0) < 1 for x in _need_r)
-                                          or bool(_others))
+                                # ★★★★★ 2026-09-20（方案 B ✓ 用户："最少的都跑 3 代了，
+                                #   按理说应该至少 3 轮了" ⇒ "按方案 B 改掉收轮判据"）：
+                                #   收轮判据 = **每个启用池都完成 >= min_gens_per_round 代**
+                                #   （默认 3 ✓）—— 原来那句 `or bool(_others)`（09-19 加 ✓）
+                                #   会让"刚跑完的池"在**还有别的池在跑时立刻重排队** ⇒
+                                #   `cand` 永不为空 ⇒ 内层唯一出口 `not running and not cand`
+                                #   几乎永不成立 ⇒ **轮永远收不了口** ✗ ⇒ **轮末全局收尾
+                                #   从不执行** ✗（跨池审查/精选池/指标表/登记表重导/剥风格/
+                                #   风格画像；实测上次 09:37，之后 9 小时没跑 ✓）
+                                #   效果：收口前快池**照旧一直领** ✓（12 代也行 ✓）；
+                                #   最慢的池也攒够 K 代后 ⇒ 不再重排队 ⇒ 等它跑完 ⇒
+                                #   `running` 清空 ⇒ break ⇒ 全局收尾 ⇒ round + 1 ✓
+                                _again = any(gens.get(x, 0) < min_gens_per_round
+                                             for x in _need_r)
                             if _again:
                                 launched.discard(_gp)
                             RT.write_ctl(gensRound=dict(gens))      # ★ 看板进度随即刷新 ✓

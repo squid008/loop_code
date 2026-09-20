@@ -1408,3 +1408,46 @@ leaf_w={'barra_beta': 0.25}
 > (3)建议mix=[0.15,0.35,0.15,0.25,0.10],depth=[2,3,4],min_stab=0.6,decorr=0.5。理由:提高交叉与引导占比、降低随机,配合更浅depth和更严stab,逼引擎在低复杂度下找真正有IC的结构,而非继续堆ts_mean平滑。
 > 
 > 否决: 无
+
+## 第 31 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 22 | 0.018 | 0.037 | 0.993 | 0.000 | 0.455 | 1.000 | 3 | 0.000 | 22 | 0 | 0.068 | 0.000 | 0.150 | 0.182 | 0.182 | 0.318 | 0.000 | 0.682 | 0.273 | 0.545 | 0.273 | 0.041 | 0.144 | 0.145 | 0.066 | 0.041 | 0.144 | 0.145 | 0.066 |
+
+叶子使用: {'hl_ratio': 10, 'close': 9, 'mf_l_buy': 6, 'mf_l_sell': 5, 'fa_rev_yoy': 3, 'high': 3}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r1_leaf_conc] LLM 已【永久】否决，后续各代一律不再施加 —— 叶子过度集中 -> 压低该叶子权重
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 5]  min_stab=0.3  decorr=0.7  fsa_th=0.15  bank_skel_max=1
+leaf_w={'barra_beta': 0.25}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [10, 11, 13, 15] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [4, 5] 代（**已永久关闭**）
+- `r6_known_ratio` 候选仍绕已知族 -> decorr 收紧 —— 施加于第 [10, 14] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [9, 10] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r7_zero_pass`, `r6_known_ratio`, `r1_leaf_conc`
+
+**LLM 引导(A角 31代)**: 调用3次, 解析通过36条, 引导位使用36条
+> 在风格暴露（尤其 barra_beta 高权重）主导的环境下，个股资金流内部结构失衡——小单与超大单主动净买入方向背离、大单净买入强度相对价格变化出现量额不匹配——会通过知情交易者的资金流惯性在随后5日截面收益上形成可预测的溢价/折价。
+
+
+**LLM 候选审查(B角 31代)**: 深判 5 个, KILL 2 个(剔除出 L2 费后回测)
+- KILL `corr200(hl_ratio, ts_rank20(neg(neg(mf_l_buy))))`
+  > 理由: neg(neg())冗余，ts_rank套corr无经济含义，属参数拼凑
+- KILL `ema20(cs_rank(div(fa_asset_turn, close)))`
+  > 理由: 资产周转率除以价格无经济含义，量纲拼凑，属数学巧合
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1)病根:IC天花板过低(0.037)且因子同质,叶子挤在hl_ratio/close/mf_l_buy上,量价结构单一,不是稳定性问题。
+> (2)两条建议均被永久否决,等于本轮无有效动作;r7_zero_pass放宽depth到3~5会加剧同质与过拟合,与decorr=0.7自相矛盾;真正该压的叶子集中(r1)已关,建议无效。
+> (3)mix=[0.15,0.35,0.15,0.2,0.15],depth=[2,3,4],min_stab=0.5,decorr=0.8。理由:降depth防过拟合、提decorr逼出新结构、略增引导补量价外信息。
+> 否决: 无

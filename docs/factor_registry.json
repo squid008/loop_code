@@ -1,6 +1,6 @@
 {
  "schema": 1,
- "generatedAt": "2026-09-20 09:37:15",
+ "generatedAt": "2026-09-20 18:27:31",
  "source": "docs/factor_library*.md（编号/代数/家族/一句话/公式/指标）+ engine/loop_state*.pkl（入库 Node 结构，权威口径）",
  "why": "pkl 不进 git ⇒ 换机器（家里 pull）时本文件是\"重建 facs/指标/曲线\"的**唯一入口** ✓",
  "counts": {
@@ -19,10 +19,10 @@
    "bank_only": 0
   },
   "500": {
-   "listed": 7,
-   "overview": 7,
-   "detail": 7,
-   "bank": 5,
+   "listed": 8,
+   "overview": 8,
+   "detail": 8,
+   "bank": 6,
    "bank_only": 0
   },
   "1000": {
@@ -46,8 +46,8 @@
    "expr": "ts_mean150(corr100(ts_mean5(div(mf_m_bqty, hl_ratio)), ts_mean60(ts_mean5(turn_ratio))))"
   }
  ],
- "n_factors": 63,
- "n_with_node": 63,
+ "n_factors": 64,
+ "n_with_node": 64,
  "factors": [
   {
    "pool": "all",
@@ -3197,6 +3197,46 @@
         "args": [
          {
           "op": "fa_gm",
+          "args": []
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "500",
+   "no": "F08",
+   "gen": 76,
+   "family": "跳空",
+   "oneLiner": "ts_mean200(ema20(ts_rank200(overnight)))",
+   "status": "已入库(auto)",
+   "expr": "ts_mean200(ema20(ts_rank200(overnight)))",
+   "sign": null,
+   "poolTag": "csi500_1000_all",
+   "note": null,
+   "ic": 0.0113,
+   "icIr": 0.125,
+   "annEx": 0.031,
+   "dd": -0.06,
+   "calmar": 0.521,
+   "sharpe": 0.652,
+   "recentYear": 0.008,
+   "turn": 0.09,
+   "inBank": true,
+   "node": {
+    "op": "ts_mean200",
+    "args": [
+     {
+      "op": "ema20",
+      "args": [
+       {
+        "op": "ts_rank200",
+        "args": [
+         {
+          "op": "overnight",
           "args": []
          }
         ]

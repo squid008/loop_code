@@ -1,6 +1,6 @@
 # 因子库（池 = 500）
 
-> 当前 **5 个入库**
+> 当前 **6 个入库**
 > 本文件由引擎在**每代末尾自动同步**（`--mine_pool=500` 时生效；实现见 `_lib_sync`）。
 > ⚠ 与全A 轨道的 `docs/factor_library.md` **互不读写**（池隔离，见 roadmap §8.42）。
 
@@ -30,6 +30,7 @@
 | F05 | gen10 | 资金流、资金流 | corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)… | 已入库(auto) |
 | F06 | gen17 | 风格、财报、日内收益、风格、风格、换手率 | ts_mean200(mul(sub(barra_residual_volatil… | 已入库(auto) |
 | F07 | gen55 | 风格、财报 | ts_mean150(corr100(barra_momentum, ts_mea… | 已入库(auto) |
+| F08 | gen76 | 跳空 | ts_mean200(ema20(ts_rank200(overnight))) | 已入库(auto) |
 
 ## 因子明细
 
@@ -126,6 +127,21 @@ ts_mean150(corr100(barra_momentum, ts_mean5(fa_gm)))
 - 池标签：**`all3`** —— 全A **且所有池都通过**（真 alpha）
 - 剥风格：**`B`** 弱独立（剥风格后日频 Calmar 在 0~0.30，或回撤劣于 -0.20）（原 Calmar 0.502 → 剥后 0.241；超额 +4.3% → +2.7%；**日频** 剥后 Calmar 0.224，日频回撤 -11.9%）
 - 费后指标（full，成本 0.004往返(主用档)）：IC 0.0125 / IC_IR 0.123 / 年化超额 +4.3% / 回撤 -8.6% / Calmar 0.502 / Sharpe 0.647 / 最近年 +6.8% / 单期换手 7.7% / 负年 1
+
+---
+
+
+### F08 · gen76 入库（引擎自动同步，家族命名待人工精炼）
+```
+ts_mean200(ema20(ts_rank200(overnight)))
+```
+- 符号 `sign`：**未记录**（缺失时不臆造，见 roadmap §8.45 铁律）
+- 家族：跳空（auto）
+- 叶子：overnight
+- 骨架：`ts_mean(ema20(ts_rank(overnight)))`
+- 池标签：**`csi500_1000_all`** —— 全A + **500/1000** 池通过
+- 剥风格：**`A`** 独立有效（剥风格后**日频** Calmar >= 0.30，且**日频**回撤 > -0.20）（原 Calmar 0.521 → 剥后 0.567；超额 +3.1% → +3.9%；**日频** 剥后 Calmar 0.546，日频回撤 -7.2%）
+- 费后指标（full，成本 0.004往返(主用档)）：IC 0.0113 / IC_IR 0.125 / 年化超额 +3.1% / 回撤 -6.0% / Calmar 0.521 / Sharpe 0.652 / 最近年 +0.8% / 单期换手 9.0% / 负年 0
 
 ---
 

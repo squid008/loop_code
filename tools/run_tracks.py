@@ -552,6 +552,10 @@ def main():
     #       （实测：500 一代 30-43 min · 50 一代 3-8 min ⇒ 50 一轮能跑七八代 ✓）
     #   · `--pool_tail=on|off`（第 2 步）**某池入库就立刻补它的 facs/指标/曲线**（默认 on ✓）
     gens_per_round = 0
+    # ★★★★★ 2026-09-20（方案 B）：**每池至少完成几代才收轮**（默认 3 ✓，可用
+    #   `--min_gens_per_round=` 调）—— 为什么需要：不限模式下"收轮"原本几乎不发生 ✗
+    #   （详见 `parallel_runner.run` 的注释 ✓），导致**轮末全局收尾从不执行** ✗
+    min_gens_per_round = 3
     pool_tail = True
     # ★★ 2026-09-16 新增 `--engine_arg=...`（可重复）：**追加**到默认 extra。
     #   为什么需要：`--extra=` 是"**整体替换**"默认那组引擎参数 ⇒ 一旦用它加个小参数，
@@ -667,6 +671,9 @@ def main():
             panel_cache = a.split('=', 1)[1].strip().lower()
         elif a.startswith('--gens_per_round='):
             gens_per_round = max(0, min(50, int(a.split('=', 1)[1])))    # 0 = 不限 ✓
+        elif a.startswith('--min_gens_per_round='):
+            # ★ 2026-09-20 方案 B：**每个启用池都完成 >= 这个数才收轮**（默认 3 ✓）
+            min_gens_per_round = max(1, min(50, int(a.split('=', 1)[1])))
         elif a.startswith('--pool_tail='):
             pool_tail = str(a.split('=', 1)[1]).strip().lower() in ('1', 'true', 'yes', 'on')
         elif a.startswith('--extra='):
@@ -714,7 +721,8 @@ def main():
                        inject_spec=inject_spec, no_global=no_global,
                        max_parallel=max_parallel, mem_per_engine=mem_per_engine,
                        panel_cache=panel_cache, dry=dry, auto_parallel=auto_parallel,
-                       gens_per_round=gens_per_round, pool_tail=pool_tail)
+                       gens_per_round=gens_per_round, pool_tail=pool_tail,
+                       min_gens_per_round=min_gens_per_round)
     if dry:
         log('（--dry：只列计划，不执行）')
         return 0

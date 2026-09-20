@@ -251,7 +251,12 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .tbl tr:hover td { background: #182142; }
 .tbl .strong { color: var(--sky); font-weight: 650; }
 .tbl .small { font-size: 11.5px; color: var(--mut); }
-.sum { color: var(--mut); max-width: 440px; }
+/* ★★★★ 2026-09-20（用户："这个详情按钮变成占 2 行了，可以把**状态列跟一句话那一列挨得近点**，
+   这样详情按钮一行就能搞定了"）⇒ 两处一起改：
+     ① 一句话列**收窄**（440 → 320px）：把富余宽度让给右边的「状态 / 详情」⇒ 两列挨近 ✓
+     ② 「状态」与「详情」两列**都不许折行**（`nowrap`）⇒ 详情按钮恒为一行 ✓ */
+.sum { color: var(--mut); max-width: 320px; }
+.tbl th:nth-last-child(-n+2), .tbl td:nth-last-child(-n+2) { white-space: nowrap; }
 .status { font-size: 11.5px; color: #a7f3d0; background: #052e1b; border: 1px solid #14532d;
           padding: 1px 7px; border-radius: 6px; white-space: nowrap; }
 .tag { font-size: 11.5px; border: 1px solid; padding: 1px 8px; border-radius: 6px; white-space: nowrap; }

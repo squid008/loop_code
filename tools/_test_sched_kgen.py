@@ -43,8 +43,14 @@ chk('参数透传给 parallel_runner.run', 'gens_per_round=gens_per_round' in RT
 chk('parallel_runner.run 签名带 gens_per_round', 'gens_per_round=1' in PR)
 chk('★ 核心：把该池**放回候选**（launched.discard ✓）',
     'gens[_gp] = gens.get(_gp, 0) + 1' in PR and 'launched.discard(_gp)' in PR)
-chk('★ 不限模式：别的池还没完成 1 代就继续领（_again = any(... < 1) ✓）',
-    'gens.get(x, 0) < 1 for x in _need_r' in PR)
+chk('★ 方案 B（2026-09-20）：收轮判据 = 每个启用池都完成 >= min_gens_per_round 代才收口',
+    'gens.get(x, 0) < min_gens_per_round' in PR and 'min_gens_per_round=3' in PR)
+chk('★ 旧判据（`_again` 里那个 `any(... < 1)` 的老写法）已撤 ⇒ 轮能收口 ✓',
+    '_again = (any(gens.get(x, 0) < 1' not in PR)
+chk('run_tracks 解析并透传 --min_gens_per_round=（默认 3 ✓）',
+    "startswith('--min_gens_per_round=')" in RT
+    and 'min_gens_per_round=min_gens_per_round' in RT
+    and re.search(r'^\s*min_gens_per_round\s*=\s*3', RT, re.M) is not None)
 
 print()
 print('[2] 第 2 步：池内即时收尾（--pool_tail，且有互斥锁 ✓）')

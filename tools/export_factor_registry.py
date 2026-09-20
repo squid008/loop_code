@@ -84,6 +84,12 @@ def parse_overview(pool):
         if not m:
             continue
         no, gen, fam, one, st = (m.group(i).strip() for i in range(1, 6))
+        # ★★★ 2026-09-20（用户："搞成已移出吧"）：**状态列写着"已移出"的编号不进登记表** ✓
+        #   否则每次重导都会把它写回来 ⇒ `tools/_test_registry.py` 的「JSON 与现状一致」
+        #   永远对不上 ✗（今天 F42 已踩过：重导后 JSON 又把 all/F42 加回来 ✗）
+        #   ⇒ 语义：登记表 = **当前在库**的因子清单 ✓；已移出的只在库文档里留历史档 ✓
+        if '已移出' in st:
+            continue
         g = re.search(r'gen(\d+)', gen)
         out[no] = dict(gen=int(g.group(1)) if g else None, family=fam,
                        oneLiner=one, status=st)
@@ -97,6 +103,11 @@ def parse_detail(pool):
     parts = re.split(r'\n### (F\d+) · ', t)
     for k in range(1, len(parts) - 1, 2):
         no, body = parts[k], parts[k + 1]
+        # ★★★ 2026-09-20（用户："搞成已移出吧"）：**已移出的因子块不进登记表** ✓
+        #   块里（标题后半段 / 状态行）写着"已移出"⇒ 它**不在当前库** ⇒ 登记表 = 当前在库清单 ✓
+        #   ⚠ 只跳过登记表；库文档里的明细块**照旧保留**（历史档 ✓）
+        if '已移出' in body:
+            continue
         d = {}
         m = re.search(r'```\n([^\n]+)', body)
         if m:
