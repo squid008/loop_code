@@ -333,7 +333,17 @@ def do_pool_tail(pool, tag='', min_free_gb=TAIL_MIN_FREE_GB, force=False):
       `--only-new` 增量本来就不丢事，下一轮/轮末补上 ✓）。`force=True` 可越过（人工调用用 ✓）
     """
     if not force:
-        free = avail_gb()
+        # ★★★★★ 2026-09-20 修真 BUG（用户："`500/F07` 详情页还是没曲线" ⇒ 查到
+        #   `09-20 01:44:22 [!] 池内收尾失败(NameError)` ✗）：
+        #   **`avail_gb()` 在 `run_tracks.py` 里从未定义/导入** ✗（它住在 `parallel_runner` ✓），
+        #   而本文件到 **L702** 才 `import parallel_runner` ⇒ 这里必然 `NameError` ✗✗
+        #   ⇒ **池内收尾从上线起就没成功跑过一次** ✗（每次都在这一行崩 ✓，
+        #     而 `parallel_runner` 那层 `except` 只记了异常**类型** ⇒ 日志只留
+        #     `[!] 池内收尾失败(NameError) -> 继续挖掘` ⇒ 看着很温和、实际功能全废 ✗✗）
+        #   ⇒ 修：**函数内延迟 import** ✓（不能放文件头 —— `parallel_runner` 反过来
+        #     `import run_tracks` ⇒ 会循环依赖 ✗；本文件 L702 已是这个写法 ✓）
+        import parallel_runner as _PR
+        free = _PR.avail_gb()
         if free is not None and free < min_free_gb:
             log('  [池内收尾] 跳过 pool={}：可用 {:.1f} GB < {:.1f} GB（引擎优先，留到轮末 ✓）'
                 .format(pool, free, min_free_gb))

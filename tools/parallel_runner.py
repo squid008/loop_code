@@ -338,8 +338,17 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                                     RT.do_pool_tail(_gp, 'gen{} 入库 {} 个'.format(
                                         t['gen'], t['banked']))
                                 except Exception as _e:      # noqa: BLE001
-                                    RT.log('      [!] 池内收尾失败({}) -> 继续挖掘'.format(
-                                        type(_e).__name__))
+                                    # ★★★★ 2026-09-20（教训）：**只记异常类型** ✗ ⇒
+                                    #   一个 `NameError` 被吞成一行温和日志 ⇒ 功能全废却浑然不觉 ✗✗
+                                    #   ⇒ 必须把**异常信息**也打出来 ✓（traceback 首行足够定位 ✓）
+                                    import traceback as _tb
+                                    RT.log('      [!] 池内收尾失败({}: {}) -> 继续挖掘'.format(
+                                        type(_e).__name__, str(_e)[:160]))
+                                    try:                      # ★ 取末行；取不到就算了（别在错误路径再炸 ✗）
+                                        _ln = _tb.format_exc().strip().splitlines()[-1]
+                                    except Exception:         # noqa: BLE001
+                                        _ln = ''
+                                    RT.log('      [!] 定位用：' + _ln[:160])
                         if t.get('killed') and len(deferred) == 0 and not stopped_by_user:
                             _st0 = set(RT.read_ctl().get('stopped') or [])
                             for p in en:
