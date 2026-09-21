@@ -961,6 +961,15 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false 
   const sig = series.map(s => s.label).join('|')
   useEffect(() => { setOff({}) }, [sig])
   const vis = series.map((s, i) => ({ s, i })).filter(x => !off[x.i])
+  // ★★★★★ 2026-09-21（用户："所有的图能不能加个功能 —— 我鼠标移动的时候，图上会有锚点出来跟着鼠标走，
+  //   然后有个 tag 提示对应曲线的具体值；tag 要小点、别一大块盖住后面的曲线，或者稍微透明一点，
+  //   让后面曲线透出来一丢丢；这样不影响性能吧？"）
+  //   · 锚点 = 每条**可见**曲线在当前 x 上的一个小圆点（跟着鼠标走 ✓）
+  //   · tag = **紧凑两列**小浮标 + **半透明底**（rgba 0.82 ⇒ 后面曲线能透一点 ✓）
+  //   · 性能：只 setState 一个**下标**（值相同就交给 React 直接跳过 ✓）；折线的 `d` 串**一点没变**
+  //     ⇒ React 不会写 DOM（属性相同不更新 ✓）⇒ 开销就是一帧几个 SVG 节点，可忽略 ✓
+  const svgRef = useRef<SVGSVGElement | null>(null)
+  const [hov, setHov] = useState<number | null>(null)
 
   const W = 720, H = height, PL = 48, PR = 10, PT = 8, PB = 16
   const vals: number[] = []
@@ -995,9 +1004,21 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false 
   const fmt = yFmt ?? ((v: number) => v.toFixed(2))
   const yticks = [0, 0.25, 0.5, 0.75, 1].map(t => lo + (hi - lo) * t)
   const xi = [0, Math.floor((n - 1) / 2), n - 1].filter((v, i, a) => a.indexOf(v) === i)
+  // 鼠标位置 → **最近的数据下标**（用 svg 的实际宽度把 clientX 折算回 viewBox 坐标 ✓）
+  const onMove = (e: { clientX: number }) => {
+    const el = svgRef.current
+    if (!el) return
+    const r = el.getBoundingClientRect()
+    const t = ((e.clientX - r.left) * (W / (r.width || W)) - PL) / (W - PL - PR)
+    const i = Math.max(0, Math.min(n - 1, Math.round(t * (n - 1))))
+    setHov(prev => (prev === i ? prev : i))        // 下标没变 ⇒ 不触发重渲染 ✓
+  }
   return (
     <div className="ch">
-      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img">
+      <svg ref={svgRef} viewBox={`0 0 ${W} ${H}`} width="100%" role="img"
+           onMouseMove={onMove} onMouseLeave={() => setHov(null)}>
+        {/* ★ 透明捕获面：空处也能收到 mousemove（否则只有画到线的地方才响应 ✗）*/}
+        <rect x={PL} y={PT} width={W - PL - PR} height={H - PT - PB} fill="transparent" />
         {yticks.map((tv, i) => (
           <g key={`y${i}`}>
             <line x1={PL} y1={Y(tv)} x2={W - PR} y2={Y(tv)} stroke="#1e2846" strokeWidth="1" />
@@ -1030,6 +1051,107 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false 
             {dLab(dates[i])}
           </text>
         ))}
+        {/* ★★★★★ 2026-09-21（用户要的"鼠标锚点 + 小 tag" ✓）：
+            十字准线 + 每条可见曲线的**锚点圆点** + **紧凑半透明**值浮标
+            （全部 `pointer-events: none` ⇒ 不抢鼠标、不挡交互 ✓；
+              底 rgba(12,18,34,0.82) ⇒ 后面的曲线能透出来一丢丢 ✓ 用户要求 ✓）*/}
+        {hov !== null && hov >= 0 && hov < n && (() => {
+          const hx = X(hov)
+          const rows = vis
+            .map(({ s }) => ({ s, v: s.data[hov] }))
+            .filter(r => r.v !== null && r.v !== undefined && Number.isFinite(r.v as number))
+          if (!rows.length) return null
+          // ★★ 2026-09-21 修（用户："字都叠一块儿了"✗ + "是不是看两位小数，一位太少了？"）：
+          //   ① 列宽原来是**写死的 84px** ✗ ⇒ 长标签（如"组合（Top10% 等权）"）直接压到数值上 ✗
+          //      ⇒ 改成**按文字实测宽度自适应**（CJK ≈9.2px / ASCII ≈5.2px ✓）；超宽就截断加省略号 ✓
+          //   ② 数值原来沿用**坐标轴格式**（净值图是 1 位小数 ✗ 看着像 0.9 / 1.0 ✓）
+          //      ⇒ 悬停值**至少两位小数** ✓（本身已是 2 位以上、或带 % 的，原样保留 ✓）
+          const tw = (s: string) => {
+            let w = 0
+            for (const ch of s) w += ch.charCodeAt(0) > 0x2e80 ? 9.2 : 5.2
+            return w
+          }
+          const hvFmt = (v: number) => {
+            const t = fmt(v)
+            return (/\.\d{2,}/.test(t) || t.includes('%')) ? t : v.toFixed(2)
+          }
+          // 标签**智能缩短**：只去掉尾部的括号解释（"组合（Top10% 等权）" → "组合" ✓ 图例里仍是全长 ✓）；
+          // ⚠ 缩短后若**重名**（两条曲线缩成同一个名字）就退回全长 ⇒ 绝不含糊 ✓
+          const fullL = rows.map(r => r.s.label)
+          const stripParen = (s: string) => s.replace(/[（(][^）)]*[）)]\s*$/, '').trim() || s
+          const baseL = fullL.map(stripParen)
+          const names0 = new Set(baseL).size === baseL.length ? baseL : fullL
+          // ★★★★★ 2026-09-21（用户："RANKIC 累计这里咋还有省略号，把这个省略号去掉"✓）——
+          //   上一版把"超 9 字就截断加 …"**无条件**做了 ✗（哪怕只有一条曲线、明明放得下 ✗）
+          //   ⇒ 改成**有回退链的排版**：
+          //        ① 先按**两列**、**不截断**排 → 放得下就完事 ✓
+          //        ② 两列超宽（MAXW）→ 退**单列**（仍然不截断 ✓）
+          //        ③ 单列还超宽 → 才**逐级截断**（16→12→10→8→6 字 ✓）
+          //   ⇒ 单条曲线（如 RankIC 累计和）现在**原样显示** ✓，只有真放不下才出现 … ✓
+          const ROW = 12, PX = 5, HEAD = 21, PY = 4, GAP = 16, MAXW = 250
+          const mk = (cl: number, cutN: number) => {
+            const nm = names0.map(s => (cutN > 0 && s.length > cutN ? s.slice(0, cutN) + '…' : s))
+            const vt = rows.map(r => hvFmt(r.v as number))
+            const pr = Math.ceil(rows.length / cl)
+            // 每列宽度 = 该列里最长那条的（点 + 标签 + 间隔 + 数值）实测宽度 ✓
+            const cs = Array.from({ length: cl }, (_, ci) => {
+              let w = 9
+              for (let k = ci * pr; k < Math.min((ci + 1) * pr, rows.length); k++) {
+                w = Math.max(w, 9 + tw(nm[k]) + 8 + tw(vt[k]))
+              }
+              return Math.min(w + 1, 200)        // 上限 200 兜底（防病态长名撑爆 ✓）
+            })
+            const wd = cs.reduce((a, b) => a + b, 0) + PX * 2 + (cl - 1) * GAP
+            return { nm, vt, cl, pr, cs, wd }
+          }
+          let L = mk(rows.length > 4 ? 2 : 1, 0)
+          if (L.wd > MAXW) L = mk(1, 0)
+          if (L.wd > MAXW) {
+            for (const nn of [16, 12, 10, 8, 6]) { L = mk(1, nn); if (L.wd <= MAXW) break }
+          }
+          const names = L.nm, valsT = L.vt, cols = L.cl, per = L.pr, CWs = L.cs
+          // ★★ 2026-09-21（用户："十分位那里左边那列数字应该往左边挪点，不要离右边的圆点太近了，
+          //   不然还以为是右边的数据 —— 后面图如果涉及两列数据也是一样调整" ✓）
+          //   ⇒ 两列之间加 **16px 列间距** ＋ 一条**淡分隔线** ⇒ 一眼看清哪列归哪列 ✓
+          const XO = CWs.map((_, ci) => PX + CWs.slice(0, ci).reduce((a, b) => a + b, 0) + ci * GAP)
+          const bw = L.wd
+          const bh = HEAD + Math.max(per - 1, 0) * ROW + 7 + PY     // 末行基线 + 字降部 + 下边距 ✓
+          // 优先放准线右侧；右边放不下就翻到左侧；纵向夹在绘图区内 ✓
+          const bx = hx + 8 + bw <= W - PR ? hx + 8 : Math.max(PL, hx - 8 - bw)
+          const by = Math.max(PT, Math.min(H - PB - bh, Y(rows[0].v as number) - bh / 2))
+          return (
+            <g pointerEvents="none">
+              <line x1={hx} y1={PT} x2={hx} y2={H - PB} stroke="#41527a" strokeDasharray="3 3" />
+              <rect x={bx} y={by} width={bw} height={bh} rx="3"
+                    fill="rgba(12,18,34,0.82)" stroke="#33456b" strokeWidth="1" />
+              {/* 两列之间一条淡分隔线（多列时才画 ✓）—— 防止"左边数值被读成右边那条"✗ */}
+              {cols > 1 && CWs.slice(1).map((_, i) => (
+                <line key={`sep${i}`} x1={bx + XO[i + 1] - GAP / 2} y1={by + 5}
+                      x2={bx + XO[i + 1] - GAP / 2} y2={by + bh - 5}
+                      stroke="#2b3a5c" strokeWidth="1" />
+              ))}
+              <text x={bx + PX} y={by + 10} fontSize="9" fill="#8fa0c4">{dLab(dates[hov])}</text>
+              {rows.map((r, k) => {
+                const ci = Math.floor(k / per), ri = k % per
+                const tx = bx + XO[ci]
+                const ty = by + HEAD + ri * ROW
+                return (
+                  <g key={`hv${k}`}>
+                    <circle cx={tx + 3} cy={ty - 3} r="2.4" fill={r.s.color} />
+                    <text x={tx + 9} y={ty} fontSize="9" fill="#c3cee6">{names[k]}</text>
+                    <text x={tx + CWs[ci] - 2} y={ty} fontSize="9" fill="#ffffff" textAnchor="end">
+                      {valsT[k]}
+                    </text>
+                  </g>
+                )
+              })}
+              {rows.map((r, k) => (
+                <circle key={`hd${k}`} cx={hx} cy={Y(r.v as number)} r="2.6"
+                        fill={r.s.color} stroke="#0b1220" strokeWidth="1" />
+              ))}
+            </g>
+          )
+        })()}
       </svg>
       <div className="ch-lg">
         {series.map((s, i) => (
@@ -1221,7 +1343,7 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
   if (!c) return <div className="ch-note">曲线加载中…</div>
   if (!c.found) return <div className="ch-note">暂无曲线数据。{c.hint}</div>
   const dl = c.daily, pd = c.period, st = c.strip, sp = c.style
-  const pctf = (v: number) => `${(v * 100).toFixed(0)}%`
+  const pctf = (v: number) => `${(v * 100).toFixed(2)}%`
   // 风格相关性：按 |原始 mean| 排序（一眼看出"最像哪个风格"）
   const styleRows: BarRow[] = sp
     ? sp.styles.map(s => ({ label: styleName(s),
@@ -1249,7 +1371,7 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
       {dl && (
         <>
           <div className="ch-t">净值（日频，起点 = 1）—— 组合 / 基准 / 超额</div>
-          <Chart dates={dl.dates} yFmt={v => v.toFixed(1)} series={[
+          <Chart dates={dl.dates} yFmt={v => v.toFixed(2)} series={[
             { label: '组合（Top10% 等权）', color: CPAL[0], data: dl.navT },
             { label: '基准（池内等权）', color: CPAL[1], data: dl.navM },
             { label: '超额', color: CPAL[2], data: dl.navE },
@@ -1276,20 +1398,20 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
             —— IC（Pearson）那一侧的收益用的是原始值，会被涨跌停或重组这类肥尾拉偏，仅作参考。
           </div>
           <div className="ch-t">十分位分组累计净值（费前；第 10 档 = 因子值最高）</div>
-          <Chart dates={pd.dates} yFmt={v => v.toFixed(1)}
+          <Chart dates={pd.dates} yFmt={v => v.toFixed(2)}
                  series={pd.decile.map((d, i) => ({
                    label: `第 ${i + 1} 档`, color: CPAL[i % CPAL.length], data: d,
                  }))} />
           <div className="ch-t">多空（第 10 档 − 第 1 档，费前）</div>
-          <Chart dates={pd.dates} yFmt={v => v.toFixed(1)}
+          <Chart dates={pd.dates} yFmt={v => v.toFixed(2)}
                  series={[{ label: '多空', color: CPAL[4], data: pd.ls }]} />
           <div className="ch-t">RankIC 累计（看信息是否稳定累积；斜率变平 = 近期失效）</div>
-          <Chart dates={pd.dates} zero yFmt={v => v.toFixed(1)}
+          <Chart dates={pd.dates} zero yFmt={v => v.toFixed(2)}
                  series={[{ label: 'RankIC 累计和', color: CPAL[5], data: cumsum(pd.rankIc) }]} />
           {(pd.turn ?? []).some(v => v !== null) && (
             <>
               <div className="ch-t">单期换手（每期换掉的 Top 组比例）</div>
-              <Chart dates={pd.dates} zero yFmt={v => `${(v * 100).toFixed(0)}%`}
+              <Chart dates={pd.dates} zero yFmt={v => `${(v * 100).toFixed(2)}%`}
                      series={[{ label: '单期换手', color: CPAL[6], data: pd.turn ?? [] }]} />
             </>
           )}
@@ -1298,7 +1420,7 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
       {st ? (
         <>
           <div className="ch-t">剥风格对比（期频超额净值）</div>
-          <Chart dates={st.dates} yFmt={v => v.toFixed(1)}
+          <Chart dates={st.dates} yFmt={v => v.toFixed(2)}
                  series={['raw', 'lncap', 'lnamt', 'both', 'floatcap', 'caplimit',
                           'allsty', 'indneu']
                    .filter(k => (st.navs[k] ?? []).length > 0)
@@ -1392,7 +1514,7 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
               </div>
             )}
             {picked.length > 0 ? (
-              <Chart dates={ex.dates} zero yFmt={v => v.toFixed(1)}
+              <Chart dates={ex.dates} zero yFmt={v => v.toFixed(2)}
                      series={picked.map(s => ({
                        label: styleName(s),
                        color: CPAL[ex.styles.indexOf(s) % CPAL.length],
