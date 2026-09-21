@@ -147,8 +147,8 @@ def set_panel_cache(mode):
     return PANEL_CACHE
 
 
-def set_mem_budget(lru_max=400, cache2_max=150, vreuse_cap_mb=2000.0,
-                   lru_mb=2500.0, cache2_mb=800.0, batch_mb=1500.0):
+def set_mem_budget(lru_max=400, cache2_max=150, vreuse_cap_mb=800.0,
+                   lru_mb=1200.0, cache2_mb=800.0, batch_mb=1500.0):
     """调「**每进程私有缓存**」的上限。
 
     ★ 为什么需要它：并行跑 N 个池时，**面板**可以靠 `--panel_cache=use` 跨进程共享，
@@ -194,7 +194,7 @@ CACHE2_MAX = 150          # 去相关/去重阶段 cache2 的子树缓存上限
 # ★★★★★ 2026-09-21（治本）：**字节预算**（条数上限管不住内存 ✗ —— 单条体积随池宽变：
 #   1000 池子面板 2094×2818 ⇒ 单条 ≈47 MB ⇒ 400 条 ≈18.8 GB ✗；实测私有内存峰值 14.6 GB ✓）
 #   ⇒ 这三条是**主控**（条数上限保留作兜底 ✓），由 `--lru_mb / --cache2_mb / --batch_mb` 调 ✓
-LRU_MB = 2500.0           # L1 跨批子树缓存 ≤ 该 MB（按 arr.nbytes 累计，超了淘汰最旧 ✓）
+LRU_MB = 1200.0           # ★ 2026-09-21 收紧 2500 → 1200（A/B 实测见下 ✓）
 CACHE2_MB = 800.0         # 去相关/去重阶段 cache2 ≤ 该 MB
 BATCH_MB = 1500.0         # L1 单批候选的**数组总量**上限（批大小按它自适应 ✓）
                           # (该段每候选只需算1次、无跨批复用, 缓存仅服务邻近候选共享,
@@ -206,7 +206,8 @@ BATCH_MB = 1500.0         # L1 单批候选的**数组总量**上限（批大小
 #   存的是**符号对齐后**的同一数组 -> 下游 rank_rows 结果逐位不变(行为等价, 非近似)。
 VCACHE = {}
 _VREUSE_MB = [0.0]        # 已占用 MB(list 便于就地累加)
-_VREUSE_CAP_MB = 2000.0   # 上限 2GB; 超了就不再存(未命中者在去相关/去重处回退为现场 eval)
+# ★ 2026-09-21 收紧 2000 → 800（A/B 实测见下 ✓）
+_VREUSE_CAP_MB = 800.0    # 上限; 超了就不再存(未命中者在去相关/去重处回退为现场 eval)
 
 
 def _build_panel_fresh():
@@ -3422,11 +3423,21 @@ if __name__ == '__main__':
                          '并行时按内存预算调小(时间换内存: 越小越多子树现场重算)')
     ap.add_argument('--cache2_max', type=int, default=150,
                     help='去相关/去重阶段 cache2(条数)上限(默认 150 = 现状)')
-    ap.add_argument('--vreuse_cap_mb', type=float, default=2000.0,
-                    help='跨阶段复用缓存 VCACHE 上限 MB(默认 2000 = 现状; 仅 --reuse_v=1 时生效)')
+    # ★★★★★ 2026-09-21（用户拍板 (A)：治"宽池工作集"）—— A/B 实测后**收紧默认值** ✓
+    #   起因：把 1000 池 L1 的工作集逐项量准（`ai_test/_l1_comp.py` ✓）后发现
+    #     **两个缓存（`_LRU` + `VCACHE`）合计 ~4.4 GB = 私有峰值的约一半** ✗
+    #     （全量面板 4.2 GB 是 memmap **共享页** ✓ 不算私有；真副本只有 B_sub ≈0.97 ✓）
+    #   A/B（同一驱动命令 + `--engine_arg=` 追加 ✓ 只改这两个预算）：
+    #     · 旧 2500 / 2000 ⇒ 私有峰值 **8.72 GB** · 工作集 10.60 · 单代 ≈110~120 分钟
+    #     · 新 1200 /  800 ⇒ 私有峰值 **7.665 GB**（−1.06 GB / **−12%**）·
+    #                        工作集 9.111（−1.49 / −14%）· 单代 ≈ **94 分钟**（**没变慢** ✓）
+    #   ★ 为什么**零风险**：两者都是**纯加速缓存** ⇒ 少存只会**重算**，数值/结果完全不变 ✓
+    ap.add_argument('--vreuse_cap_mb', type=float, default=800.0,
+                    help='跨阶段复用缓存 VCACHE 上限 MB(默认 800; 仅 --reuse_v=1 时生效)')
     # ★★★★★ 2026-09-21（治本）：**字节预算**（条数上限管不住内存 ✗ —— 见 set_mem_budget 注释 ✓）
-    ap.add_argument('--lru_mb', type=float, default=2500.0,
-                    help='L1 跨批子树缓存**字节**上限 MB(默认 2500; 条数上限 --lru_max 仍作兜底 ✓)')
+    # ★ 2026-09-21：默认 2500 → 1200（A/B 实测：私有峰值 −12%、耗时没变差 ✓ 见上条注释）
+    ap.add_argument('--lru_mb', type=float, default=1200.0,
+                    help='L1 跨批子树缓存**字节**上限 MB(默认 1200; 条数上限 --lru_max 仍作兜底 ✓)')
     ap.add_argument('--cache2_mb', type=float, default=800.0,
                     help='去相关/去重 cache2 **字节**上限 MB(默认 800 ✓)')
     ap.add_argument('--batch_mb', type=float, default=1500.0,

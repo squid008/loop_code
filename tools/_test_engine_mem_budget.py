@@ -97,6 +97,14 @@ _n2 = len(re.findall(r'trim_cache\(cache2, CACHE2_MAX\)[^\n]*\n[^\n]*trim_cache_
 chk('两处 cache2 裁剪（去相关 + 去重）都接了字节版（实 %d 处）' % _n2, _n2 == 2,
     '两处 cache2 都要接 ✓')
 
+print('\n【2c】★ 2026-09-21 A/B 后的**新默认值**（防有人改回去 ✗）')
+# 依据：1000 池 L1 的工作集逐项量准（`ai_test/_l1_comp.py`）⇒ 两个缓存合计 ≈4.4 GB（私有一半 ✗）
+# A/B（只改这两个预算）：私有峰值 8.72 → 7.665 GB（−12%）· 单代耗时没变差 ✓
+chk('--lru_mb 默认 = 1200', '--lru_mb\', type=float, default=1200.0' in src)
+chk('--vreuse_cap_mb 默认 = 800', '--vreuse_cap_mb\', type=float, default=800.0' in src)
+chk('模块常量 LRU_MB = 1200.0', 'LRU_MB = 1200.0' in src)
+chk('模块常量 _VREUSE_CAP_MB = 800.0', '_VREUSE_CAP_MB = 800.0' in src)
+
 print('\n【3】启动参数与预算落地')
 for a in ('--lru_mb', '--cache2_mb', '--batch_mb'):
     chk('%s 存在' % a, a in src)
