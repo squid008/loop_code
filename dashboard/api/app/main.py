@@ -102,10 +102,13 @@ def library_one(pool: str):
 
 
 @app.get('/api/curves/{pool}/{name}', summary='因子曲线（离线预算，详情页图表用）')
-def factor_curves(pool: str, name: str, max_pts: int = Query(700, ge=50, le=3000)):
+def factor_curves(pool: str, name: str, max_pts: int = Query(700, ge=50, le=3000),
+                  # ★ 2026-09-21（用户："曲线、指标连 20 日一起重算"）：
+                  #   口径 = 目录（5 日 = 基础目录 ✓ / 20 日 = `factor_curves_fwd20` ✓）
+                  fwd: int = Query(5, ge=1, le=60)):
     if '/' in name or '..' in name:
         raise HTTPException(400, '非法因子名')
-    return factors.curves(name, max_pts=max_pts)
+    return factors.curves(name, max_pts=max_pts, fwd=fwd)
 
 
 @app.get('/api/selected', summary='精选池（L3 双闸门）')

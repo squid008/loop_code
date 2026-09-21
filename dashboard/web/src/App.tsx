@@ -727,8 +727,46 @@ function GradeTag({ strip }: { strip?: string | null }) {
   const t = (g === 'A' || g === 'B' || g === 'C') ? g : '未测'
   const c = GRADE_COLOR[t] ?? '#94a3b8'
   return (
-    <span className="tag grade" title={GRADE_TIP[t] || ''}
+    // ★ 2026-09-21（用户："这个标签好像比旁边的 A 大了一点，搞成一样的"）：
+    //   根因 = **中日韩字形在同样字号下字面比拉丁字母大** ✗（`未测` 两个汉字尤其明显）
+    //   ⇒ 给汉字档位加 `cjk` 类，由 CSS 把字号调小一档 + **统一盒子高度** ✓
+    <span className={'tag grade' + (t === '未测' ? ' cjk' : '')} title={GRADE_TIP[t] || ''}
           style={{ background: c + '22', color: c, borderColor: c + '55' }}>{t}</span>
+  )
+}
+
+/** ★★★★★ 2026-09-21（用户："这个标签 ABC 那块再加个 5、20、A 这种标签，5 表示 5 周期选出来牛逼，
+ *   20 表示 20 日调仓牛逼，A 表示 5 天和 20 天都牛逼" ⇒ 用户随后拍板写法 = **`5` / `20` / `双`**）
+ *   口径强项标签：**在哪个调仓口径下更强** ✓
+ *   判据 = **固定阈值**（5 日超额 Calmar ≥ 0.624 · 20 日 ≥ 0.701），由后端 `factors._hzn_tag` 判好 ✓
+ *   ⇒ 阈值**只有一处**（后端），前端只查表渲染 ✓
+ *
+ *   ⚠⚠ 为什么**没用单字母 A** ✗：`A` 已经被**剥风格档位**占用（见上面 `GRADE_COLOR`）——
+ *     同一个字母两套语义 ⇒ 用户分不清哪个 A 是"独立有效"、哪个是"双口径都强" ✗（这是硬冲突 ✓）
+ *
+ *   ⚠ 用户之问"纯数字会有 BUG 吗" ⇒ **数字本身不会** ✓，但两处必须绕开：
+ *     ① **CSS 类名不能用裸数字** ✗（`.5` / `.20` 是**非法选择器** ⇒ 样式会静默失效 ✗）
+ *        ⇒ 这里用 `hz5` / `hz20` / `hzboth` **加前缀**的类名 ✓
+ *     ② 别让这个数字被当**数值**参与比较/排序 ✗ ⇒ 后端给的是**字符串**（`'5'`/`'20'`/`'双'` ✓），
+ *        前端只做**查表**（`HZN_TIP` / `HZN_COLOR`）⇒ 不做任何算术 ✓
+ */
+const HZN_CLASS: Record<string, string> = { '5': 'hz5', '20': 'hz20', '双': 'hzboth' }
+const HZN_COLOR: Record<string, string> = { '5': '#60a5fa', '20': '#c084fc', '双': '#fbbf24' }
+const HZN_TIP: Record<string, string> = {
+  '5': '5 日调仓口径下更强：该口径超额 Calmar ≥ 0.624（2026-09-21 标定 · 全库 62 因子的中位）',
+  '20': '20 日调仓口径下更强：该口径超额 Calmar ≥ 0.701（2026-09-21 标定 · 全库 62 因子的中位）',
+  '双': '5 日与 20 日两个口径下都更强（各自过标定阈值）—— 这种最结实',
+}
+
+function HzTag({ hzn }: { hzn?: string | null }) {
+  const h = (hzn ?? '').trim()
+  if (!h || !HZN_TIP[h]) return null
+  const c = HZN_COLOR[h]
+  return (
+    // ★ 2026-09-21：`双` 是汉字 ⇒ 加 `cjk`（字号收一档 + 盒子等高）⇒ 与旁边的 `A` 一样大 ✓
+    <span className={'tag hz ' + (HZN_CLASS[h] ?? 'hzboth') + (h === '双' ? ' cjk' : '')}
+          title={HZN_TIP[h]}
+          style={{ background: c + '22', color: c, borderColor: c + '55' }}>{h}</span>
   )
 }
 
@@ -855,6 +893,10 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
               <td className="mono strong">
                 {/* ★ 2026-09-20（用户："因子库页加个 A、B、C 标签"）⇒ 编号旁边直接标档位 ✓ */}
                 <GradeTag strip={f.detail?.strip} />
+                {/* ★★★★★ 2026-09-21（用户拍板写法 `5` / `20` / `双`）：**口径强项**标签 ✓
+                    规则在后端（`factors._hzn_tag` ✓ 固定阈值 0.624 / 0.701 ✓）⇒ 前端只渲染 ✓
+                    ★ 2026-09-21 用户要"双和 A 标签对调位置" ⇒ 现在是「**档位 A/B/C → 口径 5/20/双 → 编号**」✓ */}
+                <HzTag hzn={f.hzn} />
                 <button className="fcode" onClick={() => setSel(f)}
                         title={f.inBank === false
                           ? '该编号已不在当前有效库，只剩历史编号（文件只增不改）。点开仍能看到公式与指标'
@@ -864,7 +906,9 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
               </td>
               <td className="mono">{f.gen}</td>
               <td>{f.family}</td>
-              <td className="sum">{f.summary}</td>
+              {/* ★ 2026-09-21：一句话列**显示上截短**（`styles.css` 的 `.sum` 省略号 ✓）
+                  ⇒ 必须给 `title`，否则截掉的内容**无处可看** ✗（用户只授权"少显示"，没授权"看不见" ✓） */}
+              <td className="sum" title={f.summary}>{f.summary}</td>
               {/* ★ 历史行的**状态文案也要说实话** —— 明细行里写的还是"已入库"（当年入库时的记录，
                   文件只增不改）⇒ 会被读成"还在库里" ✗ ⇒ 这里直接标"已移出当前库" ✓ */}
               <td><span className={f.inBank === false ? 'status hist' : 'status'}>
@@ -877,6 +921,7 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
       </table>
       {!lib.factors.length && <div className="empty">（本池无表格数据）</div>}
       {sel && <FactorDetail f={sel} metricsInfo={lib.metricsInfo} metricsMtime={lib.metricsMtime}
+                            metrics20Info={lib.metrics20Info}
                             onClose={() => setSel(null)} />}
     </div>
   )
@@ -922,7 +967,8 @@ const fmtM = (v: number | null | undefined, kind: 'pct' | 'num' | 'int') => {
 }
 
 /** 详情面板能接受的"最小因子形状" —— 库表与精选池卡片都能喂给它（同一套展示 ✓） */
-type FactorLike = Pick<LibraryFactor, 'code' | 'expr' | 'detail' | 'metrics'> & {
+// ★ 2026-09-21：加 `metrics20` ⇒ 详情页的**口径开关**才能拿到 20 日那一套指标 ✓
+type FactorLike = Pick<LibraryFactor, 'code' | 'expr' | 'detail' | 'metrics' | 'metrics20'> & {
   family?: string
   summary?: string
   pool?: string
@@ -1316,7 +1362,8 @@ const STRIP_TIP: Record<string, string> =
  *   ⚠ 这就是"命名规则散落在两处"的典型代价：写文件的地方在 `tools/factor_curves.py`，
  *     读文件的地方在这里 —— 两处必须用同一个规则 ✓（已加守门 `_test_frontend_wiring`）
  */
-function FactorCharts({ name, pool }: { name: string; pool?: string }) {
+function FactorCharts({ name, pool, fwd = 5 }:
+  { name: string; pool?: string; fwd?: number }) {
   const [c, setC] = useState<CurvesDto | null>(null)
   // ★ 2026-09-20：动态暴露图里"哪些风格显示"—— null = 还没点过 ⇒ 默认**全部显示** ✓
   const [expoVis, setExpoVis] = useState<Set<string> | null>(null)
@@ -1334,11 +1381,12 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
   useEffect(() => {
     let dead = false
     setC(null); setErr(null)
-    api.curves(pool || 'all', file)
+    // ★ 2026-09-21：把**口径**一起传下去 ✓（换口径 ⇒ 后端换目录读 ⇒ 整块曲线都变 ✓）
+    api.curves(pool || 'all', file, 700, fwd)
       .then(d => { if (!dead) setC(d) })
       .catch(e => { if (!dead) setErr(e instanceof Error ? e.message : String(e)) })
     return () => { dead = true }
-  }, [name, pool, file])
+  }, [name, pool, file, fwd])
   if (err) return <div className="ch-note">曲线读取失败：{err}</div>
   if (!c) return <div className="ch-note">曲线加载中…</div>
   if (!c.found) return <div className="ch-note">暂无曲线数据。{c.hint}</div>
@@ -1589,11 +1637,25 @@ function FactorCharts({ name, pool }: { name: string; pool?: string }) {
 }
 
 /** 因子详情：完整公式（可复制）+ 池标签 + 各项费后指标 */
-function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
+function FactorDetail({ f, metricsInfo, metricsMtime, metrics20Info, onClose }:
   { f: FactorLike; metricsInfo?: LibraryDto['metricsInfo']
-    metricsMtime?: string | null; onClose: () => void }) {
+    metricsMtime?: string | null
+    /** ★ 2026-09-21：20 日口径表元信息（判"那一档能不能切" ✓） */
+    metrics20Info?: LibraryDto['metrics20Info']
+    onClose: () => void }) {
   const [copied, setCopied] = useState(false)
-  const m = f.metrics ?? {}
+  // ★★★★★ 2026-09-21（用户："详情页点进去…在 F01 资金流…旁边加切换的选项卡，可以选 5 日调仓
+  //   或者 20 日调仓，切换到 20 日调仓**所有指标曲线就都选成 20 日的**"）—— 详情页**口径开关** ✓
+  //   一处状态同时驱动：① 上面「费后指标」整块 ② 下面**所有曲线**（净值/剥风格/动态暴露 ✓）
+  const [fwd, setFwd] = useState(5)
+  // 20 日那档**有没有数据**：表在 ✓ 且这个因子在表里有数 ✓
+  // ⚠ 缺数据 ⇒ 按钮**置灰**（不是点完才说没有 ✗）免得用户以为坏了 ✓
+  const m20 = f.metrics20 ?? {}
+  const has20 = (metrics20Info ? !!metrics20Info.found : true)
+    && Object.keys(m20).length > 0
+  const use20 = fwd === 20 && has20
+  // ⚠ 兜底：切到 20 但没数据 ⇒ **仍按 5 日显示**（宁可显示旧口径，也不显示一片「—」✗）
+  const m = use20 ? m20 : (f.metrics ?? {})
   // ★★ 2026-09-16 修（用户："精选池详情页里的指标数据比如超额年化之类的怎么都是 -"）：
   //   根因 = 数值渲染原来只认**库表**路径传进来的 `metricsInfo.found`，而精选池那条路**不传**它
   //   ⇒ `undefined?.found` 为假 ⇒ **所有指标都显示 —**，可数据其实就在 `f.metrics` 里（29 个字段齐全）✗
@@ -1626,6 +1688,22 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
               —— **编结论比留白更糟**（用户会以为这个编号被淘汰了）⇒ 只有**确证 false** 才这么说 ✓ */}
           {f.inBank === false && <span className="out">已不在当前有效库（历史编号）</span>}
           <span className="mut">{f.family}</span>
+          {/* ★★★★★ 2026-09-21（用户："在 F01 资金流…旁边加切换的选项卡，可以选 5 日调仓或者
+              20 日调仓，切换到 20 日调仓所有指标曲线就都选成 20 日的"）—— **口径开关** ✓
+              ⚠ 20 日没数据时置灰（不点了才报错 ✗）✓ */}
+          {/* ⚠ 用户可见文案**不许带引号**（`_test_ui_quotes.py` 会判 ✗）⇒ 用普通标点 ✓ */}
+          <span className="seg hzseg" role="group"
+                title="调仓口径：切换后，费后指标与下面所有曲线（净值 / 剥风格 / 动态暴露）一起切">
+            {[5, 20].map(k => (
+              <button key={k} className={fwd === k ? 'on' : ''}
+                      disabled={k === 20 && !has20}
+                      title={k === 20 && !has20
+                        ? '20 日口径数据还没生成：先跑 tools/factor_metrics.py --fwd 20，'
+                          + '再跑 tools/factor_curves.py --fwd=20 --out_dir=factor_curves_fwd20'
+                        : `${k} 日调仓口径`}
+                      onClick={() => setFwd(k)}>{k} 日</button>
+            ))}
+          </span>
           <button className="x" onClick={onClose}>×</button>
         </div>
         <div className="dt-b">
@@ -1665,7 +1743,7 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
             <em className="mut">
               {metricsInfo && !metricsInfo.found
                 ? '指标表未生成：先跑 python tools/factor_metrics.py'
-                : `统一口径重算（成本 ${m.cost ?? 0.004} 往返 · 5 日调仓 · 全A 面板`
+                : `统一口径重算（成本 ${m.cost ?? 0.004} 往返 · ${use20 ? 20 : 5} 日调仓 · 全A 面板`
                   + (m.bt_start && m.bt_end
                      ? ` · 回测区间 ${fmtD8(m.bt_start)}~${fmtD8(m.bt_end)}` : ' · 回测区间未记录')
                   + `）${metricsMtime ? ` · 更新于 ${metricsMtime}` : ''}`}
@@ -1709,7 +1787,8 @@ function FactorDetail({ f, metricsInfo, metricsMtime, onClose }:
               </div>
             </div>
           ))}
-          <FactorCharts name={f.code} pool={f.pool} />
+          {/* ★ 2026-09-21：曲线跟着**口径开关**走 ✓（换口径 = 后端换目录读 ⇒ 整块图都变 ✓） */}
+          <FactorCharts name={f.code} pool={f.pool} fwd={use20 ? 20 : 5} />
           {m.ic_doc !== undefined && m.ic_doc !== null && m.ic !== null && m.ic !== undefined &&
             Math.abs(m.ic - m.ic_doc) > 0.002 && (
               <div className="dt-warn">

@@ -158,6 +158,59 @@ try:
 except Exception as e:                                          # noqa: BLE001
     chk('能读 App.tsx', False, '%s: %s' % (type(e).__name__, str(e)[:80]))
 
+# ---------------------------------------------------------------- ④ 口径切换（5 日 / 20 日）
+# ★★★★★ 2026-09-21（用户："曲线、指标连 20 日一起重算" + 详情页口径开关）：
+#   换口径 = **换目录 / 换表** ⇒ 这里守住四件事（免得以后悄悄坏掉 ✗）：
+#     ① 目录映射方向对（`_curve_dir`）✓
+#     ② 20 日曲线**真读得到**、且期数明显不同于 5 日（口径确实换了 ✓）
+#     ③ 路由把 `fwd` 透传了 ✓（否则前端切了后端不认 ✗）
+#     ④ 前端请求**真的带上 fwd** + 页面上真有开关/标签 ✓
+#   （`_test_frontend_wiring` 管"调用点在不在"，这里管"**参数有没有传对**" ✓ 两层互补 ✓）
+print('\n【4】口径切换（5 日 / 20 日）')
+try:
+    sys.path.insert(0, os.path.join(ROOT, 'dashboard', 'api'))
+    import inspect
+    from app.sources import factors as _FAC
+    chk('factors.curves 已支持 fwd 形参（详情页切换用）',
+        'fwd' in inspect.signature(_FAC.curves).parameters)
+    chk('_curve_dir(5) = 基础目录（⇒ 5 日老数据零改动 ✓）',
+        _FAC._curve_dir(5) == 'factor_curves')
+    chk('_curve_dir(20) = factor_curves_fwd20 ✓',
+        _FAC._curve_dir(20) == 'factor_curves_fwd20')
+    _mainpy = io.open(os.path.join(ROOT, 'dashboard', 'api', 'app', 'main.py'),
+                      encoding='utf-8').read()
+    chk('曲线路由把 fwd 透传下去了 ✓', 'factors.curves(name, max_pts=max_pts, fwd=fwd)' in _mainpy)
+    chk('标签阈值只有一处（后端 `_HZN_CAL5/_HZN_CAL20` ✓）',
+        hasattr(_FAC, '_HZN_CAL5') and hasattr(_FAC, '_HZN_CAL20'))
+    chk('`_hzn_tag` 三态 + 空（5/20/双/空 ✓）',
+        _FAC._hzn_tag({'calmar': 0.9}, {'calmar': 0.9}) == '双'
+        and _FAC._hzn_tag({'calmar': 0.9}, {'calmar': 0.1}) == '5'
+        and _FAC._hzn_tag({'calmar': 0.1}, {'calmar': 0.9}) == '20'
+        and _FAC._hzn_tag({'calmar': 0.1}, {'calmar': 0.1}) == '')
+
+    _d20 = os.path.join(ROOT, 'docs', _FAC._curve_dir(20))
+    _fs = sorted(glob.glob(os.path.join(_d20, '*.json')))
+    if _fs:
+        _nm = os.path.basename(_fs[0])[:-5]
+        _r20 = _FAC.curves(_nm, max_pts=200, fwd=20)
+        chk('20 日曲线可读（%s）⇒ DTO 回填 fwd=20 ✓' % _nm,
+            bool(_r20.get('found')) and _r20.get('fwd') == 20)
+        chk('20 日期数明显少于 5 日（口径确实换了 ✓）',
+            (_r20.get('n_rebal') or 0) < 250, 'n_rebal=%s' % _r20.get('n_rebal'))
+    else:
+        chk('20 日曲线目录还没生成 ⇒ 跳过实读 ✓', True)
+
+    _api = io.open(os.path.join(ROOT, 'dashboard', 'web', 'src', 'api.ts'),
+                   encoding='utf-8').read()
+    chk('前端 curves() 请求带上 fwd= ✓', 'fwd=${fwd}' in _api)
+    _src2 = io.open(APP_TSX, encoding='utf-8').read()
+    chk('详情页有口径开关（`hzseg`） ✓', 'hzseg' in _src2)
+    chk('列表有口径标签（`HzTag`） ✓', 'HzTag' in _src2)
+    chk('口径标签**不用裸数字当 CSS 类名**（`hz5`/`hz20`/`hzboth` ✓）',
+        'hz5' in _src2 and 'hz20' in _src2 and 'hzboth' in _src2)
+except Exception as e:                                          # noqa: BLE001
+    chk('口径切换守门可执行', False, '%s: %s' % (type(e).__name__, str(e)[:90]))
+
 print('\n' + ('★ 全过 ✓ 曲线 JSON 与接口 DTO 对得上' if not FAIL
              else '✗ 有 %d 项没过：\n  - %s' % (len(FAIL), '\n  - '.join(FAIL))))
 sys.exit(1 if FAIL else 0)

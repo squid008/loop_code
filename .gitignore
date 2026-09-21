@@ -48,8 +48,13 @@ docs/loop_pool_obs*.csv
 docs/pool_tags*.csv
 # ★ 因子费后指标表（2026-09-16, tools/factor_metrics.py 按 state.bank 离线重算 -> 可随时重建）
 docs/factor_metrics.csv
+# ★ 2026-09-21：**20 日口径**的同类产物（`tools/factor_metrics.py --fwd 20` 生成 ✓）
+#   与 5 日表同规矩：**可随时重建 + 体量大** ⇒ 不入 git ✓
+docs/factor_metrics_fwd*.csv
 # ★ 因子曲线（2026-09-16, tools/factor_curves.py 离线预算 -> 看板详情页图表；可随时重建）
 docs/factor_curves/
+# ★ 2026-09-21：**20 日口径**曲线目录（`tools/factor_curves.py --fwd=20 --out_dir=factor_curves_fwd20` ✓）
+docs/factor_curves_fwd*/
 # gen16 前旧快照已归 history/（停更，已 git 跟踪为归档，此处不再 ignore）
 
 # IDE / 系统

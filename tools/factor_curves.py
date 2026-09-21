@@ -968,9 +968,36 @@ def main():
                     help='★ 也给**已移出当前库的历史编号**出曲线（从库文档取公式反向解析；'
                          '默认只算 state.bank = 当前有效库）')
     ap.add_argument('--cost', type=float, default=0.004)
-    ap.add_argument('--window', type=int, default=5)
+    # ★ 2026-09-21 修 bug：`--window` 原来 `type=int default=5` ✗ —— `evaluate_real(window=...)`
+    #   要的是 `'full'`/`'recent600'` **字符串** ⇒ 传 int 会静默落到 full ✓（无害但误导 ✓）
+    ap.add_argument('--window', choices=['full', 'recent600'], default='full',
+                    help='样本区间：full=START(2018) 起（默认）· recent600=最近 600 交易日')
+    # ★★★★★ 2026-09-21（用户："曲线、指标连 20 日一起重算"）—— **20 日口径曲线** ✓
+    #   背景：`docs/factor_curves/*.json` **全是 5 日口径** ✗；20 日只有指标表 ✓
+    #   ⇒ 详情页要"切到 20 日所有曲线都变" ⇒ 必须先把 20 日曲线也预算出来 ✓
+    #   ⚠⚠ **必须同时给 `--out_dir`** ✗ —— 否则会把 5 日曲线**冲掉** ✗（同 `factor_metrics.py` 的规矩 ✓）
+    ap.add_argument('--fwd', type=int, default=0,
+                    help='调仓周期（交易日）；0=引擎默认(5) ⇒ 行为完全不变。'
+                         '★ 换口径（如 20）时务必配 --out_dir 写另一个目录 ✓')
+    ap.add_argument('--out_dir', default='',
+                    help='输出目录（默认 docs/factor_curves）；换口径时给 e.g. factor_curves_fwd20 ✓')
     ap.add_argument('--panel_cache', default='off', choices=['off', 'use', 'build'])
     a = ap.parse_args()
+
+    # ---- ★ 顺序很重要（2026-09-21）：先定**输出目录**，再定 **FWD** ----
+    #   为什么：`_lock_path()` / `_path()` / `os.makedirs` **都读全局 `CURVE_DIR`** ✓
+    #   ⇒ 换目录必须在**拿锁与任何写盘之前**做 ✓（否则锁和文件都落在 5 日目录里 ✗）
+    if a.out_dir:
+        global CURVE_DIR
+        CURVE_DIR = (a.out_dir if os.path.isabs(a.out_dir)
+                     else os.path.join(DOCS, a.out_dir))
+    import factor_miner as _FM
+    if a.fwd:
+        _old_fwd = _FM.FWD                  # ⚠ `set_fwd` 返回的是**新值** ⇒ 旧值要先记 ✓
+        _FM.set_fwd(int(a.fwd))
+        print('  ★ 调仓周期口径 = **%d 交易日**（引擎默认 %d）⇒ 换仓期数会从 ~418 变成 ~%d ✓'
+              % (_FM.FWD, _old_fwd, max(1, int(418 * _old_fwd / float(max(_FM.FWD, 1))))))
+    print('  ★ 输出目录 = %s' % os.path.relpath(CURVE_DIR, ROOT))
 
     import build_facs as BF
     LE = BF._prep_main()

@@ -93,7 +93,16 @@ export interface LibraryFactor {
   }
   /** 统一口径的费后指标（`tools/factor_metrics.py` 重算；缺失项为 null） */
   metrics?: Record<string, number | null>
-}
+  /** ★★★★★ 2026-09-21（用户："指标连 20 日一起重算"）—— **20 日口径**的同一套指标 ✓
+   *  （列名与 `metrics` 完全一致，只有口径不同 ⇒ 详情页切换时整块换它 ✓） */
+  metrics20?: Record<string, number | null>
+  /** ★★★ 2026-09-21：口径强项标签 = `'5'` / `'20'` / `'双'` / `''`（后端 `_hzn_tag` 判好 ✓） */
+  hzn?: string
+  /** 便于列表直接展示（免得前端去翻 `metrics20` ✓） */
+  cal20?: number | null
+  ic20?: number | null
+  turn20?: number | null
+  }
 
 export interface LibraryDto {
   pool: string; label: string; found: boolean
@@ -105,6 +114,8 @@ export interface LibraryDto {
   /** 指标表（`docs/factor_metrics.csv`）是否可用 + 其中属于本池的条数 */
   metricsFound?: boolean
   metricsInfo?: { found: boolean; path?: string; rows?: number }
+  /** ★ 2026-09-21：20 日口径表的元信息（前端据此判"20 日那档能不能切" ✓） */
+  metrics20Info?: { found: boolean; path?: string; rows?: number }
   metricsMtime?: string | null
   /** ★ 本池**在库且已测**的条数（与 `stateBank` 比才说明"表跑完了没"） */
   metricsMeasured?: number
@@ -172,6 +183,8 @@ export interface SelectedDto {
 /** ★ 2026-09-16：因子曲线（离线预算，详情页图表用；已下采样 ≤700 点） */
 export interface CurvesDto {
   found: boolean
+  /** ★ 2026-09-21：这条曲线是**哪个调仓口径**（5 / 20）—— 由后端按请求回填 ✓ */
+  fwd?: number
   name?: string
   pool?: string
   expr?: string
@@ -394,8 +407,10 @@ export const api = {
   libraryEntries: (limit = 50) => get<LibraryEntriesDto>(`/library/entries?limit=${limit}`),
   selected: () => get<SelectedDto>('/selected'),
   // ★ 因子曲线（离线预算好，读文件 + 下采样 ⇒ 打开详情几乎零开销）
-  curves: (pool: string, name: string, maxPts = 700) =>
-    get<CurvesDto>(`/curves/${pool}/${encodeURIComponent(name)}?max_pts=${maxPts}`, 60000),
+  // ★★ 2026-09-21（用户："切换到 20 日调仓所有指标曲线就都选成 20 日的"）：
+  //   加 `fwd`（调仓口径）⇒ 后端按口径**换目录**读（5 日 = 基础目录 / 20 日 = `_fwd20` ✓）
+  curves: (pool: string, name: string, maxPts = 700, fwd = 5) =>
+    get<CurvesDto>(`/curves/${pool}/${encodeURIComponent(name)}?max_pts=${maxPts}&fwd=${fwd}`, 60000),
   stripBank: () => get<{ found: boolean; count: number; rows: Record<string, string>[] }>('/strip-bank'),
   poolObs: (pool: string, limit = 200) =>
     get<{ found: boolean; columns: string[]; rows: Record<string, string>[] }>(`/pool-obs/${pool}?limit=${limit}`),

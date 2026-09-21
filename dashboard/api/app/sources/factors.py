@@ -33,6 +33,38 @@ _SEP = re.compile(r'^\|[\s:|-]+\|\s*$')
 #   而用户点开一个因子时要看：**完整公式（可复制）· 池标签 · 各项费后指标** ——
 #   这些只存在于**明细段**（`### F01 · gen1 入库` 那一段）⇒ 必须解析明细段 ✓
 _METRICS_CSV = 'factor_metrics.csv'
+# ★★★★★ 2026-09-21（用户："曲线、指标连 20 日一起重算"）—— **20 日口径**的指标表 ✓
+#   由 `tools/factor_metrics.py --fwd 20 --out docs/factor_metrics_fwd20.csv` 生成 ✓
+#   ⚠ 与 5 日表**列名完全一致**（只是口径不同）⇒ 读法共用 ✓
+_METRICS_CSV20 = 'factor_metrics_fwd20.csv'
+
+# ★★★★★ 2026-09-21（用户拍板："标签写法：5、20、双"；"判据：固定 0.624 / 0.701"）
+#   —— 列表里的**口径强项标签** ✓
+#   判据来源：2026-09-21 全库 62 因子标定（`ai_test/_cmp_gate.py` ✓）：
+#     5 日超额 Calmar 中位 **0.624** · 20 日中位 **0.701** ⇒ 各取"中位"作为"该口径下更强"的线 ✓
+#   ⚠⚠ 为什么用**固定阈值**而不是"运行时算分位" ✗：
+#     分位随库演化**漂移** ⇒ 同一个因子会**无故掉标签/多标签** ✗（用户看到的标签会莫名变化 ✗）
+#     固定阈值 = 可复现、可解释、可复核 ✓（与项目既有惯例一致：门槛都写"标定值 + 标定样本" ✓）
+#   ⚠ 返回**字符串**（不是数字 ✅ 用户问"纯数字会有 BUG 吗"）：
+#     后端给字符串 ⇒ 前端不会做数值比较、也不会拿它当 CSS 类名裸用 ✓（见 `HZN_CLASS` 加前缀 ✓）
+_HZN_CAL5 = 0.624
+_HZN_CAL20 = 0.701
+
+
+def _hzn_tag(m5, m20):
+    """按超额 Calmar 判"哪个口径下更强" ⇒ `'5'` / `'20'` / `'双'` / `''`（都不突出）✓"""
+    a = _num((m5 or {}).get('calmar'))
+    b = _num((m20 or {}).get('calmar'))
+    if a is None or b is None:
+        return ''
+    p5, p20 = a >= _HZN_CAL5, b >= _HZN_CAL20
+    if p5 and p20:
+        return '双'
+    if p20:
+        return '20'
+    if p5:
+        return '5'
+    return ''
 
 
 def _detail_blocks(txt):
@@ -131,14 +163,17 @@ def _num(x):
         return None
 
 
-def _metrics_table():
+def _metrics_table(csv_name=None):
     """读 `docs/factor_metrics.csv`（`tools/factor_metrics.py` 生成的**统一口径**指标表）。
 
     ★ 为什么要有这张表：引擎在**入库当期**只把"超额"那几项写进 md 明细行，
       **"组合自身"口径（年化/卡玛/夏普/最大回撤）从来没落盘** ⇒ 明细里查不到。
       该表由 `state.bank`（权威）+ 离线重算生成 ⇒ 顺带回答"**哪些编号还在当前库里**" ✓
+
+    ★ 2026-09-21：加 `csv_name` 参数 ⇒ **同一套读法**读 20 日口径表 ✓
+      （两张表列名一致 ✓，只有口径不同 ✓ ⇒ 不复制实现、不两处漂移 ✓）
     """
-    p = core.docs_path(_METRICS_CSV)
+    p = core.docs_path(csv_name or _METRICS_CSV)
     head, rows = core.read_csv_rows(p)
     if not head:
         return {}, None, {'found': False}
@@ -320,6 +355,9 @@ def library(pool):
     # ★★ 2026-09-16：把**明细段**（完整公式/池标签/符号/骨架）与**统一口径指标表**接到每个因子上
     det = _detail_blocks(txt)
     mtab, mt_mtime, mt_info = _metrics_table()
+    # ★★★★★ 2026-09-21（用户："曲线、指标连 20 日一起重算"）⇒ **同时读 20 日口径表** ✓
+    #   （两张表列名一致 ✓ 只有口径不同 ⇒ 共用同一个读法 ✓）
+    mtab20, mt20_mtime, mt20_info = _metrics_table(_METRICS_CSV20)
     st = core.load_state(pool)
     bank_n = (st or {}).get('bank_n')
     _names = {f['code'] if pool == 'all' else '%s_%s' % (f['code'], pool) for f in factors}
@@ -359,6 +397,17 @@ def library(pool):
         for k in ('poolTagNote', 'strip', 'metricsDocText'):     # 散文类 ⇒ 出口处清洗
             f['detail'][k] = _plain(d.get(k, ''))
         f['metrics'] = (mtab.get(nm) or {}).get('_num') or {}
+        # ★★★★★ 2026-09-21（用户拍板："标签写法：5、20、双"·"判据：固定 0.624 / 0.701"·
+        #   "曲线、指标连 20 日一起重算"）—— 三项一起接上 ✓
+        #   ① `metrics20` ⇒ 详情页「口径切换」切到 20 日时**整块指标**换它 ✓（前端不用自己算 ✓）
+        #   ② `cal20/ic20/turn20` ⇒ 列表**不展开也能直接用** ✓（免得前端去翻 metrics20 ✓）
+        #   ③ `hzn` ⇒ 列表的口径标签（'5' / '20' / '双' / '' ✓ 规则见 `_hzn_tag` ✓）
+        _m20 = (mtab20.get(nm) or {}).get('_num') or {}
+        f['metrics20'] = _m20
+        f['cal20'] = _m20.get('calmar')
+        f['ic20'] = _m20.get('ic')
+        f['turn20'] = _m20.get('turn')
+        f['hzn'] = _hzn_tag(f['metrics'], _m20)
         # ★★★ 2026-09-17（用户："中证500 F06 的方向 sign 为啥是 —？其他因子要么 1 要么 -1，是不是有问题？"）：
         #   不是标签贴错，也**不是 bug**：那条因子的 md 明细段里写的**就是**
         #   「符号 sign：**未记录**（缺失时不臆造，见 roadmap §8.45 铁律）」⇒ 解析出来是空 ⇒ 前端显示 — ✗
@@ -387,6 +436,9 @@ def library(pool):
         'metricsFound': mt_info.get('found'),
         'metricsInfo': mt_info,
         'metricsMtime': mt_mtime,
+        # ★ 2026-09-21：20 日口径表的**元信息**（前端要判"跑没跑过 20 日" ✓）
+        'metrics20Info': mt20_info,
+        'metrics20Mtime': mt20_mtime,
         # `metricsMeasured` = **本池在库且已测**的条数（与 `stateBank` 比才说明"表跑完了没"）✓
         #   ⚠ 不能再用 `len(_mt_pool)` —— 表里加进历史编号后条数会**大于**库大小 ⇒ 误报"没跑完" ✗
         'metricsMeasured': _measured,
@@ -418,6 +470,12 @@ def all_libraries():
 #   曲线**离线**由 `tools/factor_curves.py` 预算好（现算一次 = 一次完整回测 ≈ 10s ⇒ 点一下卡十秒 ✗），
 #   这里只**读文件 + 下采样**（保两端等步长）⇒ 响应体小、前端画得快 ✓
 CURVE_DIR = 'factor_curves'
+# ★★★★★ 2026-09-21（用户："曲线、指标连 20 日一起重算"）：**换口径 = 换目录** ✓
+#   20 日曲线由 `tools/factor_curves.py --fwd=20 --out_dir=factor_curves_fwd20` 预算 ✓
+#   （⚠ 约定：目录名 = 基础名 + `_fwd<N>`；`fwd=5` 用基础目录 ✓ 即老数据零改动 ✓）
+def _curve_dir(fwd=5):
+    f = int(fwd or 5)
+    return CURVE_DIR if f == 5 else '%s_fwd%d' % (CURVE_DIR, f)
 
 
 def _down(seq, k):
@@ -435,14 +493,21 @@ def _down(seq, k):
     return out, idx
 
 
-def curves(name, max_pts=700):
-    """读 `docs/factor_curves/<name>.json` ⇒ 下采样后的曲线数据（前端直接画）。"""
-    rel = os.path.join(CURVE_DIR, '%s.json' % name)
+def curves(name, max_pts=700, fwd=5):
+    """读 `docs/factor_curves[_fwd<N>]/<name>.json` ⇒ 下采样后的曲线数据（前端直接画）。
+
+    ★★★★★ 2026-09-21（用户："曲线、指标连 20 日一起重算"）—— 加 `fwd`（调仓周期口径）✓
+      ⇒ 详情页可在 **5 日 / 20 日** 之间切，切完**所有曲线**（净值/剥风格/动态暴露）都换 ✓
+      ⚠ `fwd=5` = 老路径（基础目录 ✓ 零改动）；其它口径 = `_fwd<N>` 目录 ✓
+    """
+    _f = int(fwd or 5)
+    rel = os.path.join(_curve_dir(_f), '%s.json' % name)
     p = core.docs_path(rel)
     txt = core.read_text(p)
     if not txt:
-        return {'found': False, 'name': name, 'path': rel.replace('\\', '/'),
-                'hint': '跑一次 python tools/factor_curves.py 生成（离线算，不影响看板性能）'}
+        return {'found': False, 'name': name, 'fwd': _f, 'path': rel.replace('\\', '/'),
+                'hint': '跑一次 python tools/factor_curves.py %s 生成（离线算，不影响看板性能）'
+                        % ('' if _f == 5 else '--fwd=%d --out_dir=%s' % (_f, _curve_dir(_f)))}
     try:
         import json as _json
         d = _json.loads(txt)
@@ -497,6 +562,8 @@ def curves(name, max_pts=700):
                 'caliber': _plain(ex.get('caliber'))}
     return {
         'found': True, 'name': d.get('name') or name, 'pool': d.get('pool'),
+        # ★ 2026-09-21：把**生效的口径**回给前端 ✓（否则前端不知道自己看的是 5 日还是 20 日 ✗）
+        'fwd': _f,
         'expr': d.get('expr'), 'sign': d.get('sign'), 'gen': d.get('gen'),
         'start': d.get('start'), 'end': d.get('end'), 'n_rebal': d.get('n_rebal'),
         'cost': d.get('cost'), 'window': d.get('window'),

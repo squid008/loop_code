@@ -255,7 +255,43 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
    这样详情按钮一行就能搞定了"）⇒ 两处一起改：
      ① 一句话列**收窄**（440 → 320px）：把富余宽度让给右边的「状态 / 详情」⇒ 两列挨近 ✓
      ② 「状态」与「详情」两列**都不许折行**（`nowrap`）⇒ 详情按钮恒为一行 ✓ */
-.sum { color: var(--mut); max-width: 320px; }
+/* ★★★★★ 2026-09-21（用户："现在这个标签跟因子编号贴太近了，稍微隔开一丢丢，注意**不要把详情按钮
+   挤成两行**了，空间不够的话可以把一句话那里再少显示一些内容"）—— 三处一起改 ✓
+   ① 一句话列**再收窄**（320 → 250px）＋ **溢出改省略号** ✗：
+      原来只有 `max-width: 320px` 而没有 `overflow/ellipsis` ⇒ 文字一长就**折行撑高整行** ✗
+      ⇒ 行变高 + 右列被挤 ⇒ 「详情」按钮就跑到第二行了 ✗（**这才是"挤两行"的真正机制** ✓）
+      ⇒ 完整内容走 `title` 悬停看 ✓（不截数据、只截显示 ✓）
+   ② 编号列里**档位标签与编号拉开 8px** ✓（`.tbl .tag.grade` 只作用于表格 ⇒ 不动入库日志那处 ✓）
+   ③ 「详情」列 `width: 1%` = **收成刚好放下按钮** ⇒ 按钮**恒为一行** ✓ */
+.sum { color: var(--mut); max-width: 190px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ★★★★★ 2026-09-21 第二批（用户："这个标签好像比旁边的 A 大了一点，搞成一样的" ·
+   "有的排不下变成两行了，要放在一行里，可以继续减少一句话的显示字符数"）—— 三处一起改 ✓
+   ① **两个标签盒子统一等高 + 同字号** ✗：原来只吃 `.tag` 的通用样式（`padding:1px 8px`），而
+      **汉字（`双` / `未测`）字面天生比拉丁字母大** ⇒ 视觉上"大了一点" ✗
+      ⇒ 统一 `height / line-height / font-size / padding`，再给汉字加 `.cjk` 收一档字号 ✓
+   ② **编号列强制一行** ✗：`F05 · 历史` ＋ 两个标签一挤就折行（用户截图 ✓）
+      ⇒ 该列 `white-space: nowrap` ✓（并靠"一句话"继续收窄腾出宽度 ✓）
+   ③ **一句话列再收窄**（250 → 190px）⇒ 用户明确授权"继续减少显示字符数" ✓
+      （截的仍是**显示** ⇒ 悬停 `title` 看全 ✓） */
+.tbl td.mono.strong { white-space: nowrap; }
+.tbl .tag.grade, .tbl .tag.hz {
+  margin-right: 8px; vertical-align: middle; display: inline-block;
+  font-size: 11px; line-height: 17px; height: 17px; padding: 0 6px;
+  min-width: 17px; text-align: center; border-radius: 6px; }
+.tbl .tag.cjk { font-size: 10px; letter-spacing: -.3px; }
+/* ★★★★★ 2026-09-21（用户拍板写法 `5` / `20` / `双`）—— **口径强项标签** ✓
+   ⚠ 颜色来源在 `App.tsx` 的 `HZN_COLOR`（内联 style ✓）；这里只管**间距与对齐** ✓
+   ⚠⚠ 类名**必须加前缀**（`hz5` / `hz20` / `hzboth`）✗ —— 裸数字当 CSS 类名是**非法选择器**
+     （`.5` / `.20`）⇒ 样式会**静默失效** ✗（用户问"纯数字会有 BUG 吗"正是这一处 ✓） */
+.tbl .tag.hz { margin-right: 8px; vertical-align: middle; }
+/* ★ 2026-09-21：详情页**口径开关**（5 日 / 20 日）—— 放在标题行（编号/家族）右边 ✓ */
+.dt-h .hzseg { margin-left: 10px; display: inline-flex; align-items: center; gap: 2px;
+  padding: 1px; border: 1px solid var(--bd); border-radius: 8px; }
+.dt-h .hzseg button { cursor: pointer; border: 0; background: transparent; color: var(--mut);
+  font-size: 11.5px; padding: 2px 9px; border-radius: 6px; white-space: nowrap; }
+.dt-h .hzseg button.on { background: #1e293b; color: var(--fg); font-weight: 650; }
+.dt-h .hzseg button:disabled { opacity: .45; cursor: not-allowed; }
+.tbl th:last-child, .tbl td:last-child { width: 1%; }
 .tbl th:nth-last-child(-n+2), .tbl td:nth-last-child(-n+2) { white-space: nowrap; }
 .status { font-size: 11.5px; color: #a7f3d0; background: #052e1b; border: 1px solid #14532d;
           padding: 1px 7px; border-radius: 6px; white-space: nowrap; }

@@ -80,12 +80,27 @@ def main():
                     help='★ 也补**已移出当前库的历史编号**（从库文档取公式反向解析；'
                          '默认只算 state.bank = 当前有效库）')
     ap.add_argument('--cost', type=float, default=0.004, help='往返成本（默认 0.004 = 引擎主用档）')
-    ap.add_argument('--window', type=int, default=5)
+    # ★ 2026-09-21（用户："咱们是不是要做个 20 日调仓的口径？这样一些财务低频因子
+    #   才有用武之地、才能被选出来？"）—— 先做**事后重评**实测，再决定要不要建双口径 ✓
+    #   ⚠ 修 bug：原来这里是 `--window type=int default=5` ✗ —— `evaluate_real(window=...)`
+    #     要的是 `'full'`/`'recent600'` **字符串**（见其 docstring 第 5 条 ✓）⇒ 传 int 5
+    #     会落到 else 分支 = full ⇒ **行为上无害、语义上误导** ✗ ⇒ 改 `choices` + `default='full'`
+    #     （**行为完全不变**：默认仍等价于原来的 full ✓）
+    ap.add_argument('--window', choices=['full', 'recent600'], default='full',
+                    help='样本区间：full=START(2018) 起全口径（默认）· recent600=最近 600 交易日')
+    # ★★ `--fwd`：调仓周期（交易日）。**引擎里 FWD 写死 5** 且**没有命令行入口** ✗
+    #   （`factor_miner.set_fwd()` 早就写好了、却是个**孤儿函数**（全仓零调用 ✗）⇒ 这里接上 ✓）
+    #   ⚠⚠ 这只是**评估口径**变了 ⇒ **不改库、不改既有数字、不覆盖原表** ✓
+    #      （务必配 `--out` 写到另一个文件 ✓，否则会把 5 日口径的表冲掉 ✗）
+    ap.add_argument('--fwd', type=int, default=0,
+                    help='调仓周期（交易日）；0=引擎默认(5) ⇒ 行为完全不变。'
+                         '★ 对照口径用（如 --fwd=20）；只影响本进程的评估 ✓')
     ap.add_argument('--panel_cache', default='off', choices=['off', 'use', 'build'])
     ap.add_argument('--out', default=os.path.join(DOCS, 'factor_metrics.csv'))
     ap.add_argument('--ic_tol', type=float, default=0.002,
                     help='IC 自检容差：与**库文档/归档**里记录的 IC 差超过它就报警 '
-                         '(口径没对齐时必须吼出来，否则落地的是错的数)')
+                         '(口径没对齐时必须吼出来，否则落地的是错的数；'
+                         '换口径对照时必然超差 ⇒ 可传大值静音 ✓)')
     a = ap.parse_args()
 
     import pandas as pd
@@ -93,6 +108,16 @@ def main():
     LE = BF._prep_main()
     LE.set_panel_cache(a.panel_cache)
     from factor_miner import evaluate_real, cs_rank
+    import factor_miner as _FM
+    if a.fwd:
+        _old = _FM.FWD                       # ⚠ set_fwd 返回的是**新值**，旧值要先记 ✓
+        _FM.set_fwd(int(a.fwd))
+        print('  ★ 调仓周期口径 = **{} 交易日**（引擎默认 {}）—— 仅本进程有效 ✓'
+              '  只重算、不动库 ✓'.format(_FM.FWD, _old))
+        if abs(int(a.fwd) - int(_old)) >= 2:
+            print('  ⚠ 换口径后：IC/卡玛/换手**都与原表不可直接比**；'
+                  '期数会从 ~418 变成 ~{} ✓'.format(int(len(pd.date_range(
+                      '2018-01-01', '2026-09-18', freq='B')) / int(a.fwd))))
 
     # ---- 收集：**以 state.bank 为权威**（真正在库里的因子），文档提供 F 编号/IC 参照 ----
     #   ★ 2026-09-17：`--include_history` 时**额外**补"库文档里有、bank 里没有"的编号（= 已移出）
@@ -145,6 +170,10 @@ def main():
     print('因子费后指标补算 → {}'.format(os.path.relpath(a.out, ROOT)))
     print('  待算 {} 个（bank 内去重后）{}'.format(
         len(uniq), '  [增量 --only-new]' if a.only_new else ''))
+    # ★ 2026-09-21：把**口径三件**打进抬头 ✓ —— 否则换口径算出来的表会与原表**看着一样**，
+    #   半年后没人知道哪张是 5 日、哪张是 20 日 ✗
+    print('  口径：调仓周期 FWD={} 交易日 · 样本区间={} · 往返成本={}'.format(
+        _FM.FWD, a.window, a.cost))
     print('=' * 96)
     if not uniq:
         print('  ⇒ 无待算因子，退出')

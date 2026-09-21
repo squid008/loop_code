@@ -199,7 +199,10 @@ chk('★★ 详情页曲线**按池取对文件名**（`{code}_{pool}`；否则�
     #   精选池里的代码**本身可能已带池后缀**（`F07_1000` + pool=1000）⇒ 再拼一次就去找
     #   `F07_1000_1000.json` ✗（磁盘上是 `F07_1000.json` ✓）⇒ 面板"暂无曲线数据" ✗
     "? (name.endsWith(`_${pool}`) ? name : `${name}_${pool}`)" in src
-    and "api.curves(pool || 'all', file)" in src,
+    # ★ 2026-09-21（用户："曲线…连 20 日一起重算"）：调用加了 `fwd` 形参 ⇒
+    #   断言改成**前缀匹配**（`api.curves(pool || 'all', file` ✓）—— 这样加参数不会误报 ✗，
+    #   但"名字拼池后缀 + 调用点"这两件事仍然都被守住 ✓
+    and "api.curves(pool || 'all', file" in src,
     '命名规则散落在两处（写盘在 factor_curves.py、读取在前端）⇒ 必须用同一条规则 ✓')
 chk('★ 内存卡的"模式"格**永远渲染**（未运行时显示占位 ⇒ 卡宽恒定且不留空白）',
     "'mode' + (mine?.running ? '' : ' off')" in src and '未运行' in src)
