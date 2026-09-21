@@ -293,7 +293,10 @@ def library_entries(limit=50):
         pool = e.get('pool') or 'all'
         f = _lib(pool).get(e.get('code')) or {}
         row = dict(e)
-        for k in ('detail', 'metrics', 'status'):
+        # ★★★★★ 2026-09-21（用户："它没有 5、20、双的标签，也要加上"）——
+        #   入库日志的每一项也带上**口径强项标签**与**20 日指标** ✓
+        #   来源 = 上面 `_lib(pool)`（就是 `library(pool)` 的行 ✓）⇒ 阈值仍然**只有一处** ✗✓
+        for k in ('detail', 'metrics', 'metrics20', 'status', 'hzn'):
             if k in f and k not in row:
                 row[k] = f[k]
         # ★ 每条都**显式**给三态（True 在库 / False 已移出 / None 判不了），交给前端原样显示 ✓
@@ -302,6 +305,8 @@ def library_entries(limit=50):
         row['summary'] = f.get('summary') or _plain(e.get('oneLiner') or '')
         row['family'] = f.get('family') or _plain(e.get('family') or '')
         row['expr'] = f.get('expr') or e.get('expr') or ''
+        # ★ 2026-09-21：口径标签显式给（缺席 = 空串 ⇒ 前端不显示 ✓ 与库表同规矩 ✓）
+        row.setdefault('hzn', f.get('hzn') or '')
         row['inLibrary'] = bool(f)          # 这条编号今天还在库文档里吗（≠ 在有效库，见 inBank ✓）
         out.append(row)
     return {'count': n_all, 'limit': limit, 'entries': out,

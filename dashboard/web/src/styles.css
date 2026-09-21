@@ -211,6 +211,24 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 /* 公式那行占**整行宽度**（不再和按钮抢位置）；三件套缺一就会把卡片撑出横向滚动条 ✗ */
 .logrow .ls { min-width: 0; white-space: nowrap; overflow: hidden;
               text-overflow: ellipsis; color: var(--mut); font-size: 12px; }
+/* ★★★★★ 2026-09-21（用户："这个标签放不下了…然后 A、5、已入库这三个标签都放到第二行吧，
+   把公式字符少显示一些就行了"）
+   第二行 = 档位 A/B/C · 口径 5/20/双 · 状态 + 公式（公式吃剩余宽度、放不下就省略号 ✓）
+   ⚠ 卡片只有 ~310px ⇒ 分工必须明确：**标签不许收缩**（否则又变「已入…」✗）、
+     **只有公式允许收缩**（它本来就有 title 悬停看全 ✓）
+   ★★ 第三批（用户："几个标签隔得太远了，稍微贴近点，但别贴边"）—— 真因是我上一批的错 ✗：
+     全局那条 `.tag.grade/.tag.hz` 给了每个标签 `margin-right: 8px` + `min-width: 17px`，
+     在**表格**里正好（标签与编号分开 ✓），但搬到**窄卡片**里就"空得很" ✗
+     ⇒ 这里用 `.logrow .logr2 …`（**特异性 0,3,0 > 全局的 0,2,0** ✓）把它压下来，
+       与书写顺序无关（避免以后挪动 CSS 又失效 ✗）：
+         · 标签间距 → **4px**（贴近 ✓ 但**不是 0** ⇒ 不贴边 ✓）
+         · 去掉 min-width 的"气"、内边距收到 4px、字号 10.5px（与本卡的"已入库"一致 ✓）
+         · 第二行整体左侧留 **2px**、公式前再留 2px ⇒ 有呼吸但不空旷 ✓ */
+.logr2 { display: flex; align-items: center; gap: 4px; margin-top: 3px; padding-left: 2px; }
+.logrow .logr2 .tag, .logrow .logr2 .stag {
+  flex: none; margin-right: 0; min-width: 0; padding: 0 4px; font-size: 10.5px; }
+.logrow .logr2 .tag.cjk { font-size: 10px; }
+.logrow .logr2 .ls { flex: 1 1 auto; margin-left: 2px; }
 .logrow .btn.sm { flex: none; margin-left: auto; padding: 2px 8px; font-size: 11.5px; }
 .card-f { display: flex; justify-content: space-between; color: var(--mut); font-size: 11.5px;
           border-top: 1px solid var(--bd); padding-top: 8px; margin-top: 4px; }

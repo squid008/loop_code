@@ -796,18 +796,28 @@ function EntryLogCard({ d, onDetail }:
               </span>
               <span className="lp">{e.pool === 'all' ? '全A' : e.pool}</span>
               <span className="lc">{e.code ?? '无编号'}</span>
-              {/* ★ 2026-09-20：入库日志也带上档位（用户："那里我看也放得下，也加上吧"）✓ */}
+              <button className="btn sm" onClick={() => onDetail(e)}>详情</button>
+            </div>
+            {/* ★★★★★ 2026-09-21（用户："这个标签放不下了…然后 A、5、已入库这三个标签都放到第二行吧，
+                把公式字符少显示一些就行了"）—— **三个标签从第一行搬到第二行** ✓
+                为什么：第一行要放 时间（~106px）+ 池 + 编号 + 三个标签 + 详情按钮 ⇒ 必挤 ✗
+                （这正是"标签放不下"的真因 ✓ 不是字号问题 ✓）
+                ⇒ 现在：第一行 = 时间 · 池 · 编号 ·（右）详情 ✓
+                        第二行 = 档位 A/B/C · 口径 5/20/双 · 状态 + 公式（放不下自动省略号 ✓ 悬停看全 ✓）*/}
+            <div className="logr2">
+              {/* ★ 2026-09-20：入库日志也带档位（用户："那里我看也放得下，也加上吧"）✓ */}
               <GradeTag strip={(e as { detail?: { strip?: string } }).detail?.strip} />
-              {/* ★ 入库过 ≠ 还在库里（跨池去重会移出）⇒ 编号旁边直接标出来，省得去别的页签对 ✗
+              {/* ★★★★★ 2026-09-21（用户："它没有 5、20、双的标签，也要加上"）✓ 与库表同源 ✓ */}
+              <HzTag hzn={(e as { hzn?: string }).hzn} />
+              {/* ★ 入库过 ≠ 还在库里（跨池去重会移出）⇒ 直接标出来，省得去别的页签对 ✗
                   （三态：已入库 / 已移出 / 状态未知；判不了就写未知，绝不默认成已入库 ✓） */}
               <span className={`stag ${e.inBank === true ? 'ok' : e.inBank === false ? 'out' : 'unk'}`}
                     title={libStateTip(e.inBank)}>
                 {e.inBank === true ? '已入库' : e.inBank === false ? '已移出' : '状态未知'}
               </span>
-              <button className="btn sm" onClick={() => onDetail(e)}>详情</button>
-            </div>
-            <div className="ls" title={e.expr || e.summary || ''}>
-              {e.summary || e.oneLiner || e.expr || '—'}
+              <span className="ls" title={e.expr || e.summary || ''}>
+                {e.summary || e.oneLiner || e.expr || '—'}
+              </span>
             </div>
           </div>
         ))}

@@ -1374,34 +1374,92 @@ def trim_cache(cache, cap):
             cache.pop(k, None)
 
 
+def _real_mb(obj, seen=None, depth=0):
+    """估一个缓存值**真实钉住**的内存（MB）—— ★ 关键：把 numpy **视图的底座**算进来 ✗
+
+    ★★★★★ 2026-09-21（治本第二刀 · 真事故驱动）：
+      上一版 `trim_cache_mb` 只数 `getattr(v, 'nbytes')` ✗ —— 而 numpy **视图**的 `nbytes`
+      是**视图自己**的大小，它却让**整个底座数组活着**（`arr.base` 不被释放 ✗）
+      而引擎缓存里存的恰恰大量是"子面板的切片/移位视图" ✓
+      （`eval_expr` 把**叶子字段**与 `[::FWD]` / `x[1:]` 一类结果**直接入缓存** ✓ 见 L1229-1239）
+      ⇒ **账实不符**：账上 ≤ 2.5 GB，实测 `_LRU.clear()` 一执行就掉 **3.57 GB** ✗
+        （gen36 实测：L1 阶段工作集 7.25 → 11.08 GB **单调爬升**，L1 一结束立刻回落 7.51 ✓
+           —— 掉的那一块正好是 `_LRU.clear()`（L2589）执行的那一瞬 ✓ 这就是定位证据 ✓）
+      ⇒ 结论：**"按字节裁"还不够，必须按"真实钉住的字节"裁** ✗✓
+
+    做法（全部只读属性，不遍历数组 ⇒ 便宜 ✓）：
+      ① ndarray：沿 `.base` 链走到**根**，按根的 `nbytes` 计 ✓
+      ② 同一个根**只算一次**（`seen` 由调用方共用 ⇒ 多份视图共享的底座不重复计 ✓）
+      ③ pandas ⇒ 走 `.values` ✓ ④ dict/list/tuple ⇒ 递归（限深 3）✓ ⑤ 其它 ⇒ `sys.getsizeof` ✓
+    """
+    if obj is None:
+        return 0.0
+    if seen is None:
+        seen = set()
+    try:
+        if isinstance(obj, np.ndarray):
+            root = obj
+            for _ in range(8):                               # 限深，防异常链 ✓
+                b = getattr(root, 'base', None)
+                if isinstance(b, np.ndarray):
+                    root = b
+                else:
+                    break
+            k = id(root)
+            if k in seen:
+                return 0.0                                   # 同一底座只算一次 ✓
+            seen.add(k)
+            return float(getattr(root, 'nbytes', 0) or 0) / 1048576.0
+        if depth >= 3:
+            return 0.0
+        if isinstance(obj, dict):
+            return sum(_real_mb(v, seen, depth + 1) for v in obj.values())
+        if isinstance(obj, (list, tuple, set)):
+            return sum(_real_mb(v, seen, depth + 1) for v in obj)
+        _vs = getattr(obj, 'values', None)                   # pandas Series/DataFrame ✓
+        if _vs is not None and hasattr(_vs, 'nbytes'):
+            return _real_mb(np.asarray(_vs), seen, depth + 1)
+        return float(sys.getsizeof(obj)) / 1048576.0
+    except Exception:                                        # noqa: BLE001
+        return 0.0                                           # 估不出来也不能影响主流程 ✓
+
+
+def _cache_real_mb(cache):
+    """整个缓存的**真实**占用 MB（共用一份 `seen` ⇒ 多份视图共享的底座只计一次 ✓）。"""
+    seen = set()
+    return sum(_real_mb(v, seen) for v in cache.values())
+
+
 def trim_cache_mb(cache, max_mb):
-    """★★★★★ 2026-09-21（治本）：按**字节**裁缓存 ⇒ 内存有**硬上限** ✓
+    """★★★★★ 2026-09-21（治本）：按**真实字节**裁缓存 ⇒ 内存有**硬上限** ✓
 
     ★ 为什么必须按字节（实测见 `set_mem_budget` 的注释 ✓）：
       `trim_cache` 只管"条数"✗，而单条大小随**池宽**变化 ——
       1000 池的 L1 子面板是 2094 日 × 2818 股 ⇒ 单条 ≈ **47 MB** ✗
       ⇒ 400 条 ≈ **18.8 GB** ✗（实测这一代的私有内存峰值 14.6 GB ✓ 工作集 16.6 GB ✓）
       ⇒ 三个池并行就把 47.9 GB 的机器压到只剩 1.7 GB ⇒ 换页 ⇒ 单代 110~172 分钟 ✗
+    ★★ 第二刀（2026-09-21）：**"按字节"还不够 —— 要按"真实钉住的字节"** ✗
+      见 `_real_mb`：只数视图自己的 nbytes ⇒ 账实不符 ⇒ 预算**形同虚设** ✗
     ★ 淘汰策略：dict 保插入序 ⇒ 从**最旧**开始丢 ✓（缓存只是加速、丢了会重算 ⇒ 不影响正确性 ✓）
-    ★ 返回：裁完之后的近似总 MB（便于日志/守门核验 ✓）
+    ★ 返回：裁完之后的**真实**总 MB（便于日志/守门核验 ✓）
     """
     if cache is None:
         return 0.0
     try:
-        tot = 0.0
-        for v in cache.values():
-            n = getattr(v, 'nbytes', 0)
-            if n:
-                tot += n / 1048576.0
+        tot = _cache_real_mb(cache)
         if tot <= max_mb:
             return tot
+        n0 = len(cache)
         for k in list(cache.keys()):
             if tot <= max_mb:
                 break
-            v = cache.pop(k, None)
-            n = getattr(v, 'nbytes', 0)
-            if n:
-                tot -= n / 1048576.0
+            cache.pop(k, None)
+            # ⚠ 必须**重算**而不是"减掉刚才那份" ✗ —— 底座可能被**多份视图共享** ✓
+            #   （减掉就会重复扣，把预算算成"早就达标"⇒ 又会提前停手 ✗）
+            tot = _cache_real_mb(cache)
+        if n0 > len(cache):
+            print('  [内存预算] 缓存裁至 %.0f MB（丢最旧 %d 个 ✓ 口径=**含视图底座**的真实占用 ✓）'
+                  % (tot, n0 - len(cache)), flush=True)
         return max(tot, 0.0)
     except Exception:                                        # noqa: BLE001
         return 0.0                                           # 裁不动也不能影响主流程 ✓

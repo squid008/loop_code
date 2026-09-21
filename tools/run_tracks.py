@@ -360,12 +360,24 @@ def do_pool_tail(pool, tag='', min_free_gb=TAIL_MIN_FREE_GB, force=False):
                                '--pools=%s' % pool]),
             ('③', '指标表', [PY, '-u', 'tools/factor_metrics.py', '--only-new',
                            '--panel_cache=use', '--pools=%s' % pool]),
+            # ★★★★★ 2026-09-21（用户："以后入库之后，会不会自动做这个审核然后贴标签呀？"）——
+            #   原来**不会** ✗：收尾只跑 **5 日口径** ⇒ 新入库因子的**口径标签 5/20/双 一直空着** ✗
+            #   ⇒ 补 ③b（20 日指标 ✓ 增量 ⇒ 没新因子时几秒、新因子 ≈15s/个 ✓）
+            ('③b', '指标表 20 日', [PY, '-u', 'tools/factor_metrics.py', '--only-new',
+                                 '--panel_cache=use', '--fwd', '20',
+                                 '--out', 'docs/factor_metrics_fwd20.csv',
+                                 '--pools=%s' % pool]),
             ('④', '曲线 core', [PY, '-u', 'tools/factor_curves.py', '--only-new',
                               '--stage=core', '--panel_cache=use', '--pools=%s' % pool]),
             ('⑤', '剥风格', [PY, '-u', 'tools/factor_curves.py', '--only-new',
                            '--stage=strip', '--panel_cache=use', '--pools=%s' % pool]),
             ('⑥', '风格画像', [PY, '-u', 'tools/factor_curves.py', '--only-new',
                             '--stage=style+strip2', '--panel_cache=use', '--pools=%s' % pool]),
+            # ★ 2026-09-21：20 日口径的**曲线**（详情页口径开关切过去要有图 ✓）
+            #   ⚠ 比 5 日那条贵（≈100 秒/个 ✗）⇒ 只在**真有新因子**时才花这个钱 ✓
+            ('⑥b', '曲线 20 日', [PY, '-u', 'tools/factor_curves.py', '--only-new',
+                               '--stage=all', '--fwd=20', '--out_dir=factor_curves_fwd20',
+                               '--panel_cache=use', '--pools=%s' % pool]),
         ]
         for _tag, _what, _cmd in _jobs:
             try:
@@ -498,6 +510,30 @@ def _global_tail_impl(tag=''):
                 log('      [!] {} 非零退出={} -> 仍继续（详情页该段会缺）'.format(_stage, r.returncode))
         except Exception as e:
             log('      [!] {} 失败({}) -> 仍继续'.format(_stage, type(e).__name__))
+    # ★★★★★ 2026-09-21（用户："以后入库之后，会不会自动做这个审核然后贴标签呀？"）——
+    #   **原来不会** ✗：以上 ③④⑤⑥ 全是 **5 日口径**，而「口径标签 5 / 20 / 双」依赖
+    #   `--fwd 20` 的两份产物（指标表 + 曲线目录 ✓）⇒ 新入库因子**一直没标签** ✗
+    #   ⇒ 补 ③b⑥b（都是 `--only-new` **增量** ✓：没新因子时各几秒 ✓；
+    #      有新因子时 ③b ≈ 15s/个 ✓ · ⑥b ≈ 100s/个 ✗ —— 一次到位胜过"标签长期空着" ✓）
+    #   ⚠ 顺序：③b 要在 ①（facs 落地）之后 ✓；⑥b 与 ⑤⑥ 同为曲线、互不依赖 ✓
+    for _tag, _what, _cmd in (
+            ('③b', '指标表 20 日', [PY, '-u', 'tools/factor_metrics.py', '--only-new',
+                                   '--panel_cache=use', '--fwd', '20',
+                                   '--out', 'docs/factor_metrics_fwd20.csv']),
+            ('⑥b', '曲线 20 日', [PY, '-u', 'tools/factor_curves.py', '--only-new',
+                                 '--stage=all', '--fwd=20', '--out_dir=factor_curves_fwd20',
+                                 '--panel_cache=use'])):
+        log('  [收尾 {}] {}（口径标签 5 / 20 / 双 的数据源 ✓）'.format(_tag, _what))
+        try:
+            r = subprocess.run(_cmd, cwd=ROOT, capture_output=True, text=True,
+                               encoding='utf-8', errors='replace', timeout=14400,
+                               creationflags=NO_WIN)
+            for ln in (r.stdout or '').splitlines()[-3:]:
+                log('      ' + ln[:150])
+            if r.returncode != 0:
+                log('      [!] {} 非零退出={} -> 仍继续（口径标签会缺）'.format(_what, r.returncode))
+        except Exception as e:
+            log('      [!] {} 失败({}) -> 仍继续'.format(_what, type(e).__name__))
     log('=' * 76)
     # ★★ 2026-09-16 修 BUG E：收尾结束后**必须自己复位 phase** ——
     #   调用方（`main()`）的复位写在 `do_global_tail()` **之前** ⇒ 这里若不复位，
