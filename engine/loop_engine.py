@@ -33,8 +33,18 @@ import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+import factor_miner as _FM          # ★ 口径**单一事实源**（FWD 走运行期取值 ✗ 见下）
 from factor_miner import (load_panel, prepare, get_universe, cs_rank,
-                          evaluate_real, START, FWD, COST_PRESETS)
+                          evaluate_real, START, COST_PRESETS)
+# ★★★★★ 2026-09-21（用户拍板：(C) 双口径挖掘的**前置改造**）——
+#   `FWD` 原来是 `from factor_miner import FWD` = **import 时的值拷贝** ✗
+#   ⇒ `factor_miner.set_fwd()` 改的是 fm 的全局、**改不到本模块** ✗（`factor_metrics.py` 则直接用
+#     `factor_miner` 模块 ⇒ 所以重评能换口径、引擎不能 ✓ 就是这个原因 ✓）
+#   ⇒ 现在：本模块保留**模块全局 `FWD`**（14 处 `[::FWD]` 切片照旧 ✓ 一行都不用改 ✓），
+#     但它的值**由 `main()` 在解析完 `--fwd` 后同步一次** ✓（见文件末尾的同步块 ✓）
+#   ⚠⚠ **只能"加口径"、不能"换口径"** ✗：把 5 改成 20 ⇒ 现有库数字/阈值/曲线全部错位 ✓
+#     ⇒ 生产上用**独立轨道 + `horizon` 标签** ✓
+FWD = _FM.FWD
 from cost_presets import DEFAULT_COST, cost_label      # 成本档单一事实源(2026-09-11)
 from loop_metrics import (rank_rows, decile_shape, l1_score,   # L1 指标层(2026-09-11, 含 rank_rows)
                           style_expo, STYLE_KEYS,              # 风格暴露观测(2026-09-11, --style_obs)
@@ -934,14 +944,22 @@ def append_library_entries(evs, quiet=False):
         return 0
 
 
-def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_grades=None):
+def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_grades=None,
+              horizon=None):
     """本代新入库因子自动同步追加进 docs/factor_library.md(只增不改历史, 家族命名留待人工精炼)。
     幂等: 编号取文本现有最大 F{nn}+1; 任何失败仅告警, 绝不影响入库主流程。
     added_exprs: 本代真正 append 进 bank 的 expr 列表; expr2nd: {str(node): node}(模块已有 Node/skeleton)。
     pool_tags  : ★ 2026-09-13 新增 {expr: pool_tag} —— 用户要"一眼看出这个因子是全A+哪个池好用、
                  还是只有全A好用"。规则来自 `loop_pools.derive_tag`（单一事实源），
                  与 `standard/pool_tags.py` 派生出的 `docs/pool_tags.csv` **同一套口径**。
-                 没跑到 `--pool_obs` 时字典为空 -> 该行写"未测(--pool_obs 未开)"，**不写未知标签**。"""
+                 没跑到 `--pool_obs` 时字典为空 -> 该行写"未测(--pool_obs 未开)"，**不写未知标签**。
+    horizon    : ★ 2026-09-21 新增（**默认 None = 5 日口径 = 行为与改造前完全一致** ✓）。
+                非 None（如 20）时：① 明细块加一行「口径」✓ ② `library_entries.jsonl` 的
+                事件带 `horizon` 字段 ✓。
+                ⚠ 为什么加：**双口径**下"同一个表达式在两个口径下表现不同" ⇒ 入库文档必须写明
+                  按哪个口径验的 ✗，否则半年后无法分辨（与 `factor_metrics.py` 抬头打口径同理 ✓）。
+                ⚠ 为什么**不加表格列**：总览表头固定 5 列、文件 append-only ⇒ 加列会让历史行错位 ✗
+                  （与池标签/剥风格/sign 同一处理 ✓ 只写明细块 ✓）。"""
     import re
     import io
     # ★★★ 2026-09-15 修（P0-2 重构时被"名字封闭性检查"照出来的**潜伏 bug**）：
@@ -1033,19 +1051,35 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
             #   ⇒ 池标签只写进**明细块**（用户正是看那里）。
             tbl_rows.append('| F%02d | gen%d | %s | %s | 已入库(auto) |'
                             % (no, gen, fam, short))
+            # ★ 2026-09-21（双口径）：**口径行** —— 只写明细块 ✗（总览表头固定 5 列、文件
+            #   append-only ⇒ 加列会让历史行错位 ✓ 与池标签/剥风格/sign 同一处理 ✓）
+            _hz_line = ''
+            if horizon:
+                _nr = r.get('n_rebal') if hasattr(r, 'get') else None
+                _hz_line = ('- 口径：**%d 日调仓** ✓（%s成本 %s）'
+                            '★ 与 5 日口径的数字**不可直接比** ✗'
+                            '（样本区间/成本相同，只有调仓周期不同 ✓）\n'
+                            % (int(horizon),
+                               ('期数 %s；' % (int(_nr) if _nr is not None and np.isfinite(_nr)
+                                              else '—')) if _nr is not None else '',
+                               cost_label(r['cost'])))
             det_rows.append(
                 '\n### F%02d · gen%d 入库（引擎自动同步，家族命名待人工精炼）\n'
                 '```\n%s\n```\n'
                 '%s- 家族：%s（auto）\n- 叶子：%s\n- 骨架：`%s`\n'
-                '%s%s'
+                '%s%s%s'
                 '- 费后指标（full，成本 %s）：%s\n'
-                % (no, gen, expr, _sg_line2, fam, leaf_s, skel, _tg_line, _sg_line,
+                % (no, gen, expr, _sg_line2, fam, leaf_s, skel, _tg_line, _sg_line, _hz_line,
                    cost_label(r['cost']), met))
-            evs.append(dict(ts=time.strftime('%Y-%m-%d %H:%M:%S'), tsSource='engine',
-                            source='engine', pool=MINE_POOL, gen=int(gen),
-                            code='F%02d' % no, expr=expr, family=fam, oneLiner=short,
-                            ic=(float(r['ic']) if np.isfinite(r['ic']) else None),
-                            annEx=(float(r['ann_ex']) if np.isfinite(r['ann_ex']) else None)))
+            _ev = dict(ts=time.strftime('%Y-%m-%d %H:%M:%S'), tsSource='engine',
+                       source='engine', pool=MINE_POOL, gen=int(gen),
+                       code='F%02d' % no, expr=expr, family=fam, oneLiner=short,
+                       ic=(float(r['ic']) if np.isfinite(r['ic']) else None),
+                       annEx=(float(r['ann_ex']) if np.isfinite(r['ann_ex']) else None))
+            if horizon:
+                # ★ 双口径：事件里标明**按哪个口径验的** ✓（默认 5 日 ⇒ 不带该字段 ⇒ 历史不变 ✓）
+                _ev['horizon'] = int(horizon)
+            evs.append(_ev)
             no += 1
         if not det_rows:
             return
@@ -1470,11 +1504,16 @@ def trim_cache_mb(cache, max_mb):
 # 故本模块内 `rank_rows(...)` 与外部的 `loop_engine.rank_rows` 接口保持不变。
 
 
-def factor_stability(V, dates=None, start=START, fwd=FWD):
+def factor_stability(V, dates=None, start=START, fwd=None):
     """因子稳定性 = 相邻调仓日截面rank的相关性(均值)
     稳定性低 -> 每次调仓Top组大换血 -> 换手高 -> 费后被成本吃光
     这是 L1 必须看、只看IC会漏掉的关键指标
+
+    ★★ 2026-09-21（前置改造）：`fwd` 原来是 `fwd=FWD` —— **默认值在 `def` 那一刻就固化了** ✗
+      （Python 的经典坑 ✓）⇒ 就算 `set_fwd(20)` 改了模块全局，这个函数**还是拿 5** ✗
+      ⇒ 改成 `fwd=None` + 函数内取**当前**全局 ✓（调用方传值时仍以显式值为准 ✓）
     """
+    fwd = FWD if fwd is None else fwd
     sub = V[::fwd] if dates is None else V[dates >= start][::fwd]
     R = rank_rows(sub)
     cs = []
@@ -3633,6 +3672,14 @@ if __name__ == '__main__':
                     help='往返成本(扣在单向换手率上): 默认主用档 %.4f = 实盘(0.0046)略宽松取整; '
                          '预设: 实盘(滑点千1.5)=0.0046 / 实盘(滑点千2)=0.0056 / 主用档=0.004 / '
                          '压力档=0.007; 定义与构成见 engine/cost_presets.py' % DEFAULT_COST)
+    # ★★★★★ 2026-09-21（用户拍板：(C) 双口径挖掘**前置改造**）—— 调仓周期**命令行入口**
+    #   背景：`factor_miner.set_fwd()` 早就写好（注释 `1=日频 5=周频 20=月频` ✓）却是**孤儿函数**
+    #     —— 全仓零调用 ✗，`FWD` 实际写死 5 ⇒ **引擎侧没有任何口径入口** ✗
+    #   ⚠ 语义：**0 = 不改**（沿用引擎默认 5 ⇒ 行为逐位不变 ✓）；非 0 ⇒ 本进程按该口径求值 ✓
+    #   ⚠ 与 `--window` **不是一回事** ✗：`--window` 是**样本区间**（full/recent600 ✓），
+    #     本参数是**调仓周期** ✓（期数 418 → ~104 ✓）
+    ap.add_argument('--fwd', type=int, default=0,
+                    help='调仓周期（交易日）；0=沿用引擎默认(5)。★ 双口径挖掘用（20）✓')
     ap.add_argument('--window', choices=['full', 'recent600'], default='full',
                     help='回测口径: full=2018起九年; recent600=最近600交易日(中金口径)')
     ap.add_argument('--seg_n', type=int, default=3,
@@ -3641,7 +3688,17 @@ if __name__ == '__main__':
     ap.add_argument('--seg_need', type=int, default=2,
                     help='分段独立验证: 至少几个子区间累计费后超额>0 才通过 '
                          '(默认2: 3段中≥2段为正, 拦"靠单段行情撑全样本"候选)')
+    # ★★★★★ 2026-09-21（用户拍板：(C) 双口径挖掘 **前置改造**）——
+    #   把**调仓周期**从命令行接进本模块的全局 `FWD` ✓
+    #   ⚠ 必须在 `run()` **之前**同步：`fwd_ret` 的构造（L2183）与 **14 处 `[::FWD]` 切片**都在 run 内 ✓
+    #   ⚠ `set_fwd` 返回的是**新值** ⇒ 旧值要先记 ✓
     _args = ap.parse_args()
+    if _args.fwd:
+        _FWD_OLD = FWD
+        _FM.set_fwd(int(_args.fwd))
+        FWD = _FM.FWD                # ★ 本模块全局（模块级 if 内赋值 = 全局 ✓）⇒ 14 处切片跟着走 ✓
+        print('  ★ 调仓周期口径 = **%d 交易日**（引擎默认 %d）⇒ 期数约 418 → 约 %d ✓'
+              % (FWD, _FWD_OLD, max(1, int(418 * _FWD_OLD / float(max(FWD, 1))))), flush=True)
     set_mine_pool(_args.mine_pool)   # ★必须在 run() 之前: 路径后缀 & L1 池掩码都在 run 内部生效
     set_panel_cache(_args.panel_cache)   # ★同上: base_fields() 在 run() 内部首次被调用
     # ★ 2026-09-16：把「私有缓存预算」落到模块全局（默认值与改造前完全相同 ⇒ 逐位不变）

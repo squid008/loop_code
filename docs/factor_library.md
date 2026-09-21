@@ -14,7 +14,7 @@
 > · ⇒ ★ **做统计/排序/横向对比时，请排除或单独标注 gen8~gen11 的早期行** ✓
 > · ✓ **精选池不受影响** —— 它用的是**新口径**（`docs/loop_strip_style_bank.csv` 的 `calmar/turn`）✓
 >
-> 当前 **42 个入库**（截至 gen51，2026-09-10；gen8×1 / gen10×3 / gen11×4 / gen14×1 / gen23×2 / gen31×1 / gen33×1 / gen43×3 / gen45×3 / gen50×4 / gen51×1）。
+> 当前 **45 个入库**（截至 gen51，2026-09-10；gen8×1 / gen10×3 / gen11×4 / gen14×1 / gen23×2 / gen31×1 / gen33×1 / gen43×3 / gen45×3 / gen50×4 / gen51×1）。
 > 运行期起：引擎在每代入库（`state.bank` append）时**自动同步追加**新因子条目（gen24 后的入库代次生效），家族/一句话命名随时可人工精炼覆盖。
 
 ---
@@ -65,6 +65,10 @@
 | F40 | gen75 | 资金流、资金流 | corr100(mf_l_bqty, mf_l_sell) | 已入库(auto) |
 | F41 | gen75 | 振幅、资金流 | neg(corr100(true_range, mf_x_bqty)) | 已入库(auto) |
 | F42 | gen0 | 外部基准 · 短周期价量 | neg(mul(cs_rank(ts_rank10(close)), cs_rank(sub(ts_delta10(close), ts_delta5(close))))) | 已移出(外部基准 · 不合格) |
+| F43 | gen42 | 跳空、日内收益 | sub(ts_mean100(overnight), ts_mean100(int… | 已入库(auto) |
+| F44 | gen68 | 风格、风格 | max(max(barra_residual_volatility, div(ba… | 已入库(auto) |
+| F45 | gen71 | 风格、风格、财报 | max(max(barra_residual_volatility, div(ba… | 已入库(auto) |
+| F46 | gen74 | 风格、风格 | add(max(barra_residual_volatility, div(ba… | 已入库(auto) |
 
 > 标记 `⚠️冗余①~⑤` = 库内近重复组成员（口径与明细见下方「库内冗余对清单」）；**每组按 1 个独立因子计**。
 
@@ -618,6 +622,70 @@ neg(corr100(true_range, mf_x_bqty))
 - 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
   （全A 超额 +5.44% / Calmar +0.464；300 -2.32%；500 -2.27%；1000 +1.03%）
 - 费后指标（full，成本 0.004往返(主用档)）：IC 0.0421 / IC_IR 0.460 / 年化超额 +6.2% / 回撤 -11.5% / Calmar 0.544 / Sharpe 0.909 / 最近年 +0.5% / 单期换手 15.5% / 负年 0
+
+---
+
+
+### F43 · gen42 入库（引擎自动同步，家族命名待人工精炼）
+```
+sub(ts_mean100(overnight), ts_mean100(intraday))
+```
+- **符号 `sign`：`1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
+- 家族：跳空、日内收益（auto）
+- 叶子：overnight、intraday
+- 骨架：`sub(ts_mean(overnight),ts_mean(intraday))`
+- 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
+- 剥风格：**`A`** 独立有效（剥风格后**日频** Calmar >= 0.30，且**日频**回撤 > -0.20）（原 Calmar 0.893 → 剥后 0.483；超额 +6.4% → +4.2%；**日频** 剥后 Calmar 0.380，日频回撤 -11.2%）
+- 口径：**20 日调仓** ✓（期数 104；成本 0.004往返(主用档)）★ 与 5 日口径的数字**不可直接比** ✗（样本区间/成本相同，只有调仓周期不同 ✓）
+- 费后指标（full，成本 0.004往返(主用档)）：IC 0.0777 / IC_IR 0.764 / 年化超额 +6.4% / 回撤 -7.2% / Calmar 0.893 / Sharpe 1.027 / 最近年 +4.2% / 单期换手 41.2% / 负年 0
+
+---
+
+
+### F44 · gen68 入库（引擎自动同步，家族命名待人工精炼）
+```
+max(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std100(barra_residual_volatility))))
+```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
+- 家族：风格、风格（auto）
+- 叶子：barra_residual_volatility、barra_liquidity
+- 骨架：`max(max(barra_residual_volatility,div(barra_residual_volatility,barra_liquidity)),ts_rank(cs_scale(ts_std(barra_residual_volatility))))`
+- 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
+- 剥风格：**`B`** 弱独立（剥风格后日频 Calmar 在 0~0.30，或回撤劣于 -0.20）（原 Calmar 1.709 → 剥后 0.301；超额 +4.6% → +1.9%；**日频** 剥后 Calmar 0.255，日频回撤 -7.5%）
+- 口径：**20 日调仓** ✓（期数 104；成本 0.004往返(主用档)）★ 与 5 日口径的数字**不可直接比** ✗（样本区间/成本相同，只有调仓周期不同 ✓）
+- 费后指标（full，成本 0.004往返(主用档)）：IC 0.0552 / IC_IR 0.884 / 年化超额 +4.6% / 回撤 -2.7% / Calmar 1.709 / Sharpe 1.104 / 最近年 +5.4% / 单期换手 63.0% / 负年 0
+
+---
+
+
+### F45 · gen71 入库（引擎自动同步，家族命名待人工精炼）
+```
+max(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std100(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(div(fa_np_margin, barra_liquidity)))))))))
+```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
+- 家族：风格、风格、财报（auto）
+- 叶子：barra_residual_volatility、barra_liquidity、fa_np_margin
+- 骨架：`max(max(barra_residual_volatility,div(barra_residual_volatility,barra_liquidity)),ts_rank(cs_scale(ts_std(max(barra_residual_volatility,ts_rank(ts_std(cs_rank(div(fa_np_margin,barra_liquidity)))))))))`
+- 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
+- 剥风格：**`A`** 独立有效（剥风格后**日频** Calmar >= 0.30，且**日频**回撤 > -0.20）（原 Calmar 1.066 → 剥后 0.537；超额 +3.1% → +2.0%；**日频** 剥后 Calmar 0.443，日频回撤 -4.5%）
+- 口径：**20 日调仓** ✓（期数 104；成本 0.004往返(主用档)）★ 与 5 日口径的数字**不可直接比** ✗（样本区间/成本相同，只有调仓周期不同 ✓）
+- 费后指标（full，成本 0.004往返(主用档)）：IC 0.0520 / IC_IR 0.890 / 年化超额 +3.1% / 回撤 -2.9% / Calmar 1.066 / Sharpe 0.944 / 最近年 +2.1% / 单期换手 69.0% / 负年 1
+
+---
+
+
+### F46 · gen74 入库（引擎自动同步，家族命名待人工精炼）
+```
+add(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std100(barra_residual_volatility))))
+```
+- **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
+- 家族：风格、风格（auto）
+- 叶子：barra_residual_volatility、barra_liquidity
+- 骨架：`add(max(barra_residual_volatility,div(barra_residual_volatility,barra_liquidity)),ts_rank(cs_scale(ts_std(barra_residual_volatility))))`
+- 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
+- 剥风格：**`B`** 弱独立（剥风格后日频 Calmar 在 0~0.30，或回撤劣于 -0.20）（原 Calmar 0.770 → 剥后 0.473；超额 +3.7% → +2.2%；**日频** 剥后 Calmar 0.289，日频回撤 -7.7%）
+- 口径：**20 日调仓** ✓（期数 104；成本 0.004往返(主用档)）★ 与 5 日口径的数字**不可直接比** ✗（样本区间/成本相同，只有调仓周期不同 ✓）
+- 费后指标（full，成本 0.004往返(主用档)）：IC 0.0624 / IC_IR 0.858 / 年化超额 +3.7% / 回撤 -4.7% / Calmar 0.770 / Sharpe 0.712 / 最近年 +3.3% / 单期换手 47.4% / 负年 1
 
 ---
 

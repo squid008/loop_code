@@ -48,6 +48,10 @@ docs/loop_pool_obs*.csv
 docs/pool_tags*.csv
 # ★ 因子费后指标表（2026-09-16, tools/factor_metrics.py 按 state.bank 离线重算 -> 可随时重建）
 docs/factor_metrics.csv
+# ★ 2026-09-22 新增：20 日口径的**分析产物流水**（与 factor_metrics*.csv / factor_curves/ 同类 ✓
+#   都是"可重算的运行产物" ⇒ 不上 git ✓）。**权威记录**在 `docs/factor_library*.md`（因子正文）+
+#   `docs/library_entries.jsonl`（入库事件，带 `horizon` ✓）+ `docs/factor_registry.json`（进 git ✓）
+docs/horizon20*.csv
 # ★ 2026-09-21：**20 日口径**的同类产物（`tools/factor_metrics.py --fwd 20` 生成 ✓）
 #   与 5 日表同规矩：**可随时重建 + 体量大** ⇒ 不入 git ✓
 docs/factor_metrics_fwd*.csv

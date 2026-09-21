@@ -1,35 +1,35 @@
 {
  "schema": 1,
- "generatedAt": "2026-09-20 18:27:31",
+ "generatedAt": "2026-09-21 23:52:25",
  "source": "docs/factor_library*.md（编号/代数/家族/一句话/公式/指标）+ engine/loop_state*.pkl（入库 Node 结构，权威口径）",
  "why": "pkl 不进 git ⇒ 换机器（家里 pull）时本文件是\"重建 facs/指标/曲线\"的**唯一入口** ✓",
  "counts": {
   "all": {
-   "listed": 41,
-   "overview": 41,
-   "detail": 41,
-   "bank": 41,
+   "listed": 45,
+   "overview": 45,
+   "detail": 45,
+   "bank": 45,
    "bank_only": 0
   },
   "300": {
-   "listed": 4,
-   "overview": 4,
-   "detail": 4,
-   "bank": 3,
+   "listed": 5,
+   "overview": 5,
+   "detail": 5,
+   "bank": 4,
    "bank_only": 0
   },
   "500": {
-   "listed": 8,
-   "overview": 8,
-   "detail": 8,
-   "bank": 6,
+   "listed": 12,
+   "overview": 12,
+   "detail": 12,
+   "bank": 10,
    "bank_only": 0
   },
   "1000": {
-   "listed": 10,
-   "overview": 10,
-   "detail": 10,
-   "bank": 5,
+   "listed": 12,
+   "overview": 12,
+   "detail": 12,
+   "bank": 7,
    "bank_only": 1
   },
   "50": {
@@ -46,8 +46,8 @@
    "expr": "ts_mean150(corr100(ts_mean5(div(mf_m_bqty, hl_ratio)), ts_mean60(ts_mean5(turn_ratio))))"
   }
  ],
- "n_factors": 64,
- "n_with_node": 64,
+ "n_factors": 75,
+ "n_with_node": 75,
  "factors": [
   {
    "pool": "all",
@@ -2631,6 +2631,284 @@
    }
   },
   {
+   "pool": "all",
+   "no": "F43",
+   "gen": 42,
+   "family": "跳空、日内收益",
+   "oneLiner": "sub(ts_mean100(overnight), ts_mean100(int…",
+   "status": "已入库(auto)",
+   "expr": "sub(ts_mean100(overnight), ts_mean100(intraday))",
+   "sign": 1,
+   "poolTag": "csi1000_all",
+   "note": null,
+   "ic": 0.0777,
+   "icIr": 0.764,
+   "annEx": 0.064,
+   "dd": -0.07200000000000001,
+   "calmar": 0.893,
+   "sharpe": 1.027,
+   "recentYear": 0.042,
+   "turn": 0.41200000000000003,
+   "inBank": true,
+   "node": {
+    "op": "sub",
+    "args": [
+     {
+      "op": "ts_mean100",
+      "args": [
+       {
+        "op": "overnight",
+        "args": []
+       }
+      ]
+     },
+     {
+      "op": "ts_mean100",
+      "args": [
+       {
+        "op": "intraday",
+        "args": []
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "all",
+   "no": "F44",
+   "gen": 68,
+   "family": "风格、风格",
+   "oneLiner": "max(max(barra_residual_volatility, div(ba…",
+   "status": "已入库(auto)",
+   "expr": "max(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std100(barra_residual_volatility))))",
+   "sign": -1,
+   "poolTag": "csi1000_all",
+   "note": null,
+   "ic": 0.0552,
+   "icIr": 0.884,
+   "annEx": 0.046,
+   "dd": -0.027000000000000003,
+   "calmar": 1.709,
+   "sharpe": 1.104,
+   "recentYear": 0.054000000000000006,
+   "turn": 0.63,
+   "inBank": true,
+   "node": {
+    "op": "max",
+    "args": [
+     {
+      "op": "max",
+      "args": [
+       {
+        "op": "barra_residual_volatility",
+        "args": []
+       },
+       {
+        "op": "div",
+        "args": [
+         {
+          "op": "barra_residual_volatility",
+          "args": []
+         },
+         {
+          "op": "barra_liquidity",
+          "args": []
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "op": "ts_rank60",
+      "args": [
+       {
+        "op": "cs_scale",
+        "args": [
+         {
+          "op": "ts_std100",
+          "args": [
+           {
+            "op": "barra_residual_volatility",
+            "args": []
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "all",
+   "no": "F45",
+   "gen": 71,
+   "family": "风格、风格、财报",
+   "oneLiner": "max(max(barra_residual_volatility, div(ba…",
+   "status": "已入库(auto)",
+   "expr": "max(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std100(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(div(fa_np_margin, barra_liquidity)))))))))",
+   "sign": -1,
+   "poolTag": "csi1000_all",
+   "note": null,
+   "ic": 0.052,
+   "icIr": 0.89,
+   "annEx": 0.031,
+   "dd": -0.028999999999999998,
+   "calmar": 1.066,
+   "sharpe": 0.944,
+   "recentYear": 0.021,
+   "turn": 0.69,
+   "inBank": true,
+   "node": {
+    "op": "max",
+    "args": [
+     {
+      "op": "max",
+      "args": [
+       {
+        "op": "barra_residual_volatility",
+        "args": []
+       },
+       {
+        "op": "div",
+        "args": [
+         {
+          "op": "barra_residual_volatility",
+          "args": []
+         },
+         {
+          "op": "barra_liquidity",
+          "args": []
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "op": "ts_rank60",
+      "args": [
+       {
+        "op": "cs_scale",
+        "args": [
+         {
+          "op": "ts_std100",
+          "args": [
+           {
+            "op": "max",
+            "args": [
+             {
+              "op": "barra_residual_volatility",
+              "args": []
+             },
+             {
+              "op": "ts_rank60",
+              "args": [
+               {
+                "op": "ts_std200",
+                "args": [
+                 {
+                  "op": "cs_rank",
+                  "args": [
+                   {
+                    "op": "div",
+                    "args": [
+                     {
+                      "op": "fa_np_margin",
+                      "args": []
+                     },
+                     {
+                      "op": "barra_liquidity",
+                      "args": []
+                     }
+                    ]
+                   }
+                  ]
+                 }
+                ]
+               }
+              ]
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "all",
+   "no": "F46",
+   "gen": 74,
+   "family": "风格、风格",
+   "oneLiner": "add(max(barra_residual_volatility, div(ba…",
+   "status": "已入库(auto)",
+   "expr": "add(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std100(barra_residual_volatility))))",
+   "sign": -1,
+   "poolTag": "csi1000_all",
+   "note": null,
+   "ic": 0.0624,
+   "icIr": 0.858,
+   "annEx": 0.037000000000000005,
+   "dd": -0.047,
+   "calmar": 0.77,
+   "sharpe": 0.712,
+   "recentYear": 0.033,
+   "turn": 0.474,
+   "inBank": true,
+   "node": {
+    "op": "add",
+    "args": [
+     {
+      "op": "max",
+      "args": [
+       {
+        "op": "barra_residual_volatility",
+        "args": []
+       },
+       {
+        "op": "div",
+        "args": [
+         {
+          "op": "barra_residual_volatility",
+          "args": []
+         },
+         {
+          "op": "barra_liquidity",
+          "args": []
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "op": "ts_rank60",
+      "args": [
+       {
+        "op": "cs_scale",
+        "args": [
+         {
+          "op": "ts_std100",
+          "args": [
+           {
+            "op": "barra_residual_volatility",
+            "args": []
+           }
+          ]
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
    "pool": "300",
    "no": "F01",
    "gen": 4,
@@ -2828,6 +3106,45 @@
           ]
          }
         ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "300",
+   "no": "F05",
+   "gen": 157,
+   "family": "财报、风格",
+   "oneLiner": "corr200(fa_sell_exp, ema60(barra_size))",
+   "status": "已入库(auto)",
+   "expr": "corr200(fa_sell_exp, ema60(barra_size))",
+   "sign": 1,
+   "poolTag": "all3",
+   "note": null,
+   "ic": 0.0312,
+   "icIr": 0.274,
+   "annEx": 0.064,
+   "dd": -0.08800000000000001,
+   "calmar": 0.729,
+   "sharpe": 0.81,
+   "recentYear": 0.182,
+   "turn": 0.337,
+   "inBank": true,
+   "node": {
+    "op": "corr200",
+    "args": [
+     {
+      "op": "fa_sell_exp",
+      "args": []
+     },
+     {
+      "op": "ema60",
+      "args": [
+       {
+        "op": "barra_size",
+        "args": []
        }
       ]
      }
@@ -3240,6 +3557,167 @@
           "args": []
          }
         ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "500",
+   "no": "F09",
+   "gen": 51,
+   "family": "风格、财报",
+   "oneLiner": "ts_mean150(corr100(barra_momentum, ema20(…",
+   "status": "已入库(auto)",
+   "expr": "ts_mean150(corr100(barra_momentum, ema20(fa_sell_exp)))",
+   "sign": 1,
+   "poolTag": "all3",
+   "note": null,
+   "ic": 0.0238,
+   "icIr": 0.237,
+   "annEx": 0.052000000000000005,
+   "dd": -0.068,
+   "calmar": 0.776,
+   "sharpe": 0.729,
+   "recentYear": 0.055999999999999994,
+   "turn": 0.23600000000000002,
+   "inBank": true,
+   "node": {
+    "op": "ts_mean150",
+    "args": [
+     {
+      "op": "corr100",
+      "args": [
+       {
+        "op": "barra_momentum",
+        "args": []
+       },
+       {
+        "op": "ema20",
+        "args": [
+         {
+          "op": "fa_sell_exp",
+          "args": []
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "500",
+   "no": "F10",
+   "gen": 53,
+   "family": "风格、财报",
+   "oneLiner": "ts_mean150(corr100(barra_momentum, ema20(…",
+   "status": "已入库(auto)",
+   "expr": "ts_mean150(corr100(barra_momentum, ema20(fa_gm)))",
+   "sign": 1,
+   "poolTag": "csi1000_500_all",
+   "note": null,
+   "ic": 0.024,
+   "icIr": 0.242,
+   "annEx": 0.051,
+   "dd": -0.065,
+   "calmar": 0.782,
+   "sharpe": 0.716,
+   "recentYear": 0.061,
+   "turn": 0.23600000000000002,
+   "inBank": true,
+   "node": {
+    "op": "ts_mean150",
+    "args": [
+     {
+      "op": "corr100",
+      "args": [
+       {
+        "op": "barra_momentum",
+        "args": []
+       },
+       {
+        "op": "ema20",
+        "args": [
+         {
+          "op": "fa_gm",
+          "args": []
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "500",
+   "no": "F11",
+   "gen": 8,
+   "family": "财报、风格",
+   "oneLiner": "max(fa_np_margin, barra_residual_volatility)",
+   "status": "已入库(auto)",
+   "expr": "max(fa_np_margin, barra_residual_volatility)",
+   "sign": -1,
+   "poolTag": "csi1000_all",
+   "note": null,
+   "ic": 0.0843,
+   "icIr": 0.795,
+   "annEx": 0.063,
+   "dd": -0.083,
+   "calmar": 0.752,
+   "sharpe": 0.962,
+   "recentYear": 0.003,
+   "turn": 0.306,
+   "inBank": true,
+   "node": {
+    "op": "max",
+    "args": [
+     {
+      "op": "fa_np_margin",
+      "args": []
+     },
+     {
+      "op": "barra_residual_volatility",
+      "args": []
+     }
+    ]
+   }
+  },
+  {
+   "pool": "500",
+   "no": "F12",
+   "gen": 9,
+   "family": "财报、风格",
+   "oneLiner": "ts_mean120(max(fa_np_margin, barra_residu…",
+   "status": "已入库(auto)",
+   "expr": "ts_mean120(max(fa_np_margin, barra_residual_volatility))",
+   "sign": -1,
+   "poolTag": "csi1000_500_all",
+   "note": null,
+   "ic": 0.0641,
+   "icIr": 0.604,
+   "annEx": 0.054000000000000006,
+   "dd": -0.071,
+   "calmar": 0.759,
+   "sharpe": 0.824,
+   "recentYear": 0.0,
+   "turn": 0.17800000000000002,
+   "inBank": true,
+   "node": {
+    "op": "ts_mean120",
+    "args": [
+     {
+      "op": "max",
+      "args": [
+       {
+        "op": "fa_np_margin",
+        "args": []
+       },
+       {
+        "op": "barra_residual_volatility",
+        "args": []
        }
       ]
      }
@@ -3731,6 +4209,94 @@
           ]
          }
         ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "1000",
+   "no": "F11",
+   "gen": 1,
+   "family": "跳空、日内收益",
+   "oneLiner": "sub(ts_mean120(overnight), ts_mean120(int…",
+   "status": "已入库(auto)",
+   "expr": "sub(ts_mean120(overnight), ts_mean120(intraday))",
+   "sign": 1,
+   "poolTag": "csi1000_all",
+   "note": null,
+   "ic": 0.074,
+   "icIr": 0.741,
+   "annEx": 0.057999999999999996,
+   "dd": -0.065,
+   "calmar": 0.902,
+   "sharpe": 0.945,
+   "recentYear": 0.046,
+   "turn": 0.374,
+   "inBank": true,
+   "node": {
+    "op": "sub",
+    "args": [
+     {
+      "op": "ts_mean120",
+      "args": [
+       {
+        "op": "overnight",
+        "args": []
+       }
+      ]
+     },
+     {
+      "op": "ts_mean120",
+      "args": [
+       {
+        "op": "intraday",
+        "args": []
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "1000",
+   "no": "F12",
+   "gen": 2,
+   "family": "跳空、日内收益",
+   "oneLiner": "sub(ts_mean100(overnight), ts_mean120(int…",
+   "status": "已入库(auto)",
+   "expr": "sub(ts_mean100(overnight), ts_mean120(intraday))",
+   "sign": 1,
+   "poolTag": "csi1000_all",
+   "note": null,
+   "ic": 0.0739,
+   "icIr": 0.744,
+   "annEx": 0.062,
+   "dd": -0.066,
+   "calmar": 0.942,
+   "sharpe": 0.982,
+   "recentYear": 0.046,
+   "turn": 0.38,
+   "inBank": true,
+   "node": {
+    "op": "sub",
+    "args": [
+     {
+      "op": "ts_mean100",
+      "args": [
+       {
+        "op": "overnight",
+        "args": []
+       }
+      ]
+     },
+     {
+      "op": "ts_mean120",
+      "args": [
+       {
+        "op": "intraday",
+        "args": []
        }
       ]
      }
