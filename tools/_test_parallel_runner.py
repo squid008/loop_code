@@ -247,17 +247,31 @@ def main():
             (r.stderr or '')[-300:])
         chk('B2 无 Traceback', 'Traceback' not in out)
         chk('B3 日志里确认进入了并行模式', log_key in out)
-        # 并行证据：**本次新增**的片段里，[START] 数量 == 池数，且第 2 个 [START] 早于第 1 个 [END]
+        # 并行证据：**本次新增**的片段里，两个池都启动过，且"第 1 个 [END] 之前**已有 2 个池在跑**"
+        # ★★★★ 2026-09-21 修（**断言过时 ✗，被"停挖后真跑"暴露** ✓）：
+        #   原断言硬要求 `[START] 数 == 2` 与 `[END] 数 == 2` ✗ ——
+        #   但引擎在"**本代无进展**"时会被**重试**（mock 引擎 0.2 分钟就退出、什么都没入库
+        #   ⇒ 实测同一个 gen 被跑了 3 次 ⇒ 片段里 7 条 [START] ✗）
+        #   ⇒ 判据改为看**池的集合**与**退出码**（这才是本测试的意图 ✓，与重试次数无关 ✓）
+        #   ⚠ 以前这个测试长期靠"**有人在挖就跳过**"才绿 ✗ ⇒ 用户的机器一停下来就暴露了 ✓
         dl = io.open(dl_path, encoding='utf-8', errors='replace').read().splitlines()[n0:]
         seg = [ln for ln in dl if ('[START]' in ln or '[END]' in ln)]
+        _pn = re.compile(r'pool=(\S+)')
         starts = [i for i, ln in enumerate(seg) if '[START]' in ln]
         ends = [i for i, ln in enumerate(seg) if '[END]' in ln]
-        chk('B4 两个池都启动了（本次 [START] 数=%d）' % len(starts), len(starts) == 2)
-        chk('B5 ★ **真的并行**：第 2 个 [START] 早于第 1 个 [END]（本次片段）',
-            len(starts) == 2 and len(ends) >= 1 and starts[1] < ends[0],
+        begun = [_pn.search(seg[i]).group(1) for i in starts if _pn.search(seg[i])]
+        done = [_pn.search(seg[i]).group(1) for i in ends if _pn.search(seg[i])]
+        chk('B4 两个池都启动了（池集合=%s · [START] 共 %d 条，含重试 ✓）'
+            % (sorted(set(begun)), len(starts)), len(set(begun)) >= 2)
+        _fe = ends[0] if ends else 10 ** 9
+        _early = len({_pn.search(seg[i]).group(1) for i in starts
+                      if i < _fe and _pn.search(seg[i])})
+        chk('B5 ★ **真的并行**：第 1 个 [END] 之前已有 2 个池在跑（实 %d 个）' % _early, _early >= 2,
             '若成立说明是"有界并行"而不是串行轮转；本次 seg=%d 行' % len(seg))
-        chk('B6 两个池都正常结束（本次 [END] 数=%d, 均退出码=0）' % len(ends),
-            len(ends) == 2 and len([1 for ln in seg if '[END]' in ln and '退出码=0' in ln]) == 2)
+        _badrc = [ln for ln in seg if '[END]' in ln and '退出码=0' not in ln]
+        chk('B6 两个池都正常结束（池集合=%s · [END] 共 %d 条 · 非零退出 %d 条）'
+            % (sorted(set(done)), len(ends), len(_badrc)),
+            len(set(done)) >= 2 and not _badrc)
         after = snapshot()
         bad = [k for k in set(list(before) + list(after)) if before.get(k) != after.get(k)]
         chk('B7 ★ state/journal **SHA256 未变**（%d 个文件；gen_only 承诺不写状态）'

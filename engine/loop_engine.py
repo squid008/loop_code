@@ -147,21 +147,40 @@ def set_panel_cache(mode):
     return PANEL_CACHE
 
 
-def set_mem_budget(lru_max=400, cache2_max=150, vreuse_cap_mb=2000.0):
-    """调「**每进程私有缓存**」的上限（**默认值 = 现状 ⇒ 不传就是旧行为**）。
+def set_mem_budget(lru_max=400, cache2_max=150, vreuse_cap_mb=2000.0,
+                   lru_mb=2500.0, cache2_mb=800.0, batch_mb=1500.0):
+    """调「**每进程私有缓存**」的上限。
 
     ★ 为什么需要它：并行跑 N 个池时，**面板**可以靠 `--panel_cache=use` 跨进程共享，
       但 `_LRU` / `cache2` / `VCACHE` 是**每进程私有**的（私有脏写，不能共享）⇒
       它们才是"并行时的内存地板"。要把总占用压到某个数（如 ≤10 GB），
       就得按 N 把这份预算切小 ✓
     ★ 代价：缓存越小 ⇒ 越多的子树要**现场重算** ⇒ 每代变慢（时间换内存）。
+
+    ★★★★★ 2026-09-21 **治本**（用户："走治本的方案A吧"）：**条数上限管不住内存** ✗
+      —— 实测（`ai_test/_memprof_1000.py` 外部采样 · 1000 池单代）：
+        · `--n=800` 一代里，私有内存 **1 分钟到 4.9 GB、8 分钟到 14.6 GB（工作集 16.6 GB）** ✗
+        · 而且是**锯齿式上台阶**（12.5 ↔ 14.8 GB 反复 ✓）⇒ 回不到基线 = **缓存在囤** ✗
+        · 根因：`LRU_MAX = 400`、`CACHE2_MAX = 150` 都是**条数** ✗，而单条的体积随**池宽**变：
+          1000 池的 L1 子面板 = **2094 日 × 2818 股**（池并集 ✓ 实测日志 ✓）⇒ 单条 ≈ **47 MB** ✗
+          ⇒ `400 条 × 47 MB ≈ 18.8 GB` ✗✗（引擎日志里 VCACHE 早就按 MB 算了 ✓，
+             只有这两个缓存漏了 ✗）
+        · 池越大 ⇒ 单条越大 ⇒ 越容易把机器压到换页（1000 池单代 110~172 分钟 ✗ = 嫌疑根因 ✓）
+      ⇒ 修法（**只改"缓存回收"，不动任何数值口径 ✓**）：
+        ① `trim_cache_mb()`：按 `arr.nbytes` 累计，超预算从**最旧**开始淘汰 ⇒ **硬上限** ✓
+        ② `--lru_mb / --cache2_mb`：字节预算（条数上限**保留作兜底** ✓）
+        ③ `--batch_mb`：L1 批大小**按字节自适应** ✗（固定 40 个时，宽池一批就 ≈1.9 GB ✗）
     """
-    global LRU_MAX, CACHE2_MAX, _VREUSE_CAP_MB
+    global LRU_MAX, CACHE2_MAX, _VREUSE_CAP_MB, LRU_MB, CACHE2_MB, BATCH_MB
     LRU_MAX = max(20, int(lru_max))
     CACHE2_MAX = max(20, int(cache2_max))
     _VREUSE_CAP_MB = max(0.0, float(vreuse_cap_mb))
-    print('[内存预算] 每进程私有缓存: LRU_MAX=%d 条 · cache2_max=%d 条 · VCACHE<=%.0f MB '
-          '(面板是否共享见 --panel_cache)' % (LRU_MAX, CACHE2_MAX, _VREUSE_CAP_MB), flush=True)
+    LRU_MB = max(50.0, float(lru_mb))
+    CACHE2_MB = max(50.0, float(cache2_mb))
+    BATCH_MB = max(100.0, float(batch_mb))
+    print('[内存预算] 每进程私有缓存: LRU=%d 条 / ≤%.0f MB · cache2=%d 条 / ≤%.0f MB · '
+          'VCACHE≤%.0f MB · L1 单批≤%.0f MB (面板是否共享见 --panel_cache)'
+          % (LRU_MAX, LRU_MB, CACHE2_MAX, CACHE2_MB, _VREUSE_CAP_MB, BATCH_MB), flush=True)
     return LRU_MAX, CACHE2_MAX, _VREUSE_CAP_MB
 
 
@@ -172,6 +191,12 @@ L1_COLS = None
 _LRU = {}                 # 跨批次复用子树求值结果(种子演化共享大量子树)
 LRU_MAX = 400             # L1 每批结束把 _LRU 裁到该条数上限(防 L1 段 OOM)
 CACHE2_MAX = 150          # 去相关/去重阶段 cache2 的子树缓存上限
+# ★★★★★ 2026-09-21（治本）：**字节预算**（条数上限管不住内存 ✗ —— 单条体积随池宽变：
+#   1000 池子面板 2094×2818 ⇒ 单条 ≈47 MB ⇒ 400 条 ≈18.8 GB ✗；实测私有内存峰值 14.6 GB ✓）
+#   ⇒ 这三条是**主控**（条数上限保留作兜底 ✓），由 `--lru_mb / --cache2_mb / --batch_mb` 调 ✓
+LRU_MB = 2500.0           # L1 跨批子树缓存 ≤ 该 MB（按 arr.nbytes 累计，超了淘汰最旧 ✓）
+CACHE2_MB = 800.0         # 去相关/去重阶段 cache2 ≤ 该 MB
+BATCH_MB = 1500.0         # L1 单批候选的**数组总量**上限（批大小按它自适应 ✓）
                           # (该段每候选只需算1次、无跨批复用, 缓存仅服务邻近候选共享,
                           #  故宜小; 实测 gen37 该段无界累积导致内存从9G单调涨到20G+)
 # ★跨阶段复用缓存(2026-09-12): L1 已算过的因子值, 供**去相关/去重**直接取用, 免二次 eval。
@@ -1349,6 +1374,39 @@ def trim_cache(cache, cap):
             cache.pop(k, None)
 
 
+def trim_cache_mb(cache, max_mb):
+    """★★★★★ 2026-09-21（治本）：按**字节**裁缓存 ⇒ 内存有**硬上限** ✓
+
+    ★ 为什么必须按字节（实测见 `set_mem_budget` 的注释 ✓）：
+      `trim_cache` 只管"条数"✗，而单条大小随**池宽**变化 ——
+      1000 池的 L1 子面板是 2094 日 × 2818 股 ⇒ 单条 ≈ **47 MB** ✗
+      ⇒ 400 条 ≈ **18.8 GB** ✗（实测这一代的私有内存峰值 14.6 GB ✓ 工作集 16.6 GB ✓）
+      ⇒ 三个池并行就把 47.9 GB 的机器压到只剩 1.7 GB ⇒ 换页 ⇒ 单代 110~172 分钟 ✗
+    ★ 淘汰策略：dict 保插入序 ⇒ 从**最旧**开始丢 ✓（缓存只是加速、丢了会重算 ⇒ 不影响正确性 ✓）
+    ★ 返回：裁完之后的近似总 MB（便于日志/守门核验 ✓）
+    """
+    if cache is None:
+        return 0.0
+    try:
+        tot = 0.0
+        for v in cache.values():
+            n = getattr(v, 'nbytes', 0)
+            if n:
+                tot += n / 1048576.0
+        if tot <= max_mb:
+            return tot
+        for k in list(cache.keys()):
+            if tot <= max_mb:
+                break
+            v = cache.pop(k, None)
+            n = getattr(v, 'nbytes', 0)
+            if n:
+                tot -= n / 1048576.0
+        return max(tot, 0.0)
+    except Exception:                                        # noqa: BLE001
+        return 0.0                                           # 裁不动也不能影响主流程 ✓
+
+
 # rank_rows 已移至 loop_metrics.py（单一事实源, 2026-09-11）; 顶部 import 引入,
 # 故本模块内 `rank_rows(...)` 与外部的 `loop_engine.rank_rows` 接口保持不变。
 
@@ -2396,6 +2454,22 @@ def run(args):
     R_SHAPE = Rsub_s_n if (_shape_neutral and Rsub_s_n is not None) else Rsub_s
     stats = []
     BATCH = args.batch
+    # ★★★★★ 2026-09-21（治本）：批次大小**按字节自适应** ✗ —— 固定 40 个候选时，
+    #   单条面板的体积随**池宽**变化（1000 池子面板 2094×2818 ≈ 47 MB ⇒ 一批 ≈ 1.9 GB ✗）
+    #   ⇒ 取"子面板里任一字段"的真实 dtype/形状算单条 MB，再把批大小压到 `BATCH_MB` 以内 ✓
+    try:
+        _k0 = next(iter(Bsub))
+        _a0 = np.asarray(Bsub[_k0])
+        _per_mb = float(_a0.size) * float(_a0.dtype.itemsize) / 1048576.0
+        if _per_mb > 0:
+            _cap = int(max(4, BATCH_MB / _per_mb))
+            if BATCH > _cap:
+                print('  [内存预算] L1 批 %d → %d（单条 %.1f MB × 批 ≤ %.0f MB ✓ 治本: 宽池不再一批吃 2 GB ✗）'
+                      % (BATCH, _cap, _per_mb, BATCH_MB), flush=True)
+                BATCH = _cap
+    except Exception as _e_b:                                # noqa: BLE001
+        print('  [内存预算] 批次自适应跳过（%s: %s）⇒ 沿用 %d'
+              % (type(_e_b).__name__, str(_e_b)[:60], BATCH), flush=True)
     n_eval = 0
     t_l1 = time.time()
     for b0 in range(0, len(cands), BATCH):
@@ -2422,6 +2496,13 @@ def run(args):
                 continue
             vals.append(v)
             kidx.append(b0 + i)
+            # ★★★★★ 2026-09-21（治本·第二步）：**批内也裁** ✗
+            #   原来只在"**每批结束**"裁一次（下面 `trim_cache(_LRU, LRU_MAX)` ✓）
+            #   ⇒ 一批之内 `_LRU` 能一路涨到第一个峰值（实测第一批就顶到 8.9 GB ✗，
+            #     改之前更是 12.5~14.8 GB 反复 ✗）⇒ 每 8 个候选就裁一次 ✓
+            #   代价：`trim_cache_mb` 只是把 `nbytes` 加起来（O(条数) ✓）⇒ 可忽略 ✓
+            if i and (i % 8) == 0:
+                trim_cache_mb(_LRU, LRU_MB)
         if not vals:
             gc.collect()
             continue
@@ -2502,6 +2583,7 @@ def run(args):
         del vals, IC
         gc.collect()
         trim_cache(_LRU, LRU_MAX)                      # LRU 容量控制(防OOM)
+        trim_cache_mb(_LRU, LRU_MB)                    # ★ 治本: 字节上限(池越宽单条越大 ✗)
     print(f"L1 求值完成 {n_eval} 个, 用时 {time.time()-t_l1:.0f}s "
           f"({(time.time()-t_l1)/max(n_eval,1):.2f}s/候选)")
     _LRU.clear()                                       # L1 结束: 释放跨批子树缓存
@@ -2605,6 +2687,7 @@ def run(args):
             if mx <= args.decorr:
                 keep_rows.append(r)
             trim_cache(cache2, CACHE2_MAX)             # 去相关缓存容量控制(防OOM)
+            trim_cache_mb(cache2, CACHE2_MB)           # ★ 治本: 字节上限 ✓
         print(f"去相关(|corr|<={args.decorr} vs {len(Kr)}个已知因子) 后剩 "
               f"{len(keep_rows)} 个 (原 {len(l1)})")
         print(f"  [计时] 去相关 用时 {time.time() - _t_dec:.0f}s "
@@ -2659,6 +2742,7 @@ def run(args):
         else:
             n_dup += 1
         trim_cache(cache2, CACHE2_MAX)                 # 去重缓存容量控制(防OOM)
+        trim_cache_mb(cache2, CACHE2_MB)               # ★ 治本: 字节上限 ✓
     print(f"\nL1 通过 {len(l1)} 个, 取Top{TOPN}近重复去重(|corr|>{args.dedup_corr:g})"
           f"拦 {n_dup} -> 剩 {len(dedup)} 个")
     print(f"  [计时] 近重复去重 用时 {time.time() - _t_dd:.0f}s "
@@ -3282,6 +3366,13 @@ if __name__ == '__main__':
                     help='去相关/去重阶段 cache2(条数)上限(默认 150 = 现状)')
     ap.add_argument('--vreuse_cap_mb', type=float, default=2000.0,
                     help='跨阶段复用缓存 VCACHE 上限 MB(默认 2000 = 现状; 仅 --reuse_v=1 时生效)')
+    # ★★★★★ 2026-09-21（治本）：**字节预算**（条数上限管不住内存 ✗ —— 见 set_mem_budget 注释 ✓）
+    ap.add_argument('--lru_mb', type=float, default=2500.0,
+                    help='L1 跨批子树缓存**字节**上限 MB(默认 2500; 条数上限 --lru_max 仍作兜底 ✓)')
+    ap.add_argument('--cache2_mb', type=float, default=800.0,
+                    help='去相关/去重 cache2 **字节**上限 MB(默认 800 ✓)')
+    ap.add_argument('--batch_mb', type=float, default=1500.0,
+                    help='L1 单批候选的**数组总量**上限 MB(默认 1500 ⇒ 批大小按池宽自适应 ✓)')
     ap.add_argument('--min_ic', type=float, default=0.02)
     ap.add_argument('--min_calmar', type=float, default=0.5)
     ap.add_argument('--min_stab', type=float, default=0.30)
@@ -3485,5 +3576,6 @@ if __name__ == '__main__':
     set_mine_pool(_args.mine_pool)   # ★必须在 run() 之前: 路径后缀 & L1 池掩码都在 run 内部生效
     set_panel_cache(_args.panel_cache)   # ★同上: base_fields() 在 run() 内部首次被调用
     # ★ 2026-09-16：把「私有缓存预算」落到模块全局（默认值与改造前完全相同 ⇒ 逐位不变）
-    set_mem_budget(_args.lru_max, _args.cache2_max, _args.vreuse_cap_mb)
+    set_mem_budget(_args.lru_max, _args.cache2_max, _args.vreuse_cap_mb,
+                   _args.lru_mb, _args.cache2_mb, _args.batch_mb)
     run(_args)
