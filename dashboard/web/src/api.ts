@@ -173,6 +173,10 @@ export interface SelectedFactor {
   detail?: LibraryFactor['detail']
   metrics?: Record<string, number | null>
   inBank?: boolean | null
+  /** ★★★★★ 2026-09-21（用户："精选池那里还只有 A 标签，没有 5、20、双标签"）——
+   *  口径强项标签（与库表**同源**：后端 `_hzn_tag` ✓）＋ 20 日那一套指标（详情弹层要用 ✓） */
+  hzn?: string
+  metrics20?: Record<string, number | null>
 }
 
 export interface SelectedDto {

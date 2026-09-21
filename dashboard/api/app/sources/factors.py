@@ -639,6 +639,11 @@ def selected():
             #   前端只好自己 `replace(/\*/g,'')` 遮丑 ✗ ⇒ 出口清洗掉 `**` ✓（前端那层留着也无害）
             'stripCalmar': _plain(r[i_sc].strip() if i_sc is not None and len(r) > i_sc else ''),
             'expr': (re.sub(r'[`*]', '', r[i_expr]).strip() if i_expr is not None and len(r) > i_expr else ''),
+            # ★★★★★ 2026-09-21（用户："精选池那里还只有 A 标签，没有 5、20、双标签"）——
+            #   精选池的 `hzn` / `metrics20` **不在这里自己算** ✗：
+            #   下面的联表步会从 `library(pool)` 的行里**照抄** ⇒ 阈值仍然只有一处 ✓
+            #   （占位给空值 ⇒ 键恒定存在，前端不用判 undefined ✓）
+            'hzn': '', 'metrics20': {},
         })
     # ★★ 2026-09-16（用户要求「**精选池也要加详情按钮**」）：把各池库文档的**明细**（完整公式/池标签/sign/叶子）
     #   与**统一口径指标表**按因子名 join 进精选条目 ⇒ 前端可复用同一个「因子详情」弹层 ✓
@@ -661,6 +666,11 @@ def selected():
         f['expr'] = f2.get('expr') or f['expr']          # ★ 用**完整公式**（精选表里本来就完整，双保险）
         f['detail'] = f2.get('detail') or {}
         f['metrics'] = f2.get('metrics') or {}
+        # ★★★★★ 2026-09-21（用户："精选池那里还只有 A 标签，没有 5、20、双标签"）：
+        #   这两项**跟着库表走**（`library()` 里算好的 ✓）⇒ 口径判定**只有一处实现** ✓
+        #   ＋ `metrics20` 让精选池里点「详情」也能用**口径开关** ✓
+        f['metrics20'] = f2.get('metrics20') or {}
+        f['hzn'] = f2.get('hzn') or ''
         f['inBank'] = f2.get('inBank')
         f['pool'] = f2.get('pool') or f['pool']
     return {

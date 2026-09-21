@@ -278,7 +278,15 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
   margin-right: 8px; vertical-align: middle; display: inline-block;
   font-size: 11px; line-height: 17px; height: 17px; padding: 0 6px;
   min-width: 17px; text-align: center; border-radius: 6px; }
-.tbl .tag.cjk { font-size: 10px; letter-spacing: -.3px; }
+/* ★★ 2026-09-21 第三批（用户："精选池那里还只有 A 标签，没有 5、20、双标签"）：
+   把上面那套**等高/字号规则从 `.tbl` 里提出来成为全局** ✗✓ —— 因为"档位 + 口径"这对标签
+   现在**出现在三处**（库表 / 入库日志 / **精选池卡片** ✓），只写在 `.tbl` 里 ⇒
+   精选池的 `双` 又会比 `A` 显大 ✗（正是用户先前抱怨过的同一个毛病 ✓）⇒ 全局统一 ✓ */
+.tag.grade, .tag.hz {
+  margin-right: 8px; vertical-align: middle; display: inline-block;
+  font-size: 11px; line-height: 17px; height: 17px; padding: 0 6px;
+  min-width: 17px; text-align: center; border-radius: 6px; }
+.tag.cjk { font-size: 10px; letter-spacing: -.3px; }
 /* ★★★★★ 2026-09-21（用户拍板写法 `5` / `20` / `双`）—— **口径强项标签** ✓
    ⚠ 颜色来源在 `App.tsx` 的 `HZN_COLOR`（内联 style ✓）；这里只管**间距与对齐** ✓
    ⚠⚠ 类名**必须加前缀**（`hz5` / `hz20` / `hzboth`）✗ —— 裸数字当 CSS 类名是**非法选择器**

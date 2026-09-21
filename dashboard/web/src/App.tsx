@@ -1822,6 +1822,9 @@ function SelectedPanel({ s }: { s: SelectedDto }) {
             <div className="sel-h">
               <b className="mono">{f.code}</b>
               <span className="grade">{f.grade}</span>
+              {/* ★★★★★ 2026-09-21（用户："精选池那里还只有 A 标签，没有 5、20、双标签"）：
+                  口径标签与库表**同源**（后端联表时从 `library()` 照抄 ✓ 阈值只有一处 ✓）⇒ 这里只渲染 ✓ */}
+              <HzTag hzn={f.hzn} />
               <span className="sc">剥Calmar <b>{f.stripCalmar.replace(/\*/g, '')}</b></span>
               <button className="btn sm det" onClick={() => setSel(f)}>详情</button>
             </div>
@@ -1835,9 +1838,13 @@ function SelectedPanel({ s }: { s: SelectedDto }) {
           <ul>{s.notes.map((n, i) => <li key={i}>{n}</li>)}</ul>
         </details>
       )}
+      {/* ★ 2026-09-21：精选池点开的详情也带上 `metrics20` ⇒ **口径开关**在这里同样可用 ✓
+          ⚠ 注释必须放在 `{sel && (` **外面** ✗ —— 那对括号里只能是**一个表达式**，
+            塞 JSX 注释会让解析器当场报 TS1005 ✗（我第一版就是这样、被 `tsc` 抓住 ✓） */}
       {sel && (
         <FactorDetail f={{ code: sel.code, expr: sel.expr, detail: sel.detail,
-                           metrics: sel.metrics, inBank: sel.inBank, pool: sel.pool }}
+                           metrics: sel.metrics, metrics20: sel.metrics20,
+                           inBank: sel.inBank, pool: sel.pool }}
                       onClose={() => setSel(null)} />
       )}
     </section>
