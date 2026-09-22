@@ -2947,3 +2947,52 @@ leaf_w={}
 > (3)mix=[0.15,0.25,0.2,0.25,0.15],depth=[2,3,4],min_stab=0.5,decorr=0.7:降交叉、提引导与扰动,收紧depth与stab以逼出短周期稳健结构。
 > (4)本代无实际动作可停。
 > 否决: 无
+
+## 第 66 代 (B角诊断)
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 43 | 0.073 | 0.180 | 0.990 | 0.000 | 0.302 | 0.977 | 8 | 0.302 | 8 | 0 | -0.007 | 0.500 | -1.000 | 1.000 | 1.000 | 0.625 | 1.000 | 0.875 | 0.875 | 1.000 |
+
+叶子使用: {'barra_residual_volatility': 13, 'turnover': 12, 'mf_l_buy': 12, 'turn_ratio': 11, 'close': 9, 'mf_m_sqty': 9}
+
+**B角建议(下一代策略)**:
+- 【r4_fail_turn】L2中62%因换手过高失败 -> min_stab再+0.10
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- —— 本代共拦截 1 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.123, 0.377, 0.15, 0.2, 0.15]  depth=[3, 4, 5]  min_stab=0.4  decorr=0.75  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [5, 6] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [67] 代
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [2, 3] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [2, 3] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r7_zero_pass`, `r1_leaf_conc`
+
+**LLM 引导(A角 66代)**: 调用3次, 解析通过24条, 引导位使用24条
+> 资金流内部结构（超大单主动净买入相对中小单的背离、量额不匹配、资金流强度的趋势斜率）比单纯价格量能更能预测未来5日截面收益，因为知情交易者的方向性冲击会在资金流内部留下可分离的截面信号。
+
+
+**LLM 候选审查(B角 66代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `sub(cs_demean(mul(ts_rank100(fa_roe), mul(mf_m_bqty, hl_ratio))), corr20(fa_roe, ts_mean10(vwap)))`
+  > 理由: ROE基本面与量价拼凑，减法无经济含义，多窗口嵌套冗余，疑过拟合
+- KILL `ts_mean200(ts_mean200(sub(barra_residual_volatility, div(mf_l_buy, turnover))))`
+  > 理由: 残差波动率减主力买占比，量纲与含义拼凑，双层同窗均值冗余，无清晰量价机制
+- KILL `ts_mean200(ts_mean200(ts_mean60(ts_mean10(ts_std200(sub(ret, barra_residual_volatility))))))`
+  > 理由: 多层同源均值嵌套冗余，仅表达残差波动，无增量机制，属参数海捞针
+- KILL `add(barra_residual_volatility, corr20(barra_leverage, abs(fa_np_yoy)))`
+  > 理由: barra残差波动率加杠杆与盈利增速相关，含义拼凑无清晰量价机制，属数学巧合
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1)病根:IC高但全是慢速长周期平滑因子,换手与Calmar双杀,过拟合在样本外归零。
+> (2)r4_fail_turn加min_stab方向反了——换手高是因子结构问题,提stab只会更平滑更慢,治标不治本;r5_calmar_cross已被永久否决却又在建议里出现,自相矛盾,应无视;交叉+15%加深depth会加剧过拟合,与降换手冲突。
+> (3)我取mix=[0.15,0.25,0.25,0.2,0.15] depth=[2,3,4] min_stab=0.3 decorr=0.85:降depth、提扰动与decorr以破同质、压换手,而非堆平滑。
+> 否决: r4_fail_turn
+
+**⚖️ 规则动作否决（机器读取）**: `r4_fail_turn`（L2 多因换手失败 -> min_stab 再+0.10）

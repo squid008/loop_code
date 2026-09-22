@@ -2077,7 +2077,8 @@ def _critic_llm_review(_v, args, critic, diag, l1, next_cfg, reasons, res_c):
     return _v
 
 
-def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v, fsa_frz):
+def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v, fsa_frz,
+                _strip2_by_expr=None, _hzn2_by_expr=None):
     """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
 
     原段落: 保存状态
@@ -2128,8 +2129,21 @@ def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_ex
             print(f"  入库 {len(bank)-n_bank_old} 个新因子, 累计 {len(bank)} 个")
             # 入库文档自动同步(factor_library.md): 只增不改, 失败不影响入库
             # ★ 带池标签(§8.42): 入库条目里写明"适用哪个池"
-            _lib_sync(args.gen, res, len(bank), lib_added, by_expr,
-                      pool_tags=_tag_by_expr, strip_grades=_strip_by_expr)
+            # ★★★★★ 2026-09-22（v1.21.29 · (乙)）：**按口径分别落文档** ✓
+            #   为什么必须分：`_lib_sync` 会写「口径：N 日调仓」+ 用**对应口径**的剥风格数字 ✓
+            #   ⇒ 混在一起就会把 5 日的剥风格结论写给 20 日入选的因子 ✗
+            #   ⚠ 两次调用都**重读 md** ⇒ 编号自动递增 ✓ 不会撞号 ✓（`_lib_sync` 的既有行为 ✓）
+            _added_2 = [e for e in lib_added if e in _hzn2_by_expr]
+            _added_5 = [e for e in lib_added if e not in _hzn2_by_expr]
+            if _added_5:
+                _lib_sync(args.gen, res, len(bank), _added_5, by_expr,
+                          pool_tags=_tag_by_expr, strip_grades=_strip_by_expr)
+            if _added_2:
+                print(f"  [双口径] 其中 {len(_added_2)} 个是**副口径({int(args.dual_fwd)} 日)"
+                      f"入选** ✓ ⇒ 文档按该口径标注 ✓（与 5 日口径的数字不可直接比 ✗）")
+                _lib_sync(args.gen, res, len(bank), _added_2, by_expr,
+                          pool_tags=_tag_by_expr, strip_grades=_strip2_by_expr,
+                          horizon=int(args.dual_fwd))
             # ★ 剥风格档汇总（2026-09-14, §1.9）：**"纯风格"必须吼出来** —— 它是"全A 口径漂亮
             #   但剥掉 lncap+lnamt 后转负"的因子，入库后**指数增强不可用**，不吼会被忽略。
             if _strip_by_expr:
@@ -2477,6 +2491,11 @@ def run(args):
     # ★ 剥风格档（2026-09-14, §1.9）：{表达式: (档位, 说明, 剥后calmar, 剥后超额)}
     #   与 `_tag_by_expr` **并列**（不替代）—— 入库文档里两者都写。
     _strip_by_expr = {}
+# ★ 2026-09-22（v1.21.29 · (乙)）：**副口径**的剥风格记录（按口径分别落文档 ✓
+#   否则 20 日入选的因子会在文档里写上 5 日的剥风格数字 ✗ —— 那是另一个口径的结论 ✓）
+    _strip2_by_expr = {}
+    # ★ 副口径入选者（`{expr: 副口径值}`）—— 供 `_save_state` 分口径写文档 ✓
+    _hzn2_by_expr = {}
     _pool_gate_on = (_min_pool_calmar >= 0)      # 默认 -1 = 关; >=0 启用(0 是合法阈值)
     _pool_obs = bool(getattr(args, 'pool_obs', False)) or _pool_gate_on
     if _pool_gate_on and not getattr(args, 'pool_obs', False):
@@ -2906,6 +2925,9 @@ def run(args):
         t_one = time.time()
         nd = r['node']
         strip_rec = None
+        # ★★★★ 2026-09-22（v1.21.29 · (乙) 双口径）：副口径的备用值 —— **必须在 `try` 之前初始化** ✗
+        #   （求值中途异常时会跳到 except ⇒ 若不预置就是 `NameError` ✓ 本项目反复踩的坑 ✓）
+        rr2, strip2, ok2 = None, None, False
         pool_rec = []      # 本候选的各池结果(供池门槛用; 同时 extend 进 pool_rows)
         try:
             v = eval_expr(nd, B, {})
@@ -2946,6 +2968,62 @@ def run(args):
                 except Exception as e_s:
                     # 无人值守铁律: 剥风格失败**不得**影响主流程, 也不得据此拦候选
                     print(f"  [{j}] 剥风格失败(不影响主流程): {type(e_s).__name__}: {e_s}")
+            # =============== ★★★★★ 2026-09-22（v1.21.29 · 用户拍板 (乙)）：**副口径评估** ===============
+            #  为什么放这里：正好在「主口径 + 主口径剥风格」之后、「池内」之前 ✓
+            #    · 副口径**只做** 主评 + 剥风格 + 分段（不做池内 ✗）——
+            #      池内门槛是"池轨道"的概念 ✓，而副口径的价值在**全A 口径下**捞真信号 ✓；
+            #      判定上它走 `_ok_q2`（全A 量化口径 ✓），与 `combine_ok` 的 OR 语义天然相容 ✓
+            #    · ⚠⚠ **`FWD` 必须在 finally 里复原** ✗✗ —— 它是模块全局，
+            #      `evaluate_real` 在**调用时**读它（实测确认 ✓：`fwd_ret=(close.shift(-(1+FWD))…)` 在函数体内 ✓）
+            #      ⇒ 一旦中途异常而不复原，**后面所有候选都会按副口径评估** ✗ 且**不报错** ✓
+            if args.dual_fwd and rr is not None:
+                try:
+                    # ⚠⚠ **只切 `factor_miner.FWD`，不碰本模块的 `FWD`** ✗ ——
+                    #   本模块的 `FWD` 只在**候选循环之前**的预计算里用（`[::FWD]` 切片 ✓），
+                    #   而求值读的是 `factor_miner` 自己的全局 ✓ ⇒ 不需要动它 ✓
+                    #   ★ 而且**不能**在函数里裸写 `FWD = …` ✗：没有 `global` 声明 ⇒
+                    #     Python 会当**局部变量** ⇒ 既改不到全局、又会 `UnboundLocalError` ✗✗
+                    #     （我第一版就是这么写的 ✓ 自查拦下 ✓）
+                    _FM.set_fwd(int(args.dual_fwd))
+                    rr2 = evaluate_real(f, close, f"{nd}#h{int(args.dual_fwd)}",
+                                        cost=args.cost, window=args.window,
+                                        with_ex=True, with_daily=True)
+                    if _strip_style and rr2 is not None:
+                        _fn2 = neutral_rank(f.values.astype('float64'),
+                                            [STYLE_FULL['lncap'], STYLE_FULL['lnamt']])
+                        rr_s2 = evaluate_real(pd.DataFrame(_fn2, index=dates, columns=cols),
+                                              close, f"{nd}#h{int(args.dual_fwd)}#strip",
+                                              cost=args.cost, window=args.window, with_daily=True)
+                        if rr_s2 is not None:
+                            strip2 = dict(
+                                gen=args.gen, expr=str(nd),
+                                ic=rr2['ic'], calmar=rr2['calmar'], ann_ex=rr2['ann_ex'],
+                                strip_ic=rr_s2['ic'], strip_calmar=rr_s2['calmar'],
+                                strip_ann_ex=rr_s2['ann_ex'], strip_sharpe=rr_s2['sharpe'],
+                                strip_dd_d=rr_s2.get('dd_d'),
+                                strip_calmar_d=rr_s2.get('calmar_d'),
+                                strip_sharpe_d=rr_s2.get('sharpe_d'))
+                except Exception as e2:
+                    print(f"  [{j}] 副口径({int(args.dual_fwd)})评估失败(不影响主流程): "
+                          f"{type(e2).__name__}: {e2}")
+                finally:
+                    # ★★ 复原主口径：`FWD` 是本轮主口径（5 日 ✓ 由 `--fwd` 同步块设定 ✓）
+                    #   必须在 finally ⇒ 中途异常也要复原 ✗（否则后续候选全按副口径 ✓ 且静默 ✓）
+                    _FM.set_fwd(int(FWD))
+                # 副口径的判定（**与主口径同一套闸** ✓，但走"全A 量化口径"这条 OR 支路 ✓）
+                if rr2 is not None:
+                    try:
+                        ok2, _ = pass_filter(rr2, args.min_ic2)
+                        ok2 = bool(ok2 and rr2['calmar'] > args.min_calmar2
+                                   and rr2['sharpe'] > args.min_sharpe2)
+                        if args.seg_n > 1:
+                            ok2 = bool(ok2 and seg_verify(rr2.get('ex'),
+                                                          args.seg_n, args.seg_need)[0])
+                        if _strip_style and args.min_strip_calmar > 0 and strip2 is not None:
+                            ok2 = bool(ok2 and strip2['strip_calmar'] > args.min_strip_calmar)
+                    except Exception as e3:
+                        ok2 = False
+                        print(f"  [{j}] 副口径判定失败(按未过处理): {type(e3).__name__}: {e3}")
             # ---- 池内指标(2026-09-12, --pool_obs; 见 roadmap §8.9 B+B′) ----
             #  口径 = **池内排名**(对齐 standard_test 默认的 --pool_mode=A):
             #    因子池外置 NaN -> cs_rank(逐行只在池内有效值上排名) -> 同一套费后回测。
@@ -3020,6 +3098,21 @@ def run(args):
                                                    strip_rec.get('strip_ann_ex'),
                                                    strip_rec.get('strip_calmar_d'),
                                                    strip_rec.get('strip_dd_d'))
+                    # ★ 2026-09-22（v1.21.29 · (乙)）：**副口径**的剥风格档 + 记录 ✓
+                    #   ⚠ 只有**副口径入选**的因子才需要它 ✓（主口径入选者用上面那份 ✓）
+                    if args.dual_fwd and strip2 is not None:
+                        try:
+                            _sg2_k, _sg2_t = _lp.strip_grade(strip2.get('strip_calmar_d'),
+                                                             strip2.get('strip_ann_ex'),
+                                                             strip2.get('strip_dd_d'))
+                            _strip2_by_expr[str(nd)] = (_sg2_k, _sg2_t,
+                                                        strip2.get('strip_calmar'),
+                                                        strip2.get('strip_ann_ex'),
+                                                        strip2.get('strip_calmar_d'),
+                                                        strip2.get('strip_dd_d'))
+                        except Exception as e_s2:
+                            print(f"  [{j}] 副口径剥风格档失败(不影响主流程): "
+                                  f"{type(e_s2).__name__}: {e_s2}")
                 except Exception as e_t:
                     print(f"  [{j}] 池标签派生失败(不影响主流程): {type(e_t).__name__}: {e_t}")
             del f
@@ -3088,6 +3181,16 @@ def run(args):
         #     ⇒ 池轨道 13 个入库因子里 8 个是「纯风格」（本该被 `--min_strip_calmar=0.15` 拦下）。
         ok = combine_ok(_ok_prev, _ok_q, _pok, _ok_hard,
                         bool(_pool_gate_on), bool(_pool_gate_or_all))
+        # ★★★★★ 2026-09-22（v1.21.29 · (乙)）：**双口径合并 —— 任一通过即入库** ✓
+        #   · 顺序：先按主口径（含池门槛 OR 语义 ✓）算出 `ok` ✓，再让副口径做**纯 OR** ✓
+        #   · 副口径**不参与池门槛** ✗（池内门槛是池轨道的概念 ✓；副口径的价值在
+        #     **全A 口径**下捞真信号 ✓ ⇒ 它只走"全A 量化口径"这条支路 ✓ 语义自洽 ✓）
+        #   · ⚠ 记录 `hzn`：文档/日志要按**实际入选的口径**标注 ✗（否则两个口径的数字混在一份文档里 ✓）
+        _hzn = int(FWD)
+        if args.dual_fwd and ok2 and not ok:
+            ok = True
+            _hzn = int(args.dual_fwd)
+            _hzn2_by_expr[str(nd)] = _hzn
         # ★ 收益流去重(2026-09-13, roadmap §8.34, --dup_ex_corr): 算本候选 vs 历史库收益流的
         #   最大 |相关|。**止血**机制 —— 实测库内 30 个因子的收益流两两相关中位 **0.967**
         #   ⇒ 再攒同类因子等于没攒(合成 Calmar 还低于最好的单因子)。
@@ -3111,7 +3214,17 @@ def run(args):
                          turn=rr.get('turn', np.nan),
                          neg_yr=sum(1 for v in yr.values() if v <= 0),
                          max_ex_corr=(-1.0 if _mec is None else float(_mec)),
-                         passed=ok))
+                         passed=ok,
+                         # ★★★★★ 2026-09-22（v1.21.29 · (乙)）：副口径列 —— **只在开启时才写** ✗
+                         #   ⇒ 关（默认 ✓）时 archive 的表头/内容与改造前**逐字一致** ✓
+                         #   （本文件走 `append_csv_schema_safe` ⇒ 加列时会**重写并救回旧行** ✓ 不产生
+                         #     混合宽度 ✓ 但仍以"只在需要时才加"为原则 ✓）
+                         **(dict(hzn=_hzn,
+                                ic2=(rr2['ic'] if rr2 is not None else np.nan),
+                                calmar2=(rr2['calmar'] if rr2 is not None else np.nan),
+                                sharpe2=(rr2['sharpe'] if rr2 is not None else np.nan),
+                                turn2=(rr2.get('turn', np.nan) if rr2 is not None else np.nan),
+                                passed2=bool(ok2)) if args.dual_fwd else {})))
         seg_ok_list.append(seg_ok)
         if strip_rec is not None:
             strip_rows.append(strip_rec)
@@ -3166,7 +3279,8 @@ def run(args):
     _v = _critic_llm_review(_v, args, critic, diag, l1, next_cfg, reasons, res_c)
 
     # ---- 保存状态 ----
-    _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v, fsa_frz)
+    _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v, fsa_frz,
+                _strip2_by_expr, _hzn2_by_expr)
 
 
 def clone(n):
@@ -3680,6 +3794,19 @@ if __name__ == '__main__':
     #     本参数是**调仓周期** ✓（期数 418 → ~104 ✓）
     ap.add_argument('--fwd', type=int, default=0,
                     help='调仓周期（交易日）；0=沿用引擎默认(5)。★ 双口径挖掘用（20）✓')
+    # ★★★★★ 2026-09-22（v1.21.29 · 用户拍板 **(乙) 引擎双评**）—— **副口径**
+    #   同一个候选**同时**在 5 日（主口径）与 `--dual_fwd N`（副口径）下评估 ✓
+    #   **任一口径达标即入库** ✓，入库文档按**实际入选的口径**标 `horizon` ✓（见 `_save_state` ✓）
+    #   ⚠ 默认 0 = **关** ⇒ 不传时行为与改造前**逐位不变** ✓（新增列也只在开启时才写 ✗）
+    #   ⚠ `FWD` 是**模块全局** ⇒ 副口径求值必须 **try/finally 复原** ✗（否则污染后续候选 ✓ 且静默 ✓）
+    #   ⚠ 成本：每候选 +2 次回测（副口径主评 + 副口径剥风格）⇒ 约 ×1.4（面板/IC 可共用 ✓）
+    ap.add_argument('--dual_fwd', type=int, default=0,
+                    help='★ 副口径调仓周期（交易日）；0=关（默认 ✓ 行为不变）。'
+                         '开启后候选在 5 日与 N 日各评一次，**任一通过即入库** ✓')
+    # 副口径的门槛（默认与主口径同档 ✓ —— 实测 20 日分布略高，故也可显式调高 ✓）
+    ap.add_argument('--min_calmar2', type=float, default=0.5, help='副口径 Calmar 门槛')
+    ap.add_argument('--min_sharpe2', type=float, default=0.5, help='副口径 Sharpe 门槛')
+    ap.add_argument('--min_ic2', type=float, default=0.02, help='副口径 |IC| 门槛')
     ap.add_argument('--window', choices=['full', 'recent600'], default='full',
                     help='回测口径: full=2018起九年; recent600=最近600交易日(中金口径)')
     ap.add_argument('--seg_n', type=int, default=3,
