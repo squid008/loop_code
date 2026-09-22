@@ -945,7 +945,7 @@ def append_library_entries(evs, quiet=False):
 
 
 def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_grades=None,
-              horizon=None):
+              horizon=None, source=None):
     """本代新入库因子自动同步追加进 docs/factor_library.md(只增不改历史, 家族命名留待人工精炼)。
     幂等: 编号取文本现有最大 F{nn}+1; 任何失败仅告警, 绝不影响入库主流程。
     added_exprs: 本代真正 append 进 bank 的 expr 列表; expr2nd: {str(node): node}(模块已有 Node/skeleton)。
@@ -1053,6 +1053,16 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
                             % (no, gen, fam, short))
             # ★ 2026-09-21（双口径）：**口径行** —— 只写明细块 ✗（总览表头固定 5 列、文件
             #   append-only ⇒ 加列会让历史行错位 ✓ 与池标签/剥风格/sign 同一处理 ✓）
+            # ★ 2026-09-22（(丁) 受控入库）：**来源**要如实标 ✗ —— 默认 `engine`（引擎自己跑的 ✓，
+            #   行为与改造前**逐位不变** ✓）；`tools/horizon_admit_write.py` 传 `promote` ⇒
+            #   ① 事件里 `source/tsSource` 写 `promote` ✓（不能冒充引擎 ✗ —— 看板"新入库日志"
+            #      与将来的审计都要能分辨"哪些是自动挖的、哪些是事后受控补的" ✓）
+            #   ② 明细块加一行「来源」✓（标题行**不动** ✗ —— `BF.parse_library` 按
+            #      `### F\d+ · ` 切分正文 ✓，改标题会牵动解析 ✓）
+            _src = source or 'engine'
+            _src_line = ('- 来源：**受控入库**（`tools/horizon_admit_write.py`，非引擎自动 ✓）'
+                         '★ 入库依据与生产线不同 ✗ ⇒ 该条**未经过引擎当代 L1/L2 全链**\n'
+                         if _src != 'engine' else '')
             _hz_line = ''
             if horizon:
                 _nr = r.get('n_rebal') if hasattr(r, 'get') else None
@@ -1067,12 +1077,12 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
                 '\n### F%02d · gen%d 入库（引擎自动同步，家族命名待人工精炼）\n'
                 '```\n%s\n```\n'
                 '%s- 家族：%s（auto）\n- 叶子：%s\n- 骨架：`%s`\n'
-                '%s%s%s'
+                '%s%s%s%s'
                 '- 费后指标（full，成本 %s）：%s\n'
                 % (no, gen, expr, _sg_line2, fam, leaf_s, skel, _tg_line, _sg_line, _hz_line,
-                   cost_label(r['cost']), met))
-            _ev = dict(ts=time.strftime('%Y-%m-%d %H:%M:%S'), tsSource='engine',
-                       source='engine', pool=MINE_POOL, gen=int(gen),
+                   _src_line, cost_label(r['cost']), met))
+            _ev = dict(ts=time.strftime('%Y-%m-%d %H:%M:%S'), tsSource=_src,
+                       source=_src, pool=MINE_POOL, gen=int(gen),
                        code='F%02d' % no, expr=expr, family=fam, oneLiner=short,
                        ic=(float(r['ic']) if np.isfinite(r['ic']) else None),
                        annEx=(float(r['ann_ex']) if np.isfinite(r['ann_ex']) else None))

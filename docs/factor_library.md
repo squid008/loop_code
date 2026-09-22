@@ -723,8 +723,6 @@ add(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidit
 - 状态：**已移出**（2026-09-20）—— ① 公式**本身找错了** ✗（见上勘误）② 按原式实测也**不合格** ✓
   ⇒ `in_bank` 置 0 + 退出入库历史名单 ✓（用户原话："测出来不行，再给它移出不就行了"、"搞成已移出吧" ✓）
 
-### F42 · gen0 入库 → 已移出（**外部基准**：Alpha191 的 Alpha143 —— ⚠ 公式勘误见下 ✓）
-
 ```
 neg(mul(cs_rank(ts_rank10(close)), cs_rank(sub(ts_delta10(close), ts_delta5(close)))))
 ```

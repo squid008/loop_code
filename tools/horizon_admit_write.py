@@ -141,10 +141,34 @@ def main():
     lib_ex, lib_src = load_bank_ex()
     print('  库内收益流对照集：%d 条（来自各池 state 的 bank_ex ✓）' % len(lib_ex))
 
+    # ---- 2b) ★★ 2026-09-22 补：**已入库就要跳过**（幂等 ✗）
+    #   为什么必须补：本工具是"**补录**" ✓ ⇒ 重跑一次（先预演再正式写 ✓、`--pkl-only` 之后再来一次 ✓、
+    #     事后复核 ✓）就会把**同一条**再 append 一次 ⇒ md 里出现**重复总览行 + 重复明细块** ✗✗
+    #     （违反 **D9「因子只入库一次」** ✗，registry/前端会看到两份 ✓，而且**不报错** ✗）
+    #   ⚠ 与"收益流重复"是**两件完全不同的事** ✗ ⇒ 日志里必须分得清：
+    #     「**已在库**」= 上一步已经写过了 ✓（跳过 ✓，不是问题 ✓）
+    #     「**收益流重复**」= 与库里**别的**因子高度相关 ✗（才是问题 ✓）
+    _md_have = set()
+    for _p in ('all', '300', '500', '1000', '50'):
+        try:
+            for _rec in BF.parse_library(_p):
+                if _rec.get('expr'):
+                    _md_have.add((_p, _rec['expr'].strip()))
+        except Exception:                                        # noqa: BLE001
+            pass
+    print('  已入库对照集（各池 md 明细块）：%d 条 ⇒ 已在库的候选会被**跳过**（幂等 ✓ 不是重复 ✗）'
+          % len(_md_have))
+
     # ---- 3) 逐个：重算收益流 + 真去重 ----
-    keep, blocked = [], []
+    keep, blocked, skipped = [], [], []
     for i, r in enumerate(rows, 1):
         expr = r['expr']
+        # ★ 幂等闸（2026-09-22 补）：已在该池 md 里 ⇒ **跳过**（别重写 ✗ 见 2b 的说明 ✓）
+        if ((r.get('pool') or 'all'), expr) in _md_have:
+            skipped.append(r)
+            print('  [{:<5s}] ○ **已在库**（{}）⇒ 跳过（幂等 ✓ 不是重复 ✗）'.format(
+                r['name'], r.get('pool') or 'all'))
+            continue
         if (r.get('sign') or '') == '':
             print('  [{:<5s}] ✗ **sign 缺失** ⇒ 跳过（不臆造取向 ✗ 取反=镜像值会静默错 ✓）'.format(r['name']))
             blocked.append((r, 'sign 缺失（不臆造）'))
@@ -169,7 +193,14 @@ def main():
             ex = rr.get('ex') if rr else None
             mec, mew = (None, None)
             if ex is not None and lib_ex:
-                mec, mew = LE.ex_max_corr(ex, lib_ex, min_overlap=a.min_overlap)
+                # ★★ 2026-09-22 修一个**会误导人的假判** ✗：`lib_ex` 是库内**全部**收益流 ✗，
+                #   若本候选**已经在库**（重跑 ✓ 或上一步刚写过 ✓），它会与**自己**比 ⇒
+                #   |corr| = **1.000** ⇒ 被误报成「收益流重复」✗✗
+                #   实录（2026-09-21 日志）：`H12 ✗ 收益流重复 |corr|=1.000（与 ts_mean120(max(fa_np_margin…`
+                #     ——「对方」那一长串**就是它自己** ✓ 当时被读成"5 个因近重复被拒" ✗ 其实是"它们已在库" ✓
+                #   ⇒ 现在**先排除自己**再比 ✓（已在库的另一种情况由 2b 的幂等闸跳过 ✓）
+                _lib_wo_self = {k: _v for k, _v in lib_ex.items() if str(k).strip() != expr}
+                mec, mew = LE.ex_max_corr(ex, _lib_wo_self, min_overlap=a.min_overlap)
             if mec is not None and mec > a.dup_ex_corr:
                 blocked.append((r, '收益流重复 |corr|=%.3f > %.2f（与 %s）'
                                 % (mec, a.dup_ex_corr, str(mew)[:54])))
@@ -188,7 +219,8 @@ def main():
             blocked.append((r, '异常 {}: {}'.format(type(e).__name__, str(e)[:60])))
             print('  [{:<5s}] 异常 {}: {}'.format(r['name'], type(e).__name__, str(e)[:60]))
 
-    print('\n  ⇒ 通过去重 %d 个 · 被拦 %d 个' % (len(keep), len(blocked)))
+    print('\n  ⇒ 通过去重 %d 个 · 被拦 %d 个 · **已在库跳过 %d 个**（幂等 ✓ 不是重复 ✗）'
+          % (len(keep), len(blocked), len(skipped)))
     for r, why in blocked:
         print('      {:<6s} ✗ {}'.format(r['name'], why))
 
@@ -285,7 +317,12 @@ def main():
         if not _skip_doc:
             LE._lib_sync(int(gen) if str(gen).strip() else 0, res, bank_len + _pool_add_total,
                          exprs, expr2nd, pool_tags=tags, strip_grades=strips,
-                         horizon=int(a.fwd))
+                         horizon=int(a.fwd),
+                         # ★★ 2026-09-22 补：**来源如实标** `promote` ✗ —— 本工具是"事后受控把
+                         #   历史候选补录进库" ✓，**不是引擎当代 L1/L2 挖出来的** ✗ ⇒ 事件与明细块
+                         #   必须能分辨 ✓（2026-09-21 那次跑用的是默认 `engine` ✗ ⇒ 那 11 条事件
+                         #   的 `source` 至今写着 engine ✗ —— **不改历史** ✓ 只在此记明 ✓）
+                         source='promote')
         # ★★ 2026-09-21 **修一个我自己的错** ✗：这里原来是**赋值** ⇒ 每个 (池,代) 组都
         #   **覆盖**上一条 ⇒ 实测每池只进 pkl **1 个** ✗（应为 1000 池 2 / 500 池 4 / all 4 ✓）
         #   典型症状：md 与 jsonl 都对 ✓、pkl 悄悄少 ✗（下游 registry 拿不到 node ✗、
@@ -329,6 +366,15 @@ def main():
 
     # ---- 8) 刷登记表 ----
     print('\n  ⇒ 下一步（本工具**不自动跑**，避免连锁 ✗）：')
+    # ★★ 2026-09-22 补 **`build_facs`** ✗✗ —— 2026-09-21 那次跑就是**漏了这一步** ✗
+    #   后果（实测）：`facs/` 只落到 F41 ✗ ⇒ F43~F46 四个**入库了却没有因子值** ✗
+    #   ⇒ 详情页有曲线（曲线是现算的 ✓ 不依赖 facs ✓）但**取用因子值那条路是断的** ✗
+    #   ⇒ 而且**不报错** ✗（最恶劣的一类：静默缺件 ✓）⇒ 现在把它放进清单 ✓
+    print('      python tools/build_facs.py --only-new                 # ★ 落地因子值（漏了这一步'
+          '⇒ 入库了却没有 values.h5 ✗）')
+    print('      python tools/factor_metrics.py --only-new             # 补 5 日指标')
+    print('      python tools/factor_metrics.py --only-new --fwd 20 '
+          '--out docs/factor_metrics_fwd20.csv   # 补 20 日指标（★ 必须配 --out ✗ 否则冲掉 5 日表）')
     print('      python tools/export_factor_registry.py')
     print('      python tools/factor_curves.py --only-new              # 补 5 日曲线')
     print('      python tools/factor_curves.py --fwd=20 --only-new '
