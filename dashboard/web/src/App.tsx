@@ -31,6 +31,18 @@ const selNumStr = (x?: string | null) => {
   const v = Number((x || '').replace(/[^0-9.+-]/g, ''))
   return Number.isFinite(v) ? v : Number.NEGATIVE_INFINITY
 }
+/** ★★ 2026-09-22（用户："原始卡玛小数太多了，3 位就行"）——
+ *  卡玛类数值**统一 3 位小数** ✓。两个来源都要过它：
+ *    · `calmar`（原始）= strip bank CSV 的**长浮点**（`0.8202561687921084` ✗ 实测）
+ *    · `stripCalmar`（剥后）= md 里取来的**字符串**（本来就是 3 位 ✓ 但别假设它永远规整 ✗）
+ *  ⇒ 取不到数就原样显示（**不臆造 0** ✗），缺失给 `—` ✓ */
+const fmtCal = (x?: string | number | null): string => {
+  if (typeof x === 'number') return fmt3(x)
+  const s = (x || '').replace(/[^0-9.+-]/g, '')
+  if (!s) return '—'
+  const v = Number(s)
+  return Number.isFinite(v) ? v.toFixed(3) : s
+}
 const SEL_SORTS: { k: string; label: string; get: (f: SelectedFactor) => number }[] = [
   { k: '', label: '不排序（原始顺序）', get: () => 0 },
   { k: 'ann_ex', label: '年化 · 超额', get: f => selNum(f.metrics?.ann_ex) },
@@ -1910,8 +1922,8 @@ function SelectedPanel({ s }: { s: SelectedDto }) {
               {/* ★ 2026-09-22（用户："除了显示剥卡玛，也显示**原始卡玛**吧"）——
                   两个数字来自**同一次剥风格评估** ⇒ 并排看就是"剥掉了多少" ✓
                   原始 = 未剥的费后超额卡玛（`calmar` ✓）；剥后 = `stripCalmar` ✓ */}
-              <span className="sc">原始Calmar <b>{(f.calmar || '—').replace(/\*/g, '')}</b></span>
-              <span className="sc">剥Calmar <b>{f.stripCalmar.replace(/\*/g, '')}</b></span>
+              <span className="sc">原始Calmar <b>{fmtCal(f.calmar)}</b></span>
+              <span className="sc">剥Calmar <b>{fmtCal(f.stripCalmar)}</b></span>
               <button className="btn sm det" onClick={() => setSel(f)}>详情</button>
             </div>
             <code className="expr">{f.expr || '—'}</code>
