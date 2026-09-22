@@ -161,12 +161,10 @@ def main():
 
     # ---- 档位（缺剥风格记录 => D，不入选）----
     grade = {n: (strip.get(n, {}).get('grade') or 'D') for n in names}
-    s_cal = {}
-    for n in names:
-        try:
-            s_cal[n] = float(strip[n]['strip_calmar'])
-        except Exception:
-            s_cal[n] = float('-inf')
+    # ★★★★★ 2026-09-22（用户："改成日频对齐"）—— "同族里留谁"的判据改用**日频**剥后卡玛 ✓
+    #   原来用期频 `strip_calmar` ✗ ⇒ 与"准入档按日频判"打架 ⇒ 可能把**日频更强的淘汰掉** ✗
+    #   ⚠ 取值/回退规则集中在 `strip_cal_daily()`（单一事实源 ✓ 可单测 ✓）
+    s_cal = {n: strip_cal_daily(strip.get(n)) for n in names}
     n_by_g = {}
     for n in names:
         n_by_g[grade[n]] = n_by_g.get(grade[n], 0) + 1
@@ -259,12 +257,12 @@ def main():
     L += ['## 精选清单（{} 个）'.format(len(sel)), '',
           '> ★ **表达式是完整的**（不截断）—— 本文件可直接给下游用，不必回各池库翻。',
           '> 需要**可复制的全文** / `sign` / h5 路径 → 见下方「[精选因子明细](#精选因子明细可直接复制使用)」。', '',
-          '| # | 因子 | 剥风格档 | 剥Calmar | 剥超额 | 原Calmar | 表达式（完整） |',
+          '| # | 因子 | 剥风格档 | 剥Calmar(日频) | 剥超额 | 原Calmar | 表达式（完整） |',
           '|---|---|---|---|---|---|---|']
     for i, n in enumerate(sel, 1):
         r = strip.get(n) or {}
         L.append('| {} | {}{}{} | **A** | **{}** | {} | {} | {}{}{} |'.format(
-            i, BT, n, BT, _f(r.get('strip_calmar')), _pct(r.get('strip_ann_ex')),
+            i, BT, n, BT, _f(strip_cal_daily(r, None)), _pct(r.get('strip_ann_ex')),
             _f(r.get('calmar')), BT, _cell(meta[n]['expr']), BT))
 
     # ---- ★ 精选因子明细（可直接复制使用）----
@@ -293,22 +291,26 @@ def main():
               '| 形状 | {} 日 × {} 股 |'.format(*(at.get('shape') or ('?', '?'))),
               '| 来源 | `{}` |'.format(at.get('source')),
               '| 建于 | {} |'.format(str(at.get('created_at') or '').strip() or '—'),
-              '| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后 Calmar {} ≥ 0.30）|'.format(
-                  _f(r.get('strip_calmar'))),
-              '| 剥风格后 Calmar / 超额 | **{}** / {} |'.format(
-                  _f(r.get('strip_calmar')), _pct(r.get('strip_ann_ex'))),
+              # ★ 2026-09-22：这里也改**日频** ✓（与上面「留谁」的判据同一口径 ✓ 不再一处期频一处日频 ✗）
+              '| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar {} ≥ 0.30）|'.format(
+                  _f(strip_cal_daily(r, None))),
+              '| 剥风格后 Calmar（日频）/ 超额 | **{}** / {} |'.format(
+                  _f(strip_cal_daily(r, None)), _pct(r.get('strip_ann_ex'))),
               '| 原（未剥）Calmar / 超额 / IC | {} / {} / {} |'.format(
                   _f(r.get('calmar')), _pct(r.get('ann_ex')), _f(r.get('ic'))),
               '']
     L += ['---', '', '## ⚠ 被淘汰（同族重复，**留痕可查**）', '',
           '淘汰**不是删除** —— 它们仍在各池库里（`factor_library_{pool}.md`），只是不进精选池。',
           '★ 留痕是硬要求（§8.44 教训：**被拦的必须查得到**）。', '',
-          '| 被淘汰 | 与谁相关 ≥{:.2f} | 保留者 | 保留者剥Calmar | 被淘汰者剥Calmar |'.format(a.thr),
+          # ★ 2026-09-22：列名标明**日频** ✓（这就是"留谁"的判据 ✓ 与文档标题口径一致 ✓）
+          '| 被淘汰 | 与谁相关 ≥{:.2f} | 保留者 | 保留者剥Calmar(日频) | 被淘汰者剥Calmar(日频) |'
+          .format(a.thr),
           '|---|---|---|---|---|']
     for m, keep, c in sorted(dropped, key=lambda x: (x[1], x[0])):
         L.append('| {}{}{} | {} | {}{}{} | **{}** | {} |'.format(
             BT, m, BT, ('{:.3f}'.format(c) if c is not None else '（同组）'),
-            BT, keep, BT, _f(strip.get(keep, {}).get('strip_calmar')), _f(s_cal[m] if s_cal[m] > -1e8 else None)))
+            BT, keep, BT, _f(strip_cal_daily(strip.get(keep), None)),
+            _f(s_cal[m] if s_cal[m] > -1e8 else None)))
     L += ['']
     L += ['---', '', '## 相关文件导航', '', '| 文件 | 内容 |', '|---|---|']
     L += ['| `docs/factor_pool_selected.md`（本文件） | ★ **精选池**（A 档 + 正交去重后的推荐清单）|']
@@ -323,11 +325,35 @@ def main():
         # ⚠ 控制台这里**仍然截断**（终端要能一行放下）—— 这是**有正当理由的**；
         #   而**写进文件**的表达式绝不能截断（文件是给人复制去用的）。两者别混为一谈。
         _e = meta[n]['expr']
-        print('    [{:<10s}] 剥Calmar {:>7s}  sign={:<3}  {}'.format(
-            n, _f(strip.get(n, {}).get('strip_calmar')),
+        print('    [{:<10s}] 剥Calmar(日频) {:>7s}  sign={:<3}  {}'.format(
+            n, _f(strip_cal_daily(strip.get(n, {}), None)),
             str((fattrs.get(n) or {}).get('sign')), _e[:52] + ('…' if len(_e) > 52 else '')))
     print('  （控制台为一行预览；**文件里是完整表达式** + `sign` + h5 路径，见「精选因子明细」）')
     return 0
+
+
+def strip_cal_daily(row, default=float('-inf')):
+    """★ 2026-09-22（用户："**改成日频对齐**"）—— 取**日频**剥后卡玛 `strip_calmar_d` ✓。
+
+    为什么必须日频：**准入档 A/B/C 是引擎按日频判的**（2026-09-14 §1.19 起判据改日频 ✓：
+    "期频漏掉持有期内回撤、回撤被低估" ⇒ 所有门槛/档位改日频 ✓）
+    ⇒ 本文件的"**同族里留谁**"若仍用期频，就会出现
+      "**日频更强者被淘汰、日频更弱者留下**" ✗（两个口径打架 ⇒ 精选池选错人 ✓）
+    ⇒ 现与档位口径**统一到日频** ✓；`docs/factor_pool_selected.md` 的列名也写明"(日频)" ✓
+
+    ⚠ 回退规则（**不误杀** ✓）：缺 `strip_calmar_d`（旧记录/未开日频那次评估）⇒ 回退期频
+      `strip_calmar` ✓；两者都取不到 ⇒ `default` ✓（排序用 −inf ⇒ 排最后 ✓；展示用 None ⇒ 显示 — ✓）
+    """
+    if not row:
+        return default
+    for k in ('strip_calmar_d', 'strip_calmar'):
+        try:
+            f = float(row.get(k))
+        except Exception:                                        # noqa: BLE001
+            continue
+        if f == f:                       # NaN 自比不相等 ⇒ 跳过（别把 NaN 当有效值 ✓）
+            return f
+    return default
 
 
 def _f(v):
