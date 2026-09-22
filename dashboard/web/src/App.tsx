@@ -47,8 +47,10 @@ const SEL_SORTS: { k: string; label: string; get: (f: SelectedFactor) => number 
   { k: '', label: '不排序（原始顺序）', get: () => 0 },
   { k: 'ann_ex', label: '年化 · 超额', get: f => selNum(f.metrics?.ann_ex) },
   { k: 'ann_top', label: '年化 · 组合自身', get: f => selNum(f.metrics?.ann_top) },
-  { k: 'calmar', label: '卡玛 · 原始', get: f => selNumStr(f.calmar) },
-  { k: 'strip_calmar', label: '卡玛 · 剥后', get: f => selNumStr(f.stripCalmar) },
+  { k: 'calmar', label: '卡玛 · 原始（期频）', get: f => selNumStr(f.calmar) },
+  { k: 'calmar_d', label: '卡玛 · 原始（日频）', get: f => selNumStr(f.calmarD) },
+  { k: 'strip_calmar', label: '卡玛 · 剥后（期频）', get: f => selNumStr(f.stripCalmar) },
+  { k: 'strip_calmar_d', label: '卡玛 · 剥后（日频）', get: f => selNumStr(f.stripCalmarD) },
   { k: 'calmar_top', label: '卡玛 · 组合自身', get: f => selNum(f.metrics?.calmar_top) },
   { k: 'ic', label: 'IC · 超额', get: f => selNum(f.metrics?.ic) },
   { k: 'turn', label: '换手（越小越好）', get: f => -selNum(f.metrics?.turn) },
@@ -1922,8 +1924,25 @@ function SelectedPanel({ s }: { s: SelectedDto }) {
               {/* ★ 2026-09-22（用户："除了显示剥卡玛，也显示**原始卡玛**吧"）——
                   两个数字来自**同一次剥风格评估** ⇒ 并排看就是"剥掉了多少" ✓
                   原始 = 未剥的费后超额卡玛（`calmar` ✓）；剥后 = `stripCalmar` ✓ */}
-              <span className="sc">原始Calmar <b>{fmtCal(f.calmar)}</b></span>
-              <span className="sc">剥Calmar <b>{fmtCal(f.stripCalmar)}</b></span>
+              {/* ★ 2026-09-22（用户之问："精选池这个卡玛是不是搞错了？详情日频打点只有 0.369"）——
+                  数值没错 ✗，是**口径**要与详情页对得上 ✓ ⇒ 这里把**两个口径并排摆出来**：
+                    · 斜杠前 = **期频**（只在换仓日打点）
+                    · 斜杠后 = **日频**（逐日 mark-to-market ⇒ 回撤更真、通常更低）
+                  两者都是**超额**口径（组合 − 基准）✓；
+                  ⚠ 详情页里「组合自身」那块是**另一个口径**（Top10% 绝对收益 ✗）⇒ 别拿来比 ✓ */}
+              <span className="sc" title={'原始卡玛是超额口径（组合减基准）、期频打点；'
+                                           + '斜杠后是同一超额口径的日频打点（逐日 mark-to-market，'
+                                           + '回撤更真所以通常更低）。详情页里组合自身那块的卡玛'
+                                           + '是另一个口径（Top10% 绝对收益），不能直接比。'}>
+                原始Calmar <b>{fmtCal(f.calmar)}</b>
+                <span className="sc2">/ 日频 {fmtCal(f.calmarD)}</span>
+              </span>
+              <span className="sc" title={'剥卡玛是剥掉 lncap 与 lnamt 之后的超额卡玛、期频打点；'
+                                           + '斜杠后是同日频口径。与左边同一次评估，'
+                                           + '可直接看出剥掉了多少。'}>
+                剥Calmar <b>{fmtCal(f.stripCalmar)}</b>
+                <span className="sc2">/ 日频 {fmtCal(f.stripCalmarD)}</span>
+              </span>
               <button className="btn sm det" onClick={() => setSel(f)}>详情</button>
             </div>
             <code className="expr">{f.expr || '—'}</code>

@@ -500,6 +500,10 @@ background: currentColor; flex: none; }
   font-size: 12px; color: var(--mut); white-space: nowrap;
 }
 .sec-h .selsort .sel { height: 26px; padding: 0 8px; font-size: 12px; }
+/* ★★★★★ 2026-09-22（用户之问："精选池这个卡玛是不是搞错了？我点开详情日频打点卡玛只有 0.369"）
+   —— 数值没错，是**口径**没写清 ⇒ 卡片上把「期频 / 日频」并排摆出来 ✓
+   斜杠后那个（日频）**弱化显示** ✓：不与主值抢眼，但一眼能看到两个口径 ✓ */
+.sc .sc2 { color: var(--mut); font-size: 11px; margin-left: 2px; }
 
 /* ★ 调度模式分段控件（轮转 / 并行）+ 当前实际模式标记（2026-09-16） */
 .seg { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--mut); }

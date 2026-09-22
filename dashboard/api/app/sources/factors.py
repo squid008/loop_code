@@ -662,6 +662,14 @@ def selected():
             'stripCalmar': _plain(r[i_sc].strip() if i_sc is not None and len(r) > i_sc else ''),
             # ★ 2026-09-22：**原始卡玛**（未剥；与上面 `stripCalmar` 同一次评估 ✓）
             'calmar': (_sb.get(code) or {}).get('calmar', ''),
+            # ★★ 2026-09-22（用户之问："精选池这个卡玛是不是搞错了？我点开详情**日频打点**卡玛
+            #   只有 0.369 啊"）—— 根因不是数值错 ✗，是**口径没写清** ✗：
+            #     精选池显示的是 `calmar`（**超额**口径 · **期频**打点 ✓）
+            #     详情页那个 0.369 = `calmar_top_d`（**组合自身** · **日频** ✓）—— 两码事 ✗
+            #   ⇒ 补上**日频**一列（`calmar_d` / `strip_calmar_d` ✓ 同一份 strip bank 里就有 ✓）
+            #     供卡片**并把日频并排显示** ✓，也供排序下拉多两个键 ✓
+            'calmarD': (_sb.get(code) or {}).get('calmar_d', ''),
+            'stripCalmarD': (_sb.get(code) or {}).get('strip_calmar_d', ''),
             'expr': (re.sub(r'[`*]', '', r[i_expr]).strip() if i_expr is not None and len(r) > i_expr else ''),
             # ★★★★★ 2026-09-21（用户："精选池那里还只有 A 标签，没有 5、20、双标签"）——
             #   精选池的 `hzn` / `metrics20` **不在这里自己算** ✗：

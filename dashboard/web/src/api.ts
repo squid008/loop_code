@@ -178,6 +178,14 @@ export interface SelectedFactor {
    *  ⚠ 与 `stripCalmar` **同一次评估**（可直接对比"剥掉了多少" ✓）
    *  —— 不是统一口径指标表那次重算（那是另一次评估 ✗） */
   calmar?: string | null
+  /** ★★ 2026-09-22（用户之问："精选池这个卡玛是不是搞错了？我点开详情**日频打点**卡玛只有 0.369"）
+   *  —— 数值都没错 ✗，是**口径没写清** ✗：
+   *    · `calmar` = **超额**口径（组合 − 基准）· **期频**打点（只在换仓日 ✓）
+   *    · `calmarD` = 同一口径的**日频**（逐日 mark-to-market ⇒ 回撤更真 ⇒ 通常更低 ✓）
+   *    · 详情页那个 0.369 是 `calmar_top_d` = **组合自身**口径 + 日频 ✗（与上面两个都不是一回事 ✓）
+   *  ⇒ 卡片上把期频/日频**并排摆出来** ✓，免得再对不上 ✓ */
+  calmarD?: string | null
+  stripCalmarD?: string | null
   /** ★ 2026-09-16：精选池也能「点开看详情」—— 与库表同一套字段（联表自各池库文档 + 指标表） */
   detail?: LibraryFactor['detail']
   metrics?: Record<string, number | null>
