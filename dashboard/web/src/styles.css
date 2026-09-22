@@ -504,6 +504,10 @@ background: currentColor; flex: none; }
    —— 数值没错，是**口径**没写清 ⇒ 卡片上把「期频 / 日频」并排摆出来 ✓
    斜杠后那个（日频）**弱化显示** ✓：不与主值抢眼，但一眼能看到两个口径 ✓ */
 .sc .sc2 { color: var(--mut); font-size: 11px; margin-left: 2px; }
+/* ★ 2026-09-22（用户："显示日频的，这样详情按钮就可以跟它们在同一行了"）——
+   标签整体不折断（`nowrap` ✓）⇒ 配合已缩短的标签长度，详情按钮（`.det` 有 margin-left:auto ✓）
+   就能与它们同行 ✓；万一还不够宽 ⇒ `.sel-h` 的 wrap 兜底（退化成第二行，不会溢出 ✗） */
+.sc { white-space: nowrap; }
 
 /* ★ 调度模式分段控件（轮转 / 并行）+ 当前实际模式标记（2026-09-16） */
 .seg { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--mut); }
