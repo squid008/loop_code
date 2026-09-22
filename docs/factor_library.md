@@ -720,13 +720,10 @@ add(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidit
   （原式 `delta(delay(close,5),5)` 已化简易证为 `ts_delta10 - ts_delta5` ✓）
 - 结论（本管线实测）：超额 **−18.22%/年** · 日频 Calmar **−0.216** · 夏普 −1.62 ·
   单期换手 71.7%（年化约 36 倍）· **负年 9 年** ⇒ **不合格** ✓
-- 状态：**已移出**（2026-09-20）—— ① 公式**本身找错了** ✗（见上勘误）② 按原式实测也**不合格** ✓
-  ⇒ `in_bank` 置 0 + 退出入库历史名单 ✓（用户原话："测出来不行，再给它移出不就行了"、"搞成已移出吧" ✓）
 
 ```
 neg(mul(cs_rank(ts_rank10(close)), cs_rank(sub(ts_delta10(close), ts_delta5(close)))))
 ```
-- **符号 `sign`：`1`**（因子值越大越好；原式自带 `-1 *` ⇒ 我们的式子里已含 `neg` ✓）
 - 家族：外部基准 · 短周期价量
 - 叶子：close
 - 骨架：`neg(mul(cs_rank(ts_rank(close)),cs_rank(sub(ts_delta(close),ts_delta(close)))))`
