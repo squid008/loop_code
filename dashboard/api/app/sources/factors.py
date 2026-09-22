@@ -670,6 +670,10 @@ def selected():
             #     供卡片**并把日频并排显示** ✓，也供排序下拉多两个键 ✓
             'calmarD': (_sb.get(code) or {}).get('calmar_d', ''),
             'stripCalmarD': (_sb.get(code) or {}).get('strip_calmar_d', ''),
+            # ⚠★ 2026-09-22（v1.21.35 之后）：注意口径已变 ——
+            #   上面那个 `stripCalmar` 取自 **md**，而 md 从 v1.21.35 起写的是**日频**剥后卡玛 ✓
+            #   （与精选池准入档同口径 ✓）；`stripCalmarD` 取自 strip bank 的 `strip_calmar_d` ✓
+            #   ⇒ 现在**两者数值相同** ✓（前端已合并成一个排序项 ✓ 见 `App.tsx` 的 SEL_SORTS ✓）
             'expr': (re.sub(r'[`*]', '', r[i_expr]).strip() if i_expr is not None and len(r) > i_expr else ''),
             # ★★★★★ 2026-09-21（用户："精选池那里还只有 A 标签，没有 5、20、双标签"）——
             #   精选池的 `hzn` / `metrics20` **不在这里自己算** ✗：

@@ -49,8 +49,11 @@ const SEL_SORTS: { k: string; label: string; get: (f: SelectedFactor) => number 
   { k: 'ann_top', label: '年化 · 组合自身', get: f => selNum(f.metrics?.ann_top) },
   { k: 'calmar_top_d', label: '卡玛 · 组合自身（日频）', get: f => selNum(f.metrics?.calmar_top_d) },
   { k: 'calmar_top', label: '卡玛 · 组合自身（期频）', get: f => selNum(f.metrics?.calmar_top) },
-  { k: 'strip_calmar', label: '卡玛 · 剥后超额（期频）', get: f => selNumStr(f.stripCalmar) },
-  { k: 'strip_calmar_d', label: '卡玛 · 剥后超额（日频）', get: f => selNumStr(f.stripCalmarD) },
+  // ★★ 2026-09-22（v1.21.35 之后修正）：精选池的 `stripCalmar` 取自 **md**，而 md 从 v1.21.35 起
+  //   写的是**日频**值（与准入档同口径 ✓）⇒ 这里原来标的「（期频）」已成**错标** ✗ ⇒ 改为（日频）✓
+  //   ⚠ 同时**删掉** `strip_calmar_d` 那个键：它与 `stripCalmar` 现在是**同一个值**（都日频 ✓）
+  //     两个选项指向同一数，只是让人困惑 ✗
+  { k: 'strip_calmar', label: '卡玛 · 剥后超额（日频）', get: f => selNumStr(f.stripCalmar) },
   { k: 'calmar', label: '卡玛 · 超额原始（期频）', get: f => selNumStr(f.calmar) },
   { k: 'calmar_d', label: '卡玛 · 超额原始（日频）', get: f => selNumStr(f.calmarD) },
   { k: 'ic', label: 'IC · 超额', get: f => selNum(f.metrics?.ic) },
@@ -1937,9 +1940,10 @@ function SelectedPanel({ s }: { s: SelectedDto }) {
                                            + '这是组合自身口径，与超额口径的数字不可直接比。'}>
                 组合日频卡玛 <b>{fmt3(f.metrics?.calmar_top_d)}</b>
               </span>
-              <span className="sc" title={'剥后超额卡玛：剥掉市值与成交额之后的超额卡玛'
-                                           + '（组合减基准）。与左边的组合自身口径不同，别直接比。'}>
-                剥后超额卡玛 <b>{fmtCal(f.stripCalmar)}</b>
+              <span className="sc" title={'剥后超额卡玛（日频）：剥掉市值与成交额之后的超额卡玛'
+                                           + '（组合减基准），逐日 mark-to-market。'
+                                           + '与左边的组合自身口径不同，别直接比。'}>
+                剥后超额卡玛(日频) <b>{fmtCal(f.stripCalmar)}</b>
               </span>
               <button className="btn sm det" onClick={() => setSel(f)}>详情</button>
             </div>
