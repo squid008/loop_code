@@ -19,6 +19,29 @@ const fmt3 = (x?: number | null) =>
 const calKey = (x?: number | null) =>
   (typeof x === 'number' && Number.isFinite(x) ? x : Number.NEGATIVE_INFINITY)
 
+// ★★★★★ 2026-09-22（用户："也在哪儿找个位置加个排序按钮，但是精选池排序要可以**自己选参数**，
+//   比如超额排序、年化排序、卡玛排序、超额卡玛排序等"）——
+//   精选池下拉里的排序键。一律**降序**（这些指标都越大越好 ✓）；**缺值排最后** ✓。
+//   ⚠ 「卡玛 · 原始」用**卡片上显示的那个**（`f.calmar` ✓ 来自剥风格评估的未剥列 ✓）
+//     —— 不是统一口径指标表那次重算 ✗（两个数字不同，混用会张冠李戴 ✓）
+const selNum = (x?: number | null) =>
+  (typeof x === 'number' && Number.isFinite(x) ? x : Number.NEGATIVE_INFINITY)
+/** `calmar` / `stripCalmar` 是**字符串**（且可能带 `**` 标记 ✓）⇒ 抠出数字 ✓ */
+const selNumStr = (x?: string | null) => {
+  const v = Number((x || '').replace(/[^0-9.+-]/g, ''))
+  return Number.isFinite(v) ? v : Number.NEGATIVE_INFINITY
+}
+const SEL_SORTS: { k: string; label: string; get: (f: SelectedFactor) => number }[] = [
+  { k: '', label: '不排序（原始顺序）', get: () => 0 },
+  { k: 'ann_ex', label: '年化 · 超额', get: f => selNum(f.metrics?.ann_ex) },
+  { k: 'ann_top', label: '年化 · 组合自身', get: f => selNum(f.metrics?.ann_top) },
+  { k: 'calmar', label: '卡玛 · 原始', get: f => selNumStr(f.calmar) },
+  { k: 'strip_calmar', label: '卡玛 · 剥后', get: f => selNumStr(f.stripCalmar) },
+  { k: 'calmar_top', label: '卡玛 · 组合自身', get: f => selNum(f.metrics?.calmar_top) },
+  { k: 'ic', label: 'IC · 超额', get: f => selNum(f.metrics?.ic) },
+  { k: 'turn', label: '换手（越小越好）', get: f => -selNum(f.metrics?.turn) },
+]
+
 const ago = (iso: string | null | undefined, nowMs: number) => {
   if (!iso) return '—'
   const t = new Date(iso.replace(' ', 'T')).getTime()
@@ -1846,17 +1869,37 @@ function FactorDetail({ f, metricsInfo, metricsMtime, metrics20Info, onClose }:
 
 function SelectedPanel({ s }: { s: SelectedDto }) {
   const [sel, setSel] = useState<SelectedFactor | null>(null)
+  // ★★★★★ 2026-09-22（用户："也在哪儿找个位置加个排序按钮，但是精选池排序要可以**自己选参数**，
+  //   比如超额排序、年化排序、卡玛排序、超额卡玛排序等"）——
+  //   · 排序键**由用户在下拉里选** ✓（不是写死某一列 ✓）
+  //   · 默认 `''` = **不排序** ⇒ 原始顺序 ✓（与库表同一套语义：不擅自改现状 ✓）
+  //   · 一律**降序**（这些指标都是越大越好 ✓）；**缺值排最后** ✓（给 −∞ ⇒ 不当成 0 分 ✓）
+  const [sortKey, setSortKey] = useState('')
+  const list = useMemo(() => {
+    const of = SEL_SORTS.find(o => o.k === sortKey)
+    if (!of) return s.factors
+    return [...s.factors].sort((a, b) => of.get(b) - of.get(a))
+  }, [s.factors, sortKey])
   return (
     <section className="panel">
       <div className="sec-h">
         <b>精选因子池（L3 双闸门）</b>
         <span className="mut">{s.count ?? 0} 个 · 来源 <code>{s.path}</code></span>
+        {/* ★ 排序控件：选一个指标 ⇒ 按它从高到低排；选「不排序」⇒ 恢复原样 ✓ */}
+        <label className="selsort">
+          排序
+          <select className="sel" value={sortKey} onChange={e => setSortKey(e.target.value)}
+                  title={'选一个指标，就按它从高到低排（缺指标的排最后）；'
+                         + '选第一项则不排序，恢复原始顺序。'}>
+            {SEL_SORTS.map(o => <option key={o.k || 'off'} value={o.k}>{o.label}</option>)}
+          </select>
+        </label>
       </div>
       {s.gates.length > 0 && (
         <ul className="gates">{s.gates.map((g, i) => <li key={i}>{g.replace(/\*\*/g, '')}</li>)}</ul>
       )}
       <div className="selgrid">
-        {s.factors.map((f, i) => (
+        {list.map((f, i) => (
           <div key={i} className="selcard">
             <div className="sel-h">
               <b className="mono">{f.code}</b>
@@ -1864,6 +1907,10 @@ function SelectedPanel({ s }: { s: SelectedDto }) {
               {/* ★★★★★ 2026-09-21（用户："精选池那里还只有 A 标签，没有 5、20、双标签"）：
                   口径标签与库表**同源**（后端联表时从 `library()` 照抄 ✓ 阈值只有一处 ✓）⇒ 这里只渲染 ✓ */}
               <HzTag hzn={f.hzn} />
+              {/* ★ 2026-09-22（用户："除了显示剥卡玛，也显示**原始卡玛**吧"）——
+                  两个数字来自**同一次剥风格评估** ⇒ 并排看就是"剥掉了多少" ✓
+                  原始 = 未剥的费后超额卡玛（`calmar` ✓）；剥后 = `stripCalmar` ✓ */}
+              <span className="sc">原始Calmar <b>{(f.calmar || '—').replace(/\*/g, '')}</b></span>
               <span className="sc">剥Calmar <b>{f.stripCalmar.replace(/\*/g, '')}</b></span>
               <button className="btn sm det" onClick={() => setSel(f)}>详情</button>
             </div>

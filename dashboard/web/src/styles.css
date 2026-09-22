@@ -492,6 +492,14 @@ background: currentColor; flex: none; }
            line-height: 1.75; color: var(--mut); background: #0b1020; border: 1px dashed var(--bd); }
 .dt-note b { color: var(--fg); }
 .sel-h .det { margin-left: auto; }
+/* ★★★★★ 2026-09-22（用户："也在哪儿找个位置加个排序按钮，但是精选池排序要可以自己选参数，
+   比如超额排序、年化排序、卡玛排序、超额卡玛排序等"）——
+   排序下拉：放在精选池**标题行最右**（`margin-left:auto` ⇒ 不与左边的计数抢位 ✓） */
+.sec-h .selsort {
+  margin-left: auto; display: flex; align-items: center; gap: 6px;
+  font-size: 12px; color: var(--mut); white-space: nowrap;
+}
+.sec-h .selsort .sel { height: 26px; padding: 0 8px; font-size: 12px; }
 
 /* ★ 调度模式分段控件（轮转 / 并行）+ 当前实际模式标记（2026-09-16） */
 .seg { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; color: var(--mut); }

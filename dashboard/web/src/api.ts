@@ -173,6 +173,11 @@ export interface LibraryEntriesDto {
 
 export interface SelectedFactor {
   code: string; pool: string; grade: string; stripCalmar: string; expr: string
+  /** ★★ 2026-09-22（用户："精选池里因子除了显示剥卡玛，也显示**原始卡玛**吧"）——
+   *  **未剥**的费后超额卡玛，来自 `loop_strip_style_bank.csv` 的 `calmar` 列 ✓
+   *  ⚠ 与 `stripCalmar` **同一次评估**（可直接对比"剥掉了多少" ✓）
+   *  —— 不是统一口径指标表那次重算（那是另一次评估 ✗） */
+  calmar?: string | null
   /** ★ 2026-09-16：精选池也能「点开看详情」—— 与库表同一套字段（联表自各池库文档 + 指标表） */
   detail?: LibraryFactor['detail']
   metrics?: Record<string, number | null>

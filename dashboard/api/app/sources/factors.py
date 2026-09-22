@@ -634,6 +634,17 @@ def selected():
     for i, c in enumerate(head):
         if '表达式' in c:
             i_expr = i
+    # ★★★★★ 2026-09-22（用户："精选池里因子除了显示剥卡玛，也显示**原始卡玛**吧"）——
+    #   加「原始卡玛」= **剥风格那一次评估里未剥**的费后超额卡玛 ✓
+    #   ⚠ 为什么从 `loop_strip_style_bank.csv` 联表取（而不是 md 表 / 统一口径指标表 ✗）：
+    #     旁边显示的「剥Calmar」就是这份文件里的 `strip_calmar` ✓
+    #     ⇒ 两者**同一次评估、同一个成本口径** ⇒ 可以直接对比"剥掉了多少" ✓
+    #     （统一口径指标表里的 `calmar` 是**另一次重算** ⇒ 混着看会张冠李戴 ✗）
+    #   ⚠ 键 = 精选表里的 `code`（形如 `F01` / `F01_500` ✓，与 strip bank 的 `name` 同构 ✓）
+    try:
+        _sb = {r0.get('name'): r0 for r0 in strip_bank().get('rows', [])}
+    except Exception:                                            # noqa: BLE001
+        _sb = {}
     factors = []
     for r in rows:
         if i_code is None or len(r) <= i_code:
@@ -649,6 +660,8 @@ def selected():
             # ★★ 2026-09-16（实测残留）：md 里剥风格 Calmar 写成 `**1.228**` ⇒ 原来**原样**返回 ⇒
             #   前端只好自己 `replace(/\*/g,'')` 遮丑 ✗ ⇒ 出口清洗掉 `**` ✓（前端那层留着也无害）
             'stripCalmar': _plain(r[i_sc].strip() if i_sc is not None and len(r) > i_sc else ''),
+            # ★ 2026-09-22：**原始卡玛**（未剥；与上面 `stripCalmar` 同一次评估 ✓）
+            'calmar': (_sb.get(code) or {}).get('calmar', ''),
             'expr': (re.sub(r'[`*]', '', r[i_expr]).strip() if i_expr is not None and len(r) > i_expr else ''),
             # ★★★★★ 2026-09-21（用户："精选池那里还只有 A 标签，没有 5、20、双标签"）——
             #   精选池的 `hzn` / `metrics20` **不在这里自己算** ✗：
