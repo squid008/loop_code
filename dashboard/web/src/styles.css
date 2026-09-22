@@ -281,7 +281,7 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
       ⇒ 完整内容走 `title` 悬停看 ✓（不截数据、只截显示 ✓）
    ② 编号列里**档位标签与编号拉开 8px** ✓（`.tbl .tag.grade` 只作用于表格 ⇒ 不动入库日志那处 ✓）
    ③ 「详情」列 `width: 1%` = **收成刚好放下按钮** ⇒ 按钮**恒为一行** ✓ */
-.sum { color: var(--mut); max-width: 190px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sum { color: var(--mut); max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* ★★★★★ 2026-09-21 第二批（用户："这个标签好像比旁边的 A 大了一点，搞成一样的" ·
    "有的排不下变成两行了，要放在一行里，可以继续减少一句话的显示字符数"）—— 三处一起改 ✓
    ① **两个标签盒子统一等高 + 同字号** ✗：原来只吃 `.tag` 的通用样式（`padding:1px 8px`），而
@@ -318,6 +318,15 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .dt-h .hzseg button.on { background: #1e293b; color: var(--fg); font-weight: 650; }
 .dt-h .hzseg button:disabled { opacity: .45; cursor: not-allowed; }
 .tbl th:last-child, .tbl td:last-child { width: 1%; }
+/* ★★★★★ 2026-09-22（用户："我点卡玛那个列标题它能按照卡玛从高到低排序，再按一次恢复原样…"）——
+   ① 一句话列**再收窄**（190 → 160px ✓）给新增的「卡玛」列腾位置 ✓
+      （原文仍可悬停 `title` 看全 ✓ 只截显示、不截数据 ✓）
+   ② **可点表头**：默认与普通表头同观感 ✓（不喧宾夺主 ✓），**悬停**才提示可点 ✓，
+      **激活态**给明确标记（`↓` 由组件渲染 + `.on` 高亮 ✓） */
+.tbl th.sortable { cursor: pointer; user-select: none; white-space: nowrap; }
+.tbl th.sortable:hover { color: var(--fg); text-decoration: underline dotted; }
+.tbl th.sortable.on { color: var(--fg); }
+.tbl td.num { text-align: right; }
 .tbl th:nth-last-child(-n+2), .tbl td:nth-last-child(-n+2) { white-space: nowrap; }
 .status { font-size: 11.5px; color: #a7f3d0; background: #052e1b; border: 1px solid #14532d;
           padding: 1px 7px; border-radius: 6px; white-space: nowrap; }

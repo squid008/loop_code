@@ -11,6 +11,14 @@ type TabKey = 'pools' | 'library' | 'selected' | 'process' | 'meta'
 const fmt = (n: number | null | undefined) =>
   n === null || n === undefined ? '—' : n.toLocaleString('en-US')
 
+/** ★ 2026-09-22：小数展示（卡玛一列用 ✓）。缺失 ⇒ `—`（**不当 0** ✗ —— 当 0 会看成"卡玛 0 分" ✓） */
+const fmt3 = (x?: number | null) =>
+  (typeof x === 'number' && Number.isFinite(x) ? x.toFixed(3) : '—')
+
+/** ★ 排序键：缺值给 `-∞` ⇒ **永远排最后** ✓（不许当成 0 ✗） */
+const calKey = (x?: number | null) =>
+  (typeof x === 'number' && Number.isFinite(x) ? x : Number.NEGATIVE_INFINITY)
+
 const ago = (iso: string | null | undefined, nowMs: number) => {
   if (!iso) return '—'
   const t = new Date(iso.replace(' ', 'T')).getTime()
@@ -844,6 +852,16 @@ function Field({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
 function LibraryTable({ lib }: { lib: LibraryDto }) {
   const c = lib.caliber
   const [sel, setSel] = useState<LibraryFactor | null>(null)
+  // ★★★★★ 2026-09-22（用户："我点卡玛那个列标题它能按照**卡玛从高到低**排序，再按一次**恢复原样**"）——
+  //   ① 默认**不排序** ⇒ 就是 API 给的**原始顺序** ✓（不动现状 ✓）
+  //   ② 再点一次 ⇒ 回到原始顺序 ✓（`useMemo` 只在 `calSort` 变化时重排 ✓ 不缓存结果 ⇒ 不会越点越乱 ✓）
+  //   ③ 缺指标的排最后 ✓（`calKey` 给 -∞ ✓）
+  //   ★ 「卡玛」= **组合自身**口径（`cal_top` ✓）—— 不是超额、也不是剥后 ✓（用户特别强调 ✓）
+  const [calSort, setCalSort] = useState(false)
+  const rows = useMemo(
+    () => (calSort ? [...lib.factors].sort((a, b) => calKey(b.cal_top) - calKey(a.cal_top))
+                   : lib.factors),
+    [lib.factors, calSort])
   const known = lib.inBankKnown === true
   const nIn = known ? lib.factors.filter(f => f.inBank === true).length : null
   const stale = !known && (lib.metricsMeasured ?? 0) > 0
@@ -896,9 +914,18 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
         )}
       </div>
       <table className="tbl">
-        <thead><tr><th>编号</th><th>入库代数</th><th>家族</th><th>一句话（公式可能被截断）</th><th>状态</th><th>详情</th></tr></thead>
+        <thead><tr><th>编号</th><th>入库代数</th><th>家族</th>
+          {/* ★ 2026-09-22（用户要的**可点排序** ✓）：点一次 ⇒ 卡玛从高到低 ✓；再点 ⇒ 恢复原样 ✓ */}
+          <th className={'sortable' + (calSort ? ' on' : '')}
+              onClick={() => setCalSort(v => !v)}
+              title={'点一次：按【卡玛】从高到低排 —— 这里的卡玛是组合自身口径 '
+                     + '(Top10% 等权绝对收益)，不是超额卡玛、也不是剥后卡玛；'
+                     + '再点一次：恢复原始顺序；缺指标的排最后'}>
+            卡玛{calSort ? ' ↓' : ''}
+          </th>
+          <th>一句话（公式可能被截断）</th><th>状态</th><th>详情</th></tr></thead>
         <tbody>
-          {lib.factors.map((f, i) => (
+          {rows.map((f, i) => (
             <tr key={`${f.code}-${i}`} className={f.inBank === false ? 'outbank' : ''}>
               <td className="mono strong">
                 {/* ★ 2026-09-20（用户："因子库页加个 A、B、C 标签"）⇒ 编号旁边直接标档位 ✓ */}
@@ -916,6 +943,8 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
               </td>
               <td className="mono">{f.gen}</td>
               <td>{f.family}</td>
+              {/* ★ 2026-09-22：**卡玛**列（组合自身口径 `cal_top` ✓ —— 不是超额、不是剥后 ✓） */}
+              <td className="mono num">{fmt3(f.cal_top)}</td>
               {/* ★ 2026-09-21：一句话列**显示上截短**（`styles.css` 的 `.sum` 省略号 ✓）
                   ⇒ 必须给 `title`，否则截掉的内容**无处可看** ✗（用户只授权"少显示"，没授权"看不见" ✓） */}
               <td className="sum" title={f.summary}>{f.summary}</td>

@@ -100,6 +100,10 @@ export interface LibraryFactor {
   hzn?: string
   /** 便于列表直接展示（免得前端去翻 `metrics20` ✓） */
   cal20?: number | null
+  /** ★★ 2026-09-22（用户："因子库加一列**卡玛**…注意是卡玛，**不是剥后卡玛，也不是超额卡玛**"）
+   *  = **组合自身**卡玛（Top10% 等权绝对口径 ✓ 指标表 `calmar_top` ✓）
+   *  ⚠ 不要拿 `metrics.calmar`（**超额**卡玛 ✗）或 `metrics.strip_calmar`（剥后 ✗）冒充 ✓ */
+  cal_top?: number | null
   ic20?: number | null
   turn20?: number | null
   }

@@ -1,7 +1,7 @@
 {
   "name": "loop-code-dashboard-web",
   "private": true,
-  "version": "1.21.29",
+  "version": "1.21.30",
   "type": "module",
   "description": "Loop 挖掘看板 —— 前端（端口来自 ../config.json，代码只请求相对路径 /api/*）",
   "scripts": {

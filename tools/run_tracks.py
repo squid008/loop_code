@@ -677,7 +677,16 @@ def main():
              '--dup_ex_corr=0.90',
              '--min_calmar=0.0', '--min_ic=-1', '--score_mode=new',
              '--min_pool_calmar=0.15', '--pool_gate_or_all',
-             '--min_strip_calmar=0.15']
+             '--min_strip_calmar=0.15',
+             # ★★★★★ 2026-09-22（用户："都开，然后调高"）—— **双口径挖掘**（v1.21.29 的能力 ✓）
+             #   同一个候选在 5 日（主）与 20 日（副）**同时**评估 ⇒ **任一通过即入库** ✓
+             #   入库文档按**实际入选的口径**标「口径：N 日调仓」+ jsonl 带 `horizon` ✓
+             #   ★「调高」= 副口径卡玛门槛取 **0.701** —— 它是 2026-09-21 全库 20 日口径标定的
+             #     **中位** ✓（与 5 日那道 0.624 同为"中位"口径 ✓ ⇒ 两边**相对严格度对齐** ✓）
+             #   ⚠ 这是往 `extra`（默认组）里加 ⇒ 所有池、以及**看板按钮启动的那条路**都生效 ✓
+             #     （看板 `dashboard/api/app/mine.py` 拉的就是本脚本 ✓ 不另走一条参数路径 ✓）
+             #   ⚠ 成本 ≈ ×1.4（每候选 +2 次回测：副口径主评 + 副口径剥风格 ✓）
+             '--dual_fwd=20', '--min_calmar2=0.701']
     for a in sys.argv[1:]:
         if a.startswith('--pools='):
             pools = [x.strip() for x in a.split('=', 1)[1].split(',') if x.strip()]
