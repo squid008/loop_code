@@ -89,6 +89,54 @@ chk('★ 副口径组用 `horizon=int(args.dual_fwd)` 落文档 ✓（且与 `_s
 chk('主口径组仍**不带** horizon（默认 5 日 ⇒ 历史写法不变 ✓）',
     re.search(r'pool_tags=_tag_by_expr, strip_grades=_strip_by_expr\)', src) is not None)
 
+print('\n【8】★★ 2026-09-22 修：`pass_filter` 不得有**函数内绑定**（病根 ✗ —— 出过真 bug ✓）')
+#   实录（2026-09-22 14:25 用户那次跑，两池都命中 ✓）：
+#     `run()` 里副口径判定（L3026 一带）**先用** `pass_filter` ✗，而 `from factor_miner import
+#     pass_filter` 在**同一函数更晚**处（原 L3148）✗ ⇒ 函数内 import ⇒ 该名字在本函数里是
+#     **局部名** ⇒ L3026 引用时**尚未赋值** ⇒ `UnboundLocalError` ⇒ 被 except 吞掉 ⇒
+#     只打一行「副口径判定失败(按未过处理)」✗ ⇒ **`ok2` 恒为 False**
+#     ⇒ ★★ 双口径的副口径通道**自 v1.21.29 上线起从未通过一次** ✗（而生产一直开着它 ✓）
+#   ⚠ 教训：**"名字在" ≠ "位置对"** ✗ —— 纯文本断言抓不到这类坑 ✓（本文件前 7 段全是文本断言 ✗）
+#     ⇒ 所以这一段用 **AST + code 对象**：钉"无本地绑定" ＋ "以全局名解析" ✓
+chk('① 模块顶部 import 里含 `pass_filter` ✓（要有一个模块级 import 点 ✓）',
+    re.search(r'from factor_miner import \([^)]*\bpass_filter\b', src, re.S) is not None)
+_bad_bind = []
+try:
+    import ast as _ast
+    _tree = _ast.parse(src)
+    for _n in _ast.walk(_tree):
+        if isinstance(_n, (_ast.Import, _ast.ImportFrom)) and _n.col_offset > 0:
+            _nm = ([a.name.split('.')[0] for a in _n.names] if isinstance(_n, _ast.Import)
+                   else [a.name for a in _n.names])
+            if 'pass_filter' in _nm:
+                _bad_bind.append(('函数内 import', _n.lineno))
+        if isinstance(_n, _ast.Assign) and _n.col_offset > 0 \
+                and any(isinstance(t, _ast.Name) and t.id == 'pass_filter' for t in _n.targets):
+            _bad_bind.append(('赋值', _n.lineno))
+        if isinstance(_n, _ast.For) and isinstance(_n.target, _ast.Name) \
+                and _n.target.id == 'pass_filter':
+            _bad_bind.append(('for 目标', _n.lineno))
+except Exception as _e:                                          # noqa: BLE001
+    chk('能 ast 解析 loop_engine', False, '%s: %s' % (type(_e).__name__, str(_e)[:90]))
+chk('② 全文件**没有** `pass_filter` 的本地绑定（缩进 > 0 的 import/赋值）✗',
+    not _bad_bind, '位置 %s ⇒ 会让它变局部名 ⇒ 更早的引用抛 UnboundLocalError ✗✗' % _bad_bind)
+try:
+    sys.path.insert(0, os.path.join(ROOT, 'engine'))
+    import factor_miner as _FM8
+    import loop_engine as _LE8
+    _c = _LE8.run.__code__
+    chk('③ 行为：`run` 的**局部名表**里没有 `pass_filter` ✓（有 ⇒ 就是局部名 ⇒ 必然报错 ✗）',
+        'pass_filter' not in _c.co_varnames,
+        'co_varnames 含它 = 又出现函数内绑定 ✗')
+    chk('④ 行为：`run` 以**全局名**引用它 ✓（`co_names` 里有 ✓）',
+        'pass_filter' in _c.co_names)
+    chk('⑤ 它确实解析到 `factor_miner.pass_filter`（同一个函数对象 ✓）',
+        getattr(_LE8, 'pass_filter', None) is getattr(_FM8, 'pass_filter', None),
+        '应为同一对象 ✓ 若不同 ⇒ 拿到的不是同一套 11 项标准 ✗')
+except Exception as _e:                                          # noqa: BLE001
+    chk('能做行为断言（co_varnames / co_names）', False,
+        '%s: %s' % (type(_e).__name__, str(_e)[:90]))
+
 print('\n【7】★ 动态铁证：切全局 ⇒ 真的换了口径（不是 def 时固化 ✗）')
 try:
     sys.path.insert(0, os.path.join(ROOT, 'tools'))

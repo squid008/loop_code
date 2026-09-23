@@ -35,7 +35,18 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import factor_miner as _FM          # ★ 口径**单一事实源**（FWD 走运行期取值 ✗ 见下）
 from factor_miner import (load_panel, prepare, get_universe, cs_rank,
-                          evaluate_real, START, COST_PRESETS)
+                          evaluate_real, START, COST_PRESETS, pass_filter)
+# ★★ 2026-09-22 修（**真 bug** ✗✗，2026-09-22 14:25 那次跑的日志里两池都命中 ✓）：
+#   `pass_filter` 原来**只在 `run()` 函数内部** import（在副口径判定**之后** ✗）⇒
+#   ① 函数内 import ⇒ 该名字在 `run()` 里是**局部名** ✓
+#   ② 而副口径判定（L3026 一带）**先用**了它 ✗ ⇒ `UnboundLocalError` ⇒ 被 except 吞掉
+#      ⇒ 只打一行「副口径判定失败(按未过处理)」✗ ⇒ **`ok2` 恒为 False** ✗✗
+#   ⇒ 后果：**双口径的副口径通道自 v1.21.29 上线起从未通过一次** ✗（而生产一直开着 ✓
+#     `tools/run_tracks.py` 传 `--dual_fwd=20` ✓）⇒ 所有"只有 20 日才通过"的因子**一条都没能
+#     自动入库** ✗（今天那 11 个是事后**受控补录**进去的 ✓ 由此也能解释 ✓）
+#   ⇒ 修法：**只留这一个模块级 import 点** ✓ —— 关键是"全函数不得再有任何本地绑定" ✗
+#     （位置本身不关键 ✓；本地绑定才是病根 ✓ 见 `tools/_test_dual_horizon.py` 的 AST 断言 ✓）
+
 # ★★★★★ 2026-09-21（用户拍板：(C) 双口径挖掘的**前置改造**）——
 #   `FWD` 原来是 `from factor_miner import FWD` = **import 时的值拷贝** ✗
 #   ⇒ `factor_miner.set_fwd()` 改的是 fm 的全局、**改不到本模块** ✗（`factor_metrics.py` 则直接用
@@ -3134,7 +3145,15 @@ def run(args):
             continue
         yr = rr['yr']
         # 统一用 factor_miner.pass_filter 的11项标准(亏损年<-2% <=1, 而非"所有年>0")
-        from factor_miner import pass_filter
+        # ★★ 2026-09-22 删掉这里的**函数内 import** ✗✗ —— 病根就是它：
+        #   函数内的 `import` 会让 `pass_filter` 在 `run()` 里成为**局部名** ✓
+        #   ⇒ 而副口径判定（本函数**更早**处）已经**先用**过它 ✗ ⇒ 抛 `UnboundLocalError`
+        #   ⇒ 被 except 吞掉 ⇒ 只打一行「副口径判定失败(按未过处理)」✗ ⇒ **`ok2` 恒为 False** ✗✗
+        #   ⇒ 双口径的副口径通道**自 v1.21.29 上线起从未通过一次** ✗（生产一直开着它 ✓）
+        #   ⇒ 现在统一取**模块顶部**的 import ✓
+        #   ★ 由 `tools/_test_dual_horizon.py` 用 **AST** 钉住两条：
+        #     ① 全函数不得有任何 `pass_filter` 的本地绑定 ✗（这才是病根 ✓ 位置无关 ✓）
+        #     ② 它必须以**全局名**解析（`run.__code__.co_varnames` 不含 ✓ `co_names` 含 ✓）
         ok, _ = pass_filter(rr, args.min_ic)
         # ★「全A 量化口径」单独记一份 _ok_q, 供 --pool_gate_or_all 做 OR(见下方池门槛段)。
         #   为什么必须分开: OR 语义要求"全A 口径达标 **或** 池内达标", 若把 _ok_q 提前 AND 进
