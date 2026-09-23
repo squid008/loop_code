@@ -24,6 +24,11 @@
 ★★★ 调度模式开关（2026-09-16 新增；**默认 rotate = 现状，旧行为一行不改**）：
   python tools/run_tracks.py --pools=300,500,1000 --exec_mode=parallel \
          --max_parallel=3 --mem_per_engine=3.0 --panel_cache=use
+
+★★★★★ **单实例闸**（2026-09-23 新增；`--rounds>0` 时生效 ⇒ 本机同时只许 1 个调度器 ✓）：
+  python tools/run_tracks.py --pools=1000 --rounds=1              # 已有调度器 ⇒ 直接退出(rc=3) ✗
+  python tools/run_tracks.py --pools=1000 --rounds=1 --force_single=1   # 强闯（⚠ 排障用）
+  为什么：两个调度器会抢同一个 `_control.json` 并**互相杀引擎**（09-23 实测作废 2 代 ✗）
   · `--exec_mode=rotate`（默认）= 单调度器 + 池轮转（同时 1 个引擎；v1.3.0 起）
   · `--exec_mode=parallel`      = **有界并行**（同时最多 `--max_parallel` 个，其余排队）
     —— 实现是**独立模块** `tools/parallel_runner.py`（本文件只"分叉 + 透传"）
@@ -93,6 +98,68 @@ PY = sys.executable
 NO_WIN = getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000) if os.name == 'nt' else 0
 
 MY_LOG = os.path.join(LOGD, '_driver.log')
+
+# ══════════════════════════════════════════════════════════════════════════════════
+# ★★★★★ 2026-09-23（用户拍板："先把「单实例闸」…做掉"）：**同一台机器只允许 1 个调度器** ✓
+#
+# 为什么（**实测事故** ✓）：
+#   09-23 10:16~10:19 有**两个调度器并起**（看板上重复点启动/重启的重叠窗口）——
+#   它们都盯着**同一个** `ai_test/_tracks/_control.json`，各按自己的候选起引擎，
+#   而"停止/重启"那一步会杀"当前那一代"的引擎 ⇒ **互相杀** ✗：
+#     `10:19:08 [END] pool=300 gen=185 退出码=1 耗时=2.8min`
+#     `10:19:08 [END] pool=500 gen=95  退出码=1 耗时=2.8min`   ← 各白跑 2.8 分钟
+#   ⇒ **2 代作废**（**无脏数据**：引擎是代末原子写 ✓，代价只是白跑 ✓，但会污染"哪个进程是权威"）
+#
+# 做法：进"真正排程"之前先抢一把**内核命名互斥量**（`CreateMutexW`）✓
+#   · 为什么不用 PID 文件：崩溃/被杀会留**脏锁** ⇒ 下次启动误判"已有实例" ✗（还要写清理逻辑 ✗）；
+#     内核互斥量**随进程消亡自动释放** ⇒ 天然没有脏锁问题 ✓
+#   · **名字按 `_tracks` 目录派生** ⇒ 两份不同 checkout（各自 `_tracks`）互不干扰 ✓，
+#     而"抢同一个 `_control.json`"这种**真冲突**一定能拦住 ✓
+#   · 只拦 `--rounds>0`（**会 spawn 引擎**的那种）；`--rounds=0`（纯收尾/全局审查）与
+#     "池内收尾"**不拦** —— 它们本来就要与挖掘并存（写 docs 由 `tail_lock` 串行化 ✓）
+#   · `--force_single=1` 可强闯（人工排障用 ⚠ 大概率出事）
+# ══════════════════════════════════════════════════════════════════════════════════
+_MUTEX_HANDLE = None          # ⚠ 必须**全局持有**：句柄一关，锁就没了 ✗
+
+
+def sched_mutex_name():
+    """互斥量名 —— **按 `_tracks` 目录派生**（同目录才会互斥 ✓ 见上面说明）。"""
+    import hashlib
+    return 'Local\\loop_code_sched_' + hashlib.md5(
+        os.path.abspath(LOGD).lower().encode('utf-8')).hexdigest()[:10]
+
+
+def acquire_single_instance(name=None):
+    """抢"本机只许一个调度器"的命名互斥量。
+
+    :return: (ok, why)
+        `ok=True`  ⇒ 抢到了（`_MUTEX_HANDLE` 已持有，进程活着期间锁就在 ✓）
+        `ok=False` ⇒ **已有调度器在跑**（`why='exists'`）✓
+    ★ 非 Windows / 拿不到 kernel32 / 任何异常 ⇒ 返回 `(True, 'skip:<原因>')`
+      —— **闸坏了不许挡你干活**（宁可能撞车，也不能因为平台差异让挖掘起不来 ✗）
+      ⚠ 但会**大声打日志**（免得"闸静默失效"没人发现 ✗）
+    """
+    global _MUTEX_HANDLE
+    name = name or sched_mutex_name()
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except Exception as e:                                                  # noqa: BLE001
+        return True, 'skip:no-ctypes(%s)' % type(e).__name__
+    try:
+        k32 = ctypes.WinDLL('kernel32', use_last_error=True)
+        k32.CreateMutexW.argtypes = [wintypes.LPVOID, wintypes.BOOL, wintypes.LPCWSTR]
+        k32.CreateMutexW.restype = wintypes.HANDLE
+        h = k32.CreateMutexW(None, False, name)
+        if not h:
+            return True, 'skip:create-failed'
+        if int(ctypes.get_last_error() or 0) == 183:        # ERROR_ALREADY_EXISTS
+            k32.CloseHandle(h)                              # ⚠ 只关我们自己这份（别人那份不受影响 ✓）
+            return False, 'exists'
+        _MUTEX_HANDLE = h                                   # ★ 持有（全局引用，防被 GC/关闭 ✗）
+        return True, 'ok'
+    except Exception as e:                                                  # noqa: BLE001
+        return True, 'skip:ctypes-error(%s)' % type(e).__name__
 
 
 def log(m):
@@ -363,8 +430,11 @@ def do_pool_tail(pool, tag='', min_free_gb=TAIL_MIN_FREE_GB, force=False):
             # ★★★★★ 2026-09-21（用户："以后入库之后，会不会自动做这个审核然后贴标签呀？"）——
             #   原来**不会** ✗：收尾只跑 **5 日口径** ⇒ 新入库因子的**口径标签 5/20/双 一直空着** ✗
             #   ⇒ 补 ③b（20 日指标 ✓ 增量 ⇒ 没新因子时几秒、新因子 ≈15s/个 ✓）
+            #   ★ 2026-09-23：带 `--ic_tol=1.0` —— **20 日口径的 IC 与"库/归档里的 5 日 IC"
+            #     本来就不该相等** ⇒ 拿 0.002 去对账**必然**每次都刷一片假警报 ✗
+            #     （收尾日志里那一大段"IC 与归档记录不符"就是这么来的 ⇒ 会淹没真问题 ✗）
             ('③b', '指标表 20 日', [PY, '-u', 'tools/factor_metrics.py', '--only-new',
-                                 '--panel_cache=use', '--fwd', '20',
+                                 '--panel_cache=use', '--fwd', '20', '--ic_tol=1.0',
                                  '--out', 'docs/factor_metrics_fwd20.csv',
                                  '--pools=%s' % pool]),
             ('④', '曲线 core', [PY, '-u', 'tools/factor_curves.py', '--only-new',
@@ -517,8 +587,10 @@ def _global_tail_impl(tag=''):
     #      有新因子时 ③b ≈ 15s/个 ✓ · ⑥b ≈ 100s/个 ✗ —— 一次到位胜过"标签长期空着" ✓）
     #   ⚠ 顺序：③b 要在 ①（facs 落地）之后 ✓；⑥b 与 ⑤⑥ 同为曲线、互不依赖 ✓
     for _tag, _what, _cmd in (
+            #   ★ 2026-09-23：`--ic_tol=1.0` —— 20 日 IC vs 库里的 5 日 IC **本就不该相等**
+            #     ⇒ 0.002 容差每轮必然刷一片假警报（同一处修法见 `do_pool_tail` 的 ③b ✓）
             ('③b', '指标表 20 日', [PY, '-u', 'tools/factor_metrics.py', '--only-new',
-                                   '--panel_cache=use', '--fwd', '20',
+                                   '--panel_cache=use', '--fwd', '20', '--ic_tol=1.0',
                                    '--out', 'docs/factor_metrics_fwd20.csv']),
             ('⑥b', '曲线 20 日', [PY, '-u', 'tools/factor_curves.py', '--only-new',
                                  '--stage=all', '--fwd=20', '--out_dir=factor_curves_fwd20',
@@ -558,6 +630,9 @@ def main():
     #     ⇒ 所以：**池驱动一律加 `--no_global`**；全局收尾由**单独一次**调用完成
     #       （看板「收尾审查」按钮 / 或 `run_tracks.py --pools=... --rounds=0`）✓
     no_global = False
+    # ★★★★★ 2026-09-23：`--force_single=1` —— **强闯单实例闸**（见文件头 `acquire_single_instance`）
+    #   默认 False ⇒ 已有调度器在跑时**本进程直接退出**（绝不静默并跑 ✗）
+    force_single = False
     # ★★★ 2026-09-16 新增「调度模式」开关（**默认 rotate = 现状，一行不改**）：
     #   rotate   = 单调度器 + 池轮转（同时只 1 个引擎；v1.3.0 起）
     #   parallel = **有界并行**（同时最多 N 个引擎，其余排队）⇒ **委托**给独立模块
@@ -725,12 +800,35 @@ def main():
             extra = [x for x in a.split('=', 1)[1].split() if x]
         elif a.startswith('--engine_arg='):
             engine_args += [x for x in a.split('=', 1)[1].split() if x]
+        elif a.startswith('--force_single='):
+            force_single = str(a.split('=', 1)[1]).strip().lower() in ('1', 'true', 'yes', 'on')
 
     if engine_args:                      # ★ 追加式（不受参数书写顺序影响）
         extra = extra + engine_args
     log('=' * 76)
     log('多池轨道驱动: 池={}  每池 {} 轮  n={} l2={}  dry={}'.format(pools, rounds, n, l2, dry))
     log('透传引擎参数: {}'.format(' '.join(extra)))
+    # ★★★★★ 2026-09-23：**单实例闸**（`--rounds>0` = 会 spawn 引擎的那种 ⇒ 必须拦 ✓）
+    #   ⚠⚠ 必须在**任何 `write_ctl` 之前**：否则第二个实例会先把控制文件冲掉再退出 ✗✗
+    #     （那会把第一个调度器的 enabled/stopped/rounds 改成自己的 ⇒ 更隐蔽的破坏 ✗）
+    if rounds > 0:
+        _ok, _why = acquire_single_instance()
+        if not _ok:
+            log('')
+            log('=' * 76)
+            log('[!] **已有一个调度器在跑** ⇒ 本进程**退出**（互斥量 {} ⇒ {}）✗'.format(
+                sched_mutex_name(), _why))
+            log('    为什么拦：两个调度器会抢同一个 `ai_test/_tracks/_control.json`、')
+            log('      并**互相杀掉对方刚起的引擎** —— 2026-09-23 10:16~10:19 实测：')
+            log('      `pool=300 gen=185` 与 `pool=500 gen=95` 各跑 2.8min 被杀 ⇒ **2 代作废**')
+            log('      （**无脏数据**：引擎代末原子写 ✓，代价只是白跑 ✓）')
+            log('    ⇒ 想跑第二条轨道：换**独立的 `_tracks` 目录**（控制文件隔离），')
+            log('      或先在看板「全部停止」停掉现有调度器；')
+            log('      `--force_single=1` 可强闯（⚠ 排障用，大概率两边互相杀）')
+            log('=' * 76)
+            return 3
+        log('  [闸] 单实例：已持有 `{}`（{}）⇒ 本机同时只会有 1 个调度器 ✓'.format(
+            sched_mutex_name(), _why))
     plan = []
     for p in pools:
         g0, done = next_gen(p)
