@@ -283,10 +283,50 @@ def _reap(t):
 
 MAX_CRASH_RETRY = 2    # ★ 某池"启动即崩"时**本轮**最多重试几次（2026-09-17；防必崩时无限刷屏）
 
-MIN_FREE_GB = 3.0      # 系统余量（与看板 `mine.MIN_FREE_GB` 同一口径：留 3 GB 不碰）
+MIN_FREE_GB = 3.0      # 系统余量（留 3 GB 不碰；看板 `mine.MIN_FREE_GB` 同值 ✓）
+
+# ★★★★★ 2026-09-23（用户："统一口径"）：**槽位口径 = 单一事实源**（本文件这一处）★
+#   以前同一台机器上有**三套算法**，答案自然不一样 ✗：
+#     · 看板**启动那一刻**：`GB_PER_ENGINE_SHARED`(3.0) 或 `GB_PER_ENGINE`(9.0) ⇒ 会算出 5 个 ✗
+#     · 看板**内存护栏**：又是 `max(mem_per_engine, 3.0)` ⇒ 第三个答案 ✗
+#     · 调度器**运行期**：`(free − 3.0) // --mem_per_engine`（**连面板惩罚都没有** ✗）
+#     · 看板**显示**：读命令行 `--max_parallel`（= 启动时的天花板，不是此刻真能开几个 ✗）
+#   实测症状（用户截图）：小字写"同时最多 **1** 个引擎"，而真实上限是 **2** ✗ —— 他就是被这个绊住的 ✓
+#   ⇒ 现在两边**都调下面两个纯函数**（`per_engine_gb` / `slot_cap`）✓
+#   ⚠ 为什么放在本文件：它本来就是"并行调度"的所在 ✓ 且纯 stdlib（看板后端 import 它零成本 ✓）
+PANEL_GB = 4.42        # 面板（只读 memmap）一份的大小；**面板缓存关着**时每个引擎各建一份 ✗
 
 
-def _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine):
+def per_engine_gb(mem_per_engine, panel_cache='use'):
+    """★ 单一事实源：**一个引擎该按多少 GB 算** ✓
+
+    = `--mem_per_engine`（每进程**私有**预算；实测私有峰值 ≈ 7.7 GB，见 v1.21.27）
+      ＋ 面板缓存**关着**时再加一整份面板（`PANEL_GB`，每个引擎各建一份 ✗）
+
+    ⚠ 运行期原来**漏了这一项** ✗ —— 面板缓存关着时它仍只按 `--mem_per_engine` 判内存，
+      而引擎实际要多花 4.42 GB ⇒ 有 OOM 风险 ✓（本版一并修 ✓）
+    """
+    p = float(mem_per_engine or 0.0)
+    if str(panel_cache or '').strip().lower() == 'off':
+        p += PANEL_GB
+    return p
+
+
+def slot_cap(free_gb, n_pools, mem_per_engine, panel_cache='use', min_free_gb=MIN_FREE_GB):
+    """★ 单一事实源：**能同时跑几个引擎** —— 「启动时」（看板）与「运行期」（调度器）共用 ✓
+
+        槽位 = max(1, min(可跑池数, floor((可用内存 − 余量) / 每引擎预算)))
+
+    `free_gb is None`（测不出内存）⇒ 保守给 `min(池数, 3)` ✓（不因"测不出"而卡死 ✗）
+    """
+    n = max(1, int(n_pools or 1))
+    if free_gb is None:
+        return max(1, min(n, 3))
+    per = max(per_engine_gb(mem_per_engine, panel_cache), 0.5)   # 防 0/负预算 ⇒ 除零 ✓
+    return max(1, min(n, int((float(free_gb) - float(min_free_gb)) // per)))
+
+
+def _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine, panel_cache='use'):
     """★ **有效并行上限**（2026-09-16 用户实测「加的池只排队、不并行」后新增）。
 
     `--auto_parallel=1`（看板默认）⇒ **每次迭代重算**：
@@ -295,6 +335,9 @@ def _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine):
     非 auto ⇒ 直接用 `--max_parallel`（显式指定，一动不动）✓
 
     ⚠ 它只决定"**要不要起新引擎**"；**已经在跑的绝不因上限变小而被杀**（宁慢不炸）✓
+
+    ★★★★★ 2026-09-23（"统一口径"）：算法搬进 `slot_cap()` ⇒ **与看板启动那一刻同一个公式** ✓
+       并且**补上了面板惩罚**（`per_engine_gb` ⇒ 面板缓存关着时"每引擎"要算上 4.42 GB ✓）。
     """
     if not auto_parallel:
         return max_parallel
@@ -302,8 +345,7 @@ def _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine):
     free = avail_gb()
     if free is None:
         return max(1, min(runnable, max_parallel))
-    cap = int(max(1, (free - MIN_FREE_GB) // max(mem_per_engine, 0.5)))
-    return max(1, min(runnable, cap))
+    return max(1, min(runnable, slot_cap(free, runnable, mem_per_engine, panel_cache)))
 
 
 def fair_order(cand, gens, last_start, min_gens_per_round, order=()):
@@ -417,7 +459,7 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
             RT.log('#' * 76)
             RT.log('## 第 {} / {} 轮   启用池={}   本轮停={}   并行上限={}{}'.format(
                 rnd, rounds, sorted(en), sorted(st) or '无',
-                _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine),
+                _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine, panel_cache),
                 '(自动)' if auto_parallel else ''))
             RT.log('#' * 76)
             # ---- ★★ 本轮状态：**动态队列**（不是"轮初拍死的列表"）----
@@ -451,7 +493,7 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                 #   2026-09-16 用户实测：「点一个启动、再点一个池子，怎么是加入轮转而不是并行？」
                 #   ⇒ 真因之二：并行数是**启动那一刻按 `len(pools)` 算死的**（1 个池 ⇒ `--max_parallel=1`）
                 #     ⇒ 后来加的池**永远只能排队**（哪怕内存富余）✗ ⇒ 现在 auto 模式下**动态放宽** ✓
-                eff_max = _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine)
+                eff_max = _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine, panel_cache)
                 if stopped_by_user:
                     for p in en:
                         if p not in launched:
@@ -590,9 +632,15 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                         cand.pop(0)
                         continue
                     free = avail_gb()
-                    if free < mem_per_engine:
-                        RT.log('[MEM] 可用 {:.1f} GB < 每引擎预算 {:.1f} GB ⇒ 等 15s 再试'
-                               '（宁慢不炸；内存是这台机器的真瓶颈）'.format(free, mem_per_engine))
+                    # ★ 2026-09-23（"统一口径"）：运行期这道闸也按**同一个** `per_engine_gb` 判 ✓
+                    #   （原来只比 `mem_per_engine` ⇒ 面板缓存关着时**漏算 4.42 GB** ✗）
+                    _need = per_engine_gb(mem_per_engine, panel_cache)
+                    if free < _need:
+                        RT.log('[MEM] 可用 {:.1f} GB < 每引擎预算 {:.1f} GB{} ⇒ 等 15s 再试'
+                               '（宁慢不炸；内存是这台机器的真瓶颈）'.format(
+                                   free, _need,
+                                   '（含面板一份 {:.2f} GB）'.format(PANEL_GB)
+                                   if panel_cache == 'off' else ''))
                         time.sleep(15)
                         continue
                     cand.pop(0)

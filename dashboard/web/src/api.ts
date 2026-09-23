@@ -346,6 +346,13 @@ export interface MineStateDto {
   // ★★★ 调度模式 / 面板共享（2026-09-16；**以真实进程命令行为准**）
   execMode: string                 // rotate | parallel
   maxParallel: number
+  /** ★★ 2026-09-23（统一口径）：**此刻按内存真能跑几个**（= `parallel_runner.slot_cap` ✓，
+   *  与"启动那一刻"和"运行期闸门"同一个公式；口径见「配置/口径」页 ✓） */
+  slotCap?: number | null
+  /** ★ 调度器**运行期**实际生效的上限（控制文件写回；没在跑时为 null ✓） */
+  effMaxParallel?: number | null
+  /** ★ 参与并行的池数（= 启用池 − 已单独停止；与调度器的 `runnable` 同口径 ✓） */
+  runnableCount?: number
   /** ★ 并行上限是"自动"的（按可用内存与启用池数动态重算；加池会立刻放宽） */
   autoParallel: boolean
   memPerEngine: number

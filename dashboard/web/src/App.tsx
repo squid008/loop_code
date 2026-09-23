@@ -325,7 +325,12 @@ export default function App() {
               ⚠ 想回到"轮转"：CLI/API 仍支持（`--exec_mode=rotate`），随时能再放出来 ✓ */}
           <button className="btn start" disabled={mineBusy || !!mine?.running} onClick={() => doStart([])}
                   title={mine?.running
-                    ? `调度器已经在运行了（${mine.execMode === 'parallel' ? `并行×${mine.maxParallel} · 共享` : '轮转 · 共享'}）。` +
+                    /* ★ 2026-09-23（统一口径）：这里原来显示命令行的 `--max_parallel`（= 天花板，
+                       实测显示"并行×1"而真实跑 2 个 ✗）⇒ 改显示**此刻真能跑几个**
+                       （运行期上限优先，其次按内存算的槽位 ✓；口径见「配置/口径」页 ✓） */
+                    ? `调度器已经在运行了（${mine.execMode === 'parallel'
+                        ? `并行×${mine.effMaxParallel ?? mine.slotCap ?? mine.maxParallel} · 共享`
+                        : '轮转 · 共享'}）。` +
                       '要改模式或并行设置的话，先点全部停止再启动（那些是启动参数，不能热改）'
                     : '启动并行调度器（并行数按可用内存自动定 · 面板共享），让所有池参与。' +
                       '之前单独停止过的池也会重新加入；已经在跑的话就地更新设置'}>
@@ -565,7 +570,7 @@ export default function App() {
         </section>
       )}
 
-      {tab === 'meta' && meta && <MetaPanel m={meta} />}
+      {tab === 'meta' && meta && <MetaPanel m={meta} mine={mine} />}
 
       <footer className="foot">
         <span>Loop 挖掘看板 · 项目版本 <b>v{meta?.version ?? '?'}</b></span>
@@ -1970,11 +1975,41 @@ function SelectedPanel({ s }: { s: SelectedDto }) {
   )
 }
 
-function MetaPanel({ m }: { m: MetaDto }) {
+function MetaPanel({ m, mine }: { m: MetaDto; mine: MineStateDto | null }) {
   const s = m.settings
+  /* ★★★★★ 2026-09-23（用户拍板："统一口径"）：
+     「并行槽位」这一格**只显示后端给的数**（`slotCap` / `effMaxParallel`）与**同一条算式** ✓
+     —— 以前这里没写，用户只能在顶栏小字看到"同时最多 1 个引擎"（那读的是命令行天花板 ✗），
+        于是被绊住："才 2 个槽位？不是可以最大有 5 个吗？" ✓ */
+  const perGB = mine?.gbPerEngine ?? null
+  const slots = mine?.slotCap ?? null
+  const effSlots = mine?.effMaxParallel ?? null
   return (
     <section className="panel">
-      <div className="sec-h"><b>配置与端口</b><span className="mut">改端口只改 <code>config.json</code> 一处</span></div>
+      <div className="sec-h"><b>并行槽位口径</b>
+        <span className="mut">启动那一刻与运行期用的是同一个公式（单一来源 <code>tools/parallel_runner.py</code>）</span>
+      </div>
+      <table className="tbl">
+        <tbody>
+          <tr><td>算式</td><td className="mono">
+            槽位 = max(1, min(启用池数 − 已停, floor((可用内存 − 3 GB) ÷ 每引擎预算)))
+          </td></tr>
+          <tr><td>每引擎预算</td><td className="mono">
+            {perGB !== null ? `${perGB} GB` : '—'}
+            {mine?.panelCache === 'off'
+              ? `（= --mem_per_engine ${mine?.memPerEngine ?? '?'} GB + 面板一份 4.42 GB，面板缓存关着）`
+              : `（= --mem_per_engine ${mine?.memPerEngine ?? '?'} GB；面板共享，只占一份物理页）`}
+          </td></tr>
+          <tr><td>可用内存</td><td className="mono">{mine?.freeGB ?? '—'} GB</td></tr>
+          <tr><td>参与并行的池</td><td className="mono">{mine?.runnableCount ?? '—'} 个（启用 {mine?.enabled?.join(',') ?? '—'}）</td></tr>
+          <tr><td>此刻能同时跑</td><td className="mono">
+            <b>{effSlots !== null ? `${effSlots} 个（调度器运行期实际上限）` : (slots !== null ? `${slots} 个（按当前内存算）` : '—')}</b>
+            {effSlots !== null && slots !== null && effSlots !== slots
+              ? `；若现在重算会是 ${slots} 个（内存变了）` : ''}
+          </td></tr>
+        </tbody>
+      </table>
+      <div className="sec-h" style={{ marginTop: 18 }}><b>配置与端口</b><span className="mut">改端口只改 <code>config.json</code> 一处</span></div>
       <table className="tbl">
         <tbody>
           <tr><td>配置文件</td><td className="mono">{s.configPath}</td></tr>

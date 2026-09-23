@@ -281,8 +281,11 @@ MINE = r'D:\loop_code\dashboard\api\app\mine.py'
 minepy = io.open(MINE, encoding='utf-8').read()
 PARR = r'D:\loop_code\tools\parallel_runner.py'
 prpy = io.open(PARR, encoding='utf-8').read()
-chk('★ mine.py：并行数**自动算**（`floor((可用-余量)/每引擎)` 再夹到 1~池数）',
-    'max_parallel = int(max(1, min(len(pool_list)' in minepy)
+chk('★ mine.py：并行数**自动算**（★ 2026-09-23 起走**单一事实源** `slot_cap`：夹到启用池数、至少 1 ✓）',
+    'max_parallel = _PR().slot_cap(' in minepy,
+    '原来这里是本地算式 `int(max(1, min(len(pool_list), (free0 - MIN_FREE_GB) // _eff)))` ✗ —— '
+    '与调度器运行期、内存护栏三套算法 ⇒ 同一台机器三个答案（用户："才 2 个槽位？"被绊住 ✓）'
+    '⇒ 已统一到 tools/parallel_runner.py::slot_cap（守门 _test_slot_caliber.py ✓）')
 chk('★ mine.py：缓存不可用 ⇒ **自动降级为 off**（不让启动失败）+ note 说明',
     '_pc_degraded' in minepy and '自动关掉' in minepy)
 chk('★★ parallel_runner：用户**单独停池**后**本轮不再补位**（空槽留给用户自己决定）',
@@ -319,8 +322,11 @@ chk('mine.py：**非默认才追加开关**（默认命令行逐字不变）',
 chk('mine.py：启动参数不可热改 ⇒ 409 拒绝（不静默 no-op）',
     '不能热改' in minepy and 'e.code == 409' in open(r'D:\loop_code\tools\_test_mine_launch.py',
                                                   encoding='utf-8').read())
-chk('mine.py：内存护栏**分档**（面板共享后按 GB_PER_ENGINE_SHARED 算）',
-    'GB_PER_ENGINE_SHARED' in minepy)
+chk('mine.py：内存护栏与「启动上限」「运行期闸门」**同一个口径**（2026-09-23 统一 ✓）',
+    '_PR().per_engine_gb(' in minepy and '_PR().slot_cap(' in minepy,
+    '原来这里有本地常数（GB_PER_ENGINE_SHARED=3.0 / GB_PER_ENGINE=9.0）+ 第三套算式 ⇒ '
+    '同一台机器三套答案、界面显示命令行天花板 ⇒ 用户被"才 2 个槽位？"绊住 ✗ '
+    '（改由 tools/parallel_runner.py 的 per_engine_gb / slot_cap 单一事实源 ✓，守门见 _test_slot_caliber.py）')
 chk('启动参数回归测试在册（假 Popen + 快照还原 ctl）',
     os.path.isfile(r'D:\loop_code\tools\_test_mine_launch.py')
     and '_control.json' in open(r'D:\loop_code\tools\_test_mine_launch.py', encoding='utf-8').read())

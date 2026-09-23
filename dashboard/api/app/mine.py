@@ -59,9 +59,24 @@ CTL_LOCK = CTL_FILE + '.lock'        # ★ 跨进程写锁（见 `_with_ctl_lock
 
 ROUNDS_MIN, ROUNDS_MAX = 1, 200
 DEFAULT_ROUNDS = 50
-GB_PER_ENGINE = 9.0          # 保守（实测 6~9 GB）
-GB_PER_ENGINE_SHARED = 3.0   # ★ 面板共享后的每引擎私有内存（面板不再各建一份；实测 3 并行 ≈ 8.1 GB）
+# ★★★★★ 2026-09-23（用户拍板："统一口径"）：**槽位口径的唯一来源搬去 `tools/parallel_runner.py`** ✓
+#   以前这里有两个常数（`GB_PER_ENGINE=9.0` / `GB_PER_ENGINE_SHARED=3.0`），再加上调度器那边的
+#   `--mem_per_engine` ⇒ **同一台机器能算出三套答案** ✗（用户正是被这个绊住的：
+#   看板小字写"同时最多 **1** 个引擎"、而真实上限是 **2** ✗）⇒ 现在两边都调**同一对纯函数** ✓
+#     ① `per_engine_gb(mem, panel_cache)` —— 一个引擎按多少 GB 算（面板缓存关着 ⇒ + 4.42 GB ✓）
+#     ② `slot_cap(free, n_pools, mem, panel_cache)` —— **此刻**能同时跑几个 ✓
+#   ⚠ 懒加载（不在本模块加载时 import）⇒ 不改后端启动顺序，也不吃它的 stdout 重配置 ✓
+MEM_DEFAULT = 7.0            # 每引擎内存预算 GB（★ = 实测**私有**峰值 ≈7.7 GB（v1.21.27）⇒ 取 7.0 ✓）
 MIN_FREE_GB = 3.0
+
+
+def _PR():
+    """取 `tools/parallel_runner.py`（**槽位口径的单一事实源** ✓；纯 stdlib ⇒ 引用零成本 ✓）"""
+    import importlib
+    _t = os.path.join(settings.PROJECT_ROOT, 'tools')
+    if _t not in sys.path:
+        sys.path.insert(0, _t)
+    return importlib.import_module('parallel_runner')
 
 # ★★★ 2026-09-16（用户之问「前端还没把并行切换加上是吧？」）：把 `run_tracks.py` **v1.4.0 就有的**
 #   调度模式开关与面板共享**暴露到看板**（能力全在 CLI，缺的只是这一层）。
@@ -361,22 +376,41 @@ def state():
     _auto = str(_flag(_cmd, 'auto_parallel', str, c.get('autoParallel') or '') or ''
                 ).strip().lower() in ('1', 'true', 'yes', 'on')
     _pcinfo = panel_cache_info()
+    # ★★★★★ 2026-09-23（"统一口径"）：**此刻真能跑几个** = 与启动/运行期**同一个公式** ✓
+    #   · `_runnable` = 启用池里没被单独停掉的（与调度器 `_eff_max` 的 `runnable` 同口径 ✓）
+    #   · `slotCap` = 此刻按可用内存算出来的槽位（**真话** ✓）；`_effMp` = 调度器**运行期**写回的
+    #     有效上限（控制文件 `maxParallel` ✓）；`_mp` = 命令行那个（启动时的天花板，只作参考）
+    _runnable = len([p for p in en if p not in st])
+    try:
+        _per_gb = _PR().per_engine_gb(_mpe, _pc)
+        _slot_cap = _PR().slot_cap(free, max(1, _runnable), _mpe, _pc)
+    except Exception:                                                          # noqa: BLE001
+        _per_gb, _slot_cap = _mpe, None
+    # ★ 运行期（auto 模式）⇒ 用调度器**真正生效**的那个上限（控制文件里它是每个迭代重算后写回的 ✓）；
+    #   否则（没在跑 / 非 auto）⇒ 用**此刻按内存算出来的槽位** ✓ —— 两者都是"真话"，不再是命令行天花板 ✓
+    _effMp = c.get('maxParallel')
+    _live = _effMp if (_auto and _effMp and running_now) else _slot_cap
     if free is None:
         _mnote = ''
     elif _mode == 'parallel':
         # ★ 2026-09-16（用户要求"文案去掉引号/机味符号"）：这些串**原样显示**在看板上
         #   ⇒ 一律自然语言 + 普通标点（不许 `★ ⚠ ⇒ ✓ ✗ **`）✓ 守门见 `tools/_test_ui_quotes.py`
-        _mnote = ('并行模式：同时最多 %d 个引擎%s（跑完一个立刻补一个，其余排队）· 面板共享=%s，%s'
-                  '；可用 %.1f GB' % (
-                      _mp, '（自动：按可用内存与启用池数动态定，'
-                           '你随时点启动本池加池都会立刻开起来）' if _auto else '', _pc,
-                      ('4.6 GB 面板只占一份物理页，每进程私有约 %.1f GB' % _mpe)
-                      if _pc != 'off' else
-                      '面板缓存关着，每个引擎各建一份 4.42 GB 面板（N 份），强烈建议开面板共享',
-                      free))
+        # ★ 2026-09-23："同时最多几个"一律给**真实值**（`_live` = 运行期写回的上限或此刻算出的槽位 ✓），
+        #   并把**算式**写出来（以前这里显示命令行那个天花板 ⇒ 说"最多 1 个"而实际跑 2 个 ✗）
+        _mnote = ('并行模式：同时最多 %s 个引擎（%s）· 面板共享=%s，%s；可用 %.1f GB'
+                  % (_live if _live is not None else '?',
+                     '槽位 = （可用内存 − %.0f GB 余量）÷ 每引擎 %.1f GB%s，再夹到启用池数 %d'
+                     % (MIN_FREE_GB, _per_gb,
+                        '（含面板一份 %.2f GB）' % _PR().PANEL_GB if _pc == 'off' else '',
+                        max(1, _runnable)),
+                     _pc,
+                     '4.42 GB 面板只占一份物理页，每进程私有约 %.1f GB' % _per_gb
+                     if _pc != 'off' else
+                     '面板缓存关着，每个引擎各建一份面板，强烈建议开面板共享',
+                     free))
     else:
-        _mnote = ('单调度器 + 池轮转：同一时刻只有 1 个引擎（约 %.0f GB）%s；可用 %.1f GB' % (
-            GB_PER_ENGINE,
+        _mnote = ('单调度器 + 池轮转：同一时刻只有 1 个引擎（约 %.1f GB）%s；可用 %.1f GB' % (
+            _per_gb,
             '；面板共享=on，载入 28.6s→1.8s、内存更低' if _pc != 'off' else '', free))
     return {
         'mode': 'scheduler',              # ★ 模式标识：单调度器 + 池轮转
@@ -415,9 +449,16 @@ def state():
         'byPool': by_pool,
         'runningPools': [k for k in known if by_pool[k]['mining']],
         'freeGB': (round(free, 1) if free is not None else None),
-        'gbPerEngine': GB_PER_ENGINE,
+        # ★ 2026-09-23（"统一口径"）：每引擎按几 GB 算 = 单一事实源 `per_engine_gb`（不再是本地常数 ✗）
+        'gbPerEngine': round(_per_gb, 2),
+        # ★ 此刻按内存真能跑几个（`slot_cap` ✓）与运行期生效的上限（控制文件写回 ✓）—— 看板显示这两个 ✓
+        'slotCap': _slot_cap,
+        'effMaxParallel': (_effMp if running_now else None),
+        'runnableCount': max(1, _runnable),
         # ★★★ 调度模式 / 内存设置（2026-09-16）：**以真实进程的命令行为准**（那才是"现在到底怎么跑的"）
-        'execMode': _mode, 'maxParallel': _mp, 'memPerEngine': _mpe,         'panelCache': _pc,
+        # ⚠ `maxParallel` 仍是**命令行那个**（= 启动时的天花板，保持接口语义不变 ✓）；
+        #   "现在到底几个"请看 `effMaxParallel` / `slotCap` ✓（2026-09-23 统一口径 ✓）
+        'execMode': _mode, 'maxParallel': _mp, 'memPerEngine': _mpe, 'panelCache': _pc,
         'autoParallel': _auto,
         'panelCacheInfo': _pcinfo,
         'execModes': list(EXEC_MODES),
@@ -499,17 +540,14 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
 
     # ---- ★★ 并行上限：**没传就按可用内存自动算**（用户要求：「一键启动就全部五池启动 +
      #   万一会爆内存就自动少一个池」）----
-    #   `K = floor((可用 - 余量) / 每引擎)`，再夹到 `1 ~ 池数` ⇒ **能开几个开几个** ✓
-    #   · 面板共享开着 ⇒ 每引擎按 3 GB（共享的那 4.56 GB 只算一份）✓ 关着 ⇒ 按 9 GB（各建一份）
-    #   · 还有一道**运行期**护栏在 `parallel_runner`（可用内存 < 预算就**排队等**，宁慢不炸）✓
+    #   ★★★★★ 2026-09-23（"统一口径"）：算法 = `parallel_runner.slot_cap()`（**与运行期同一个** ✓）
+    #     槽位 = max(1, min(可跑池数, floor((可用内存 − 3 GB) / 每引擎预算)))
+    #     · 每引擎预算 = `--mem_per_engine`（默认 7.0）+ 面板缓存关着时的 4.42 GB ✓
+    #     · 运行期还有一道闸在 `parallel_runner`（可用内存 < 同一预算就**排队等**，宁慢不炸 ✓）
     free0 = avail_gb()
     _mp_auto = False
     if exec_mode == 'parallel' and not _mp_explicit:
-        _eff = GB_PER_ENGINE_SHARED if panel_cache != 'off' else GB_PER_ENGINE
-        if free0 is None:
-            max_parallel = min(len(pool_list), 3)
-        else:
-            max_parallel = int(max(1, min(len(pool_list), (free0 - MIN_FREE_GB) // _eff)))
+        max_parallel = _PR().slot_cap(free0, len(pool_list), mem_per_engine, panel_cache)
         _mp_auto = True
 
     sched = scheduler()
@@ -549,21 +587,19 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
                          % ([p['pid'] for p in sched], pool_list, rounds,
                             '、并清除停止标记' if reset_stopped else '、保留已有的停止标记'))}
 
-    # ---- 内存护栏（**按模式 + 面板共享**算）----
-    # ★ 面板共享开着时，4.42 GB 面板**只占一份物理页**，每进程私有只剩 L1 子面板+缓存 ≈ 3 GB
-    #   ⇒ 护栏必须分档，否则"面板共享"这个开关**永远解锁不了低内存启动**（白做）✗
+    # ---- 内存护栏（★ 2026-09-23「统一口径」：与"上限""运行期闸门"**同一个** `per_engine_gb`）----
+    #   面板共享开着 ⇒ 4.42 GB 面板**只占一份物理页**，每进程私有只剩 L1 子面板+缓存 ✓
+    #   面板缓存关着 ⇒ 每个引擎各建一份面板（+4.42 GB）⇒ 护栏必须算进去 ✓
     free = free0                      # ★ 复用上面那次读数（同一次启动内一致，别读两次）
-    _eff1 = GB_PER_ENGINE if panel_cache == 'off' else GB_PER_ENGINE_SHARED
-    if exec_mode == 'parallel':
-        _eff = _eff1 if panel_cache == 'off' else max(mem_per_engine, GB_PER_ENGINE_SHARED)
-        _need = max_parallel * _eff + MIN_FREE_GB
-        _hint = ('（%s，每引擎按 %.1f GB 算）' % (
-            '面板缓存关着、每个引擎各建一份 4.42 GB 面板' if panel_cache == 'off'
-            else '面板共享=on', _eff))
-    else:
-        _need = _eff1 + MIN_FREE_GB
-        _hint = ('（面板共享=on，按 %.1f GB 算）' % GB_PER_ENGINE_SHARED
-                 if panel_cache != 'off' else '')
+    _n_eng = max_parallel if exec_mode == 'parallel' else 1
+    _eff = _PR().per_engine_gb(mem_per_engine, panel_cache)
+    _need = _n_eng * _eff + MIN_FREE_GB
+    _hint = ('（%s；每引擎按 %.1f GB 算 = 预算 %.1f GB%s；%d 个引擎）' % (
+        '面板缓存关着、每个引擎各建一份 %.2f GB 面板' % _PR().PANEL_GB if panel_cache == 'off'
+        else '面板共享=on（面板只占一份物理页）',
+        _eff, mem_per_engine,
+        ' + 面板 %.2f GB' % _PR().PANEL_GB if panel_cache == 'off' else '',
+        _n_eng))
     if free is not None and free < _need:
         raise MineError('内存不足：可用 %.1f GB，本次需要约 %.1f GB%s'
                         % (free, _need, _hint), 409)
@@ -612,9 +648,10 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
     time.sleep(3)
     _extra = []
     if exec_mode == 'parallel' and _mp_auto:
-        _extra.append('并行数按可用内存自动定为 %d（可用 %.1f GB / 每引擎按 %.0f GB 估）'
-                      % (max_parallel, free or 0,
-                         GB_PER_ENGINE_SHARED if panel_cache != 'off' else GB_PER_ENGINE))
+        _extra.append('并行数按可用内存自动定为 %d（可用 %.1f GB / 每引擎按 %.1f GB 估%s）'
+                      % (max_parallel, free or 0, _eff,
+                         '，含面板一份 %.2f GB' % _PR().PANEL_GB
+                         if panel_cache == 'off' else ''))
     if _pc_degraded:
         _extra.append('面板缓存不可用（%s），本次自动关掉面板共享（载入慢 ~27s、结果不变）'
                       % ((_pcinfo.get('hint') or _pcinfo.get('err') or '未知原因')[:70]))
