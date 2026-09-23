@@ -384,6 +384,38 @@ def fair_order(cand, gens, last_start, min_gens_per_round, order=()):
                                        idx.get(p, 99)))
 
 
+def topup_defer_list(en, launched, waiting):
+    """★ 2026-09-23 新增：用户**单独停掉某池**时，哪些池要"本轮不再自动补位"（纯函数 ⇒ 可单测 ✓）。
+
+    只 defer **真·闲置池** = 既没在本轮启动过、也**从没进过候选队列**（没被槽位/内存挡住过 ✓）。
+    **正在排队等槽位/内存的池（`waiting`）不 defer** ✓ —— 它本来就等着上，空出来的槽该给它 ✓
+
+    为什么（用户 2026-09-23 实测：_"我一键开启了全部，然后把全A停止了，为啥上证50池没有马上启动起来？"_）：
+      · 用户 09-16 的诉求是「我停一个池，**别自动把闲置池顶上来**」✓ —— 针对的是"本轮本来不参与"的池 ✓
+      · 而 50 那会儿是**排队中**（5 池抢 4 槽 ⇒ `待启动 1` ✗）⇒ 旧实现把它也当"闲置"一起 defer 了 ✗
+      ⇒ 于是"停 all ⇒ 50 顶上"这个**本该发生**的行为凭空消失 ✗
+        （并且它还进一步卡住了收轮 —— 见 `pending_pools` 的说明 ✗）
+    """
+    return sorted(set(en) - set(launched) - set(waiting))
+
+
+def pending_pools(en, st, deferred):
+    """收轮判据用：**本轮"还欠账"的池** = 启用 − 已单独停 − **本轮已放弃（deferred）** ✓
+    （纯函数 ⇒ 可单测 ✓ 见 `tools/_test_sched_defer.py` ✓）
+
+    ★ 为什么必须排掉 `deferred`（2026-09-23，用户实测"50 一直并行中 / 全A 停了它也没上来"）：
+      收轮判据是「**每个启用池**都完成 >= `min_gens_per_round` 代」✗ —— 而 deferred 池
+      **本轮永远跑不了** ⇒ 它永远 0 代 ⇒ 判据**永不成立** ⇒ **本轮永远收不了口** ✗✗
+      （其他池一直领活、`cand` 永不为空 ⇒ **轮末全局收尾**〔跨池审查 / 精选池 / 指标表 /
+        登记表重导〕**永不执行** ✗）—— 与 v1.21.20（"1 代"判据）和 v1.21.38（被饿的池）
+      治过的是**同一类**问题 ✗，这次换 `deferred` 当入口 ✓
+
+    ⚠ 语义澄清：`deferred` 池 = 「**本轮不参与**」（不是"被停" ✓）⇒ 收轮**不该等它** ✓；
+      下一轮它会重新参与（`deferred` 是**每轮重置**的 ✓）
+    """
+    return [p for p in en if p not in st and p not in deferred]
+
+
 def _running_brief(running, now):
     return ' | '.join('%s gen%d(%.0fmin)' % (t['pool'], t['gen'], (now - t['t0']) / 60.0)
                       for t in running) or '无'
@@ -490,6 +522,10 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
             last_start = {}                  # ★ 2026-09-23：池 -> 本轮**上次启动时刻**（公平排队用 ✓，见 fair_order）
             retries = {}                     # ★ 池 -> 本轮"崩溃重试"已用次数（见 `MAX_CRASH_RETRY`）
             deferred = {}                    # 池 -> 顺延那一刻的 stopped 快照（用来认"你重新启用"）
+            # ★★★★★ 2026-09-23：**本轮在排队**的池（被"槽位/内存"挡住、还没启动的 ✓）——
+            #   用户"单独停池"时要靠它区分**闲置**（本来不参与 ⇒ 不自动补位 ✓）与
+            #   **排队中**（本来就等着上 ⇒ 空出的槽该给它 ✓）。判据/用法见 `topup_defer_list` ✓
+            waiting = set()
             ran_round = False
             while True:
                 ctl = RT.read_ctl()
@@ -529,7 +565,9 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                             if gens_per_round >= 1:
                                 _again = gens[_gp] < gens_per_round
                             else:
-                                _need_r = [x for x in en if x not in st]
+                                # ★ 2026-09-23：改由 `pending_pools()` 给（**排掉 deferred** ✓，
+                                #   否则"本轮不参与的池"会永久卡住收轮 ✗ —— 见该函数说明 ✓）
+                                _need_r = pending_pools(en, st, deferred)
                                 # ★★★★★ 2026-09-19（用户拍板："慢池还在跑 ⇒ 快池就继续领活，
                                 #   对，就这样"）—— 在原条件上**再加一条**：
                                 #   只要**别的启用池此刻还有引擎在跑**（= 轮还没收口 ✓），
@@ -554,8 +592,12 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                                 #   效果：收口前快池**照旧一直领** ✓（12 代也行 ✓）；
                                 #   最慢的池也攒够 K 代后 ⇒ 不再重排队 ⇒ 等它跑完 ⇒
                                 #   `running` 清空 ⇒ break ⇒ 全局收尾 ⇒ round + 1 ✓
+                                # ★★★★★ 2026-09-23 修：`_need_r` 由 `pending_pools()` 给 ✓ ——
+                                #   **必须排掉 `deferred`**（本轮不参与的池）✗ 否则它永远 0 代
+                                #   ⇒ 判据永不成立 ⇒ **本轮收不了口** ⇒ 轮末全局收尾永不执行 ✗✗
+                                #   （用户实测入口：停 all ⇒ 50 被误 defer ⇒ 3 个池一直领活 ✓）
                                 _again = any(gens.get(x, 0) < min_gens_per_round
-                                             for x in _need_r)
+                                             for x in pending_pools(en, st, deferred))
                             if _again:
                                 launched.discard(_gp)
                             RT.write_ctl(gensRound=dict(gens))      # ★ 看板进度随即刷新 ✓
@@ -579,13 +621,31 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                                         _ln = ''
                                     RT.log('      [!] 定位用：' + _ln[:160])
                         if t.get('killed') and len(deferred) == 0 and not stopped_by_user:
+                            # ★★★★★ 2026-09-23 修（用户实测："我一键开启了全部，然后把全A 停止了，
+                            #   为啥上证50池没有马上启动起来？"）：
+                            #   原来把**所有没启动的池**都 defer ✗ —— 连"**正在排队等槽位**"的也一起
+                            #   挡在外面 ✗（50 那会儿就是 `待启动 1` 的排队状态 ✓）⇒ "停一个 ⇒ 排队
+                            #   的那个顶上"这个**本该发生**的行为消失了 ✗
+                            #   ⇒ 现在只 defer **真·闲置池**（本轮从没进过候选队列的 ✓）——
+                            #     排队中的池**照常参与**，空出来的槽就给它 ✓（判据见 `topup_defer_list` ✓）
                             _st0 = set(RT.read_ctl().get('stopped') or [])
-                            for p in en:
-                                if p not in launched:
-                                    deferred[p] = set(_st0)
-                            RT.log('[CTL] ★ 检测到「单独停止」⇒ **本轮不再自动补位**：'
-                                   '就保持"停完剩下的 {} 个"在跑；空出来的槽**留给你自己决定**'
-                                   '（「启动本池」的那个会**马上**开挖）✓'.format(len(running) - 1))
+                            _dl = topup_defer_list(en, launched, waiting)
+                            for p in _dl:
+                                deferred[p] = set(_st0)
+                            _wq = sorted((set(waiting) & set(en)) - set(launched) - st)
+                            RT.log('[CTL] ★ 检测到「单独停止」⇒ 本轮**不再自动补位**：'
+                                   '就保持"停完剩下的 {} 个"在跑；空出来的槽**留给正在排队的池** ✓'
+                                   .format(len(running) - 1))
+                            if _wq:
+                                RT.log('      · 在排队的 {} ⇒ **照旧顶上**（有槽位/内存就上）✓'
+                                       .format(' '.join(_wq)))
+                            else:
+                                RT.log('      · 本轮没有在排队的池 ⇒ 空槽留给你自己决定'
+                                       '（点「启动本池」的那个会**马上**开挖 ✓）')
+                            if _dl:
+                                RT.log('      · 本轮**没参与过**的 {} ⇒ 不自动拉进来'
+                                       '（按你 09-16 的要求：别把闲置池顶上来 ✓）'
+                                       .format(' '.join(_dl)))
                         running.remove(t)
                         # ★★★★ 2026-09-17 修（用户实测："只有 300 池是绿点在跑，但显示有 2 个池在挖"）：
                         #   收割后**立刻按当前在跑集合重写 `active`** —— 否则控制文件里会残留
@@ -651,13 +711,17 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                     #   （原来只比 `mem_per_engine` ⇒ 面板缓存关着时**漏算 4.42 GB** ✗）
                     _need = per_engine_gb(mem_per_engine, panel_cache)
                     if free < _need:
-                        RT.log('[MEM] 可用 {:.1f} GB < 每引擎预算 {:.1f} GB{} ⇒ 等 15s 再试'
-                               '（宁慢不炸；内存是这台机器的真瓶颈）'.format(
+                        # ★★★★★ 2026-09-23 修隐患：这里原来是 `sleep(15); continue` ✗ ——
+                        #   内层 while 的继续条件靠 `running` / `eff_max`，而这两者**只在外面收割时才变**
+                        #   ⇒ 在里面空转 = **永远不去收割** ⇒ 已跑完的引擎白占内存、腾不出来 ⇒ 死等 ✗✗
+                        #   ⇒ 改成 `break`：回到外层 ⇒ **收割 + 重算 `eff_max`** ⇒ 下一轮迭代再试 ✓
+                        #     （外层本来就有 `sleep(5)` ⇒ 重试节奏与"等 15s"同一量级 ✓）
+                        RT.log('[MEM] 可用 {:.1f} GB < 每引擎预算 {:.1f} GB{} ⇒ 本轮先不起，'
+                               '等内存腾出来再试（宁慢不炸；内存是这台机器的真瓶颈）'.format(
                                    free, _need,
                                    '（含面板一份 {:.2f} GB）'.format(PANEL_GB)
                                    if panel_cache == 'off' else ''))
-                        time.sleep(15)
-                        continue
+                        break
                     cand.pop(0)
                     launched.add(p)                      # ★ 真正启动才记"本轮已启动"
                     last_start[p] = time.time()          # ★ 2026-09-23：公平排队用（FIFO ⇒ 刚跑完的排最后 ✓）
@@ -673,6 +737,11 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                                  gensRound=dict(gens), tailPool=None,
                                  active=[{'pool': x['pool'], 'gen': x['gen'], 'pid': x['pr'].pid}
                                          for x in running], **_kw)
+                # ★★★★★ 2026-09-23：**记下"本轮在排队"的池**（被槽位/内存挡住、还没启动 ✓）——
+                #   用户"单独停池"时要靠它区分"闲置"（不自动补位 ✓）与"排队中"（空槽该给它 ✓）；
+                #   判据与用法见 `topup_defer_list` ✓。⚠ 只在"没被停止"时记（停止后不再补位 ✓）
+                if not stopped_by_user and cand:
+                    waiting |= set(cand)
                 if running or cand:
                     now = time.time()
                     if now - last_brief > 60:         # 每分钟一条进度（别刷屏）

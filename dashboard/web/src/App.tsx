@@ -256,11 +256,19 @@ export default function App() {
       //   实测（用户截图）：50 池明明已停，悬停里却写"并行中（在等本轮其它池）" ✗
       //   ⇒ 分三种：真在跑 ⇒ 挖掘中 ✓；已停但这一代还在跑 ⇒ 说清"跑完就退出"✓；
       //     已停且没在跑 ⇒ 已停止 ✓（只有真正参与轮转的池才配"并行中/审查中"✓）
+      // ★★★★★ 2026-09-23（用户："为啥上证50池没有马上启动起来，一直显示并行中？"）：
+      //   "并行中"混了两种处境 ✗（跑完了在等 / **一次都没轮到、在排队** ✗）⇒ 分开说 ✓
+      const _rg = s?.gensRound ?? 0
+      const _nR = (mine?.runningPools ?? []).length
+      const _cp = mine?.slotCap ?? null
       const what = s?.stopped
         ? (s?.mining ? '已停止（这一代跑完就退出）' : '已停止')
         : (s?.mining ? '挖掘中'
           : (s?.reviewing ? '审查中'
-            : (mine?.running ? '并行中（在等本轮其它池）' : '未在跑')))
+            : (mine?.running
+                ? (_rg > 0 ? `本轮已跑 ${_rg} 代 · 等其它池`
+                            : `排队中 · ${(_cp !== null && _nR >= _cp) ? '等槽位' : '等内存'}`)
+                : '未在跑')))
       const g = (p in gen && gen[p] !== null) ? ` · 当前 gen ${gen[p]}` : ''
       return `${p} · ${what} · 本轮已跑 ${s?.gensRound ?? 0} 代${g}`
     })
@@ -647,10 +655,19 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
   //                在等其它池那一代结束"（以前这三种都显示"并行中" ⇒ 用户看不出在干嘛 ✗）
   const reviewing = !!slot?.reviewing
   const myGen = (mine?.active ?? []).find(a => String(a.pool) === String(p.key))?.gen ?? null
+  // ★★★★★ 2026-09-23（用户："我一键开启了全部，然后把全A停止了，为啥上证50池没有马上启动起来，
+  //   一直显示并行中？"）：**"并行中"这一个词其实混了两种处境** ✗ ——
+  //     · 本轮**已经跑过**（`gensRound > 0`）、在等别的池 ⇒ 它"跑完了、暂时没事干"
+  //     · 本轮**一次都没轮到**（被槽位/内存挡着）⇒ 它是"在**排队**" ✗（用户看到的正是这种 ✗）
+  //   ⇒ 分开说 ✓，并把"在等什么"直接写出来（等槽位 / 等内存）✓
+  const ranGens = slot?.gensRound ?? 0
+  const nRot = (mine?.runningPools ?? []).length
+  const cap = mine?.slotCap ?? null
+  const waitWhy = (cap !== null && nRot >= cap) ? '等槽位' : '等内存'
   const badge = mining ? (leaving ? '运行中·已移出'
                                   : (myGen !== null ? `挖掘中 · gen${myGen}` : '挖掘中'))
     : (reviewing ? '审查中'
-      : (inRotation ? (qword + '中')
+      : (inRotation ? (ranGens > 0 ? `已跑 ${ranGens} 代 · 等其它池` : `排队中 · ${waitWhy}`)
         : (configured ? '待启动' : (stopped ? '已停止' : '空闲'))))
   // ★★★★ 2026-09-17（用户实测："几个池子显示蓝点、只有 300 是绿点，像轮转"）：
   //   那几个池其实是**每代秒崩**（`None * float`）⇒ 永远等不到绿点 ✗
@@ -672,8 +689,13 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
                      (myGen !== null ? ` · 当前 gen ${myGen}` : '') +
                      (mining ? ' · 正在挖这一代' :
                       reviewing ? ' · 刚挖完，正在做收尾（facs 落地 / 指标表 / 曲线）' :
-                      (inRotation ? ' · 已参与并行，此刻在等本轮其它池（它是快池，会立刻领下一代）'
-                                  : ''))}>
+                      (inRotation
+                        ? (ranGens > 0
+                          ? ' · 本轮它已跑完自己的份额，在等其它池那一代结束（它是快池，会立刻领下一代）'
+                          : (cap !== null && nRot >= cap
+                            ? ` · 它本轮还没轮到：此刻同时在跑 ${nRot} 个，已达上限 ${cap} —— 有空位就会上`
+                            : ` · 它本轮还没轮到：可用内存不够起下一个引擎（每引擎约 ${mine?.gbPerEngine ?? '?'} GB）`))
+                        : ''))}>
           {badge}
         </span>
         {crashed && (
@@ -708,7 +730,9 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
         <button className="btn start sm" disabled={busy || inRotation} onClick={onStart}
                 title={inRotation
                   ? (qword === '并行'
-                    ? `${p.label} 已在并行队列里（内存够就会起引擎；没在跑说明在等空位）`
+                    ? (ranGens > 0
+                      ? `${p.label} 已在并行队列里（它本轮已跑完自己的份额，在等别的池；内存够就会再领下一代）`
+                      : `${p.label} 已在并行队列里（它本轮还没轮到：${waitWhy}；有空位就会上。想让它马上上，就停掉一个正在跑的池）`)
                     : `${p.label} 已在轮转里（下一轮就会轮到它）`)
                   : (leaving
                     ? `${p.label} 正在跑但已移出${qword}。点它 = 重新加入，让它继续参与`
