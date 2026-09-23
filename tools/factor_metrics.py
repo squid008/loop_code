@@ -68,6 +68,55 @@ COLS = ['name', 'pool',
         'bt_start', 'bt_end']
 
 
+def refresh_in_bank(old_rows, items, pools):
+    """★ 2026-09-23 新增（纯函数 ⇒ 可单测 ✓ 见 `tools/_test_metrics_rows.py`）：
+    把旧行的 `in_bank` **与当前权威库（`state.bank`）对齐**，返回**需要写回的行**。
+
+    为什么（**看板会说谎**，实测 ✓）：
+      `in_bank` 原来**只在"该行被重算那一刻"才更新** ⇒ 行一旦不再被重算，值就长期停住 ✗。
+      实测：`F01_500` / `F01_1000` 明明在库（`state.bank` ✓），而 5 日表里那两行写着
+      `in_bank=0` / **空** ✗ ⇒ 看板「因子库」的**三态徽标**把它们显示成「**已移出**」✗
+      —— 前端读的就是这一列（`dashboard/api/app/sources/factors.py::_inb` ✓）。
+      （这正是用户 2026-09-23 之问"是不是 5 日 20 日都审查了？"顺带查出来的第 2 处不一致 ✓）
+
+    ⚠ 只刷新**本进程跑的那几个池**（`--pools=500` 时**不许**把别的池的行改成 0 ✗）
+    """
+    # ⚠ 本模块**只在 `main()` 里** `import build_facs as BF`（保持"顶层不加载重依赖" ✓）
+    #   ⇒ 这个纯函数里必须**自己延迟 import**，否则被单测直接调用会 `NameError: BF` ✗（实测踩过 ✓）
+    import build_facs as _BF
+    bank = {_BF._name_of(it) for it in items if it.get('in_bank', 1) == 1}
+    want_pools = {str(x).strip() for x in (pools or [])}
+    out = []
+    for r in old_rows:
+        if (r.get('pool') or 'all') not in want_pools:
+            continue
+        want = '1' if r.get('name') in bank else '0'
+        if str(r.get('in_bank') or '').strip() != want:
+            r['in_bank'] = want
+            out.append(r)
+    return out
+
+
+def _apply_inbank_refresh(out_path, items, pools):
+    """把 `out_path` 里**该池**的旧行 `in_bank` 与权威库对齐、**就地合并写回**；返回改了几行 ✓
+
+    ⚠ 复用 `BF._merge_csv`（**按 `name` 合并** ⇒ 只覆盖改过的那几行，其余原样 ✓ 零副作用 ✓）
+    """
+    if not os.path.exists(out_path):
+        return 0
+    import build_facs as _BF
+    try:
+        old = [r for r in csv.DictReader(io.open(out_path, encoding='utf-8-sig', newline=''))]
+    except Exception:                                                           # noqa: BLE001
+        return 0
+    fix = refresh_in_bank(old, items, [x.strip() for x in str(pools or '').split(',')
+                                       if x.strip()])
+    if not fix:
+        return 0
+    _BF._merge_csv(out_path, fix, COLS)
+    return len(fix)
+
+
 def main():
     ap = argparse.ArgumentParser()
     # ★★ 2026-09-18：默认池从 `loop_pools.POOLS` **派生**（原来硬编码 ⇒ 漏了 50 池 ✗）
@@ -148,22 +197,27 @@ def main():
             n_hist += 1
     if a.include_history:
         print('  ★ --include_history：额外补 **{} 个已移出当前库的历史编号**'.format(n_hist))
-    seen, uniq = {}, []
-    for it in items:
-        if it['expr'] in seen:
-            seen[it['expr']]['also'] = (seen[it['expr']].get('also') or []) + [it['pool']]
-            continue
-        seen[it['expr']] = it
-        uniq.append(it)
+    # ★★ 2026-09-23：去重（同式子**算一次**）+ **别名表**（同式子的每个编号**都要写一行** ✓）
+    #   这里原来"**先按 `expr` 去重、再按名字查 CSV**" ✗ ⇒ 同式子的别名编号
+    #   （实测 `corr100(cs_scale(mf_x_sell), mf_l_sell)` = 300:F02 / 500:F01 / 1000:F01 ✓）
+    #   只剩池序最靠前那个（`F02_300`）⇒ `F01_500` / `F01_1000` **永远进不了待算队列** ✗
+    #   ⇒ 20 日指标表缺这两行、看板口径标签在这两个因子上一直显示"缺" ✗
+    #     （而 5 日表里那两行是**老版本**留下的 ⇒ 两表看上去"一个有一个没有" ✓）—— 详见 `plan_rows` ✓
+    uniq, alias = BF.plan_rows(items)
     for it in uniq:
         it['ic_ref'] = it['ic_arc'] if it['ic_arc'] is not None else it['ic_lib']
+        for _x in (alias.get(it['expr']) or []):     # ★ 别名各自带**自己池**的库记录（IC 对账用 ✓）
+            _x['ic_ref'] = _x['ic_arc'] if _x['ic_arc'] is not None else _x['ic_lib']
 
-    # ---- 增量：跳过 CSV 里已有名字 ----
+    # ---- 增量：跳过 CSV 里已有名字（★ 有一处不同：**任一别名缺行 ⇒ 这条式子仍要算** ✓）----
     done = set()
     if a.only_new and os.path.exists(a.out):
         for r in csv.DictReader(io.open(a.out, encoding='utf-8-sig', newline='')):
             done.add(r.get('name'))
-    uniq = [it for it in uniq if BF._name_of(it) not in done]
+    if done:
+        uniq = [it for it in uniq
+                if any(BF._name_of(_x) not in done
+                       for _x in (alias.get(it['expr']) or [it]))]
     if a.limit:
         uniq = uniq[:a.limit]
     print('=' * 96)
@@ -175,6 +229,12 @@ def main():
     print('  口径：调仓周期 FWD={} 交易日 · 样本区间={} · 往返成本={}'.format(
         _FM.FWD, a.window, a.cost))
     print('=' * 96)
+    # ---- ★★ 2026-09-23：`in_bank` 徽标刷新（**必须在"无待算就退出"之前** ✓）----
+    #   为什么：它原来只在"该行被重算"时才更新 ⇒ 一旦没有新因子要算，就**永远不会被修** ✗
+    #   （实测：`F01_500`/`F01_1000` 在库、表里却写着 0/空 ⇒ 看板显示「已移出」✗）
+    _nfix = _apply_inbank_refresh(a.out, items, a.pools)
+    if _nfix:
+        print('  ★ 顺带刷新 {} 行的 `in_bank`（对齐当前权威库 state.bank ✓）'.format(_nfix))
     if not uniq:
         print('  ⇒ 无待算因子，退出')
         return 0
@@ -223,27 +283,35 @@ def main():
         elif ref in (None, 0):
             warn.append(nm)
         yr = rr.get('yr') or {}
-        rows.append(dict(
-            name=nm, pool=it['pool'], in_bank=it.get('in_bank', 1),
-            gen=it['gen'], expr=expr, sign=sign,
-            ic=rr['ic'], ic_doc=it['ic_ref'], ic_ir=rr['ic_ir'], ic_win=rr['ic_win'],
-            ann_ex=rr['ann_ex'], dd=rr['dd'], calmar=rr['calmar'], sharpe=rr['sharpe'],
-            ann_top=rr.get('ann_top'), dd_top=rr.get('dd_top'),
-            calmar_top=rr.get('calmar_top'), sharpe_top=rr.get('sharpe_top'),
-            dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'), sharpe_d=rr.get('sharpe_d'),
-            dd_top_d=rr.get('dd_top_d'), calmar_top_d=rr.get('calmar_top_d'),
-            sharpe_top_d=rr.get('sharpe_top_d'),
-            last_yr=rr.get('last_yr'), turn=rr.get('turn'),
-            neg_yr=sum(1 for x in yr.values() if x <= 0), n_rebal=rr.get('n_rebal'),
-            bt_start=int(rr['ex'].index[0]), bt_end=int(rr['ex'].index[-1])))
+        # ★★ 2026-09-23：**同式子的每个编号各写一行**（别名扇出 ✓）
+        #   `_als[0]` 就是本条（池序最靠前那个，用它做的计算），其余是**同式子的别名编号** ✓
+        _als = alias.get(expr) or [it]
+        for _x in _als:
+            rows.append(dict(
+                name=BF._name_of(_x), pool=_x['pool'], in_bank=_x.get('in_bank', 1),
+                gen=_x['gen'], expr=expr, sign=sign,
+                ic=rr['ic'], ic_doc=_x['ic_ref'], ic_ir=rr['ic_ir'], ic_win=rr['ic_win'],
+                ann_ex=rr['ann_ex'], dd=rr['dd'], calmar=rr['calmar'], sharpe=rr['sharpe'],
+                ann_top=rr.get('ann_top'), dd_top=rr.get('dd_top'),
+                calmar_top=rr.get('calmar_top'), sharpe_top=rr.get('sharpe_top'),
+                dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'), sharpe_d=rr.get('sharpe_d'),
+                dd_top_d=rr.get('dd_top_d'), calmar_top_d=rr.get('calmar_top_d'),
+                sharpe_top_d=rr.get('sharpe_top_d'),
+                last_yr=rr.get('last_yr'), turn=rr.get('turn'),
+                neg_yr=sum(1 for x in yr.values() if x <= 0), n_rebal=rr.get('n_rebal'),
+                bt_start=int(rr['ex'].index[0]), bt_end=int(rr['ex'].index[-1])))
+        _show = nm + (' +%d 别名(%s)' % (len(_als) - 1,
+                                         ','.join(BF._name_of(_x) for _x in _als[1:]))
+                      if len(_als) > 1 else '')
         print('  [{:<10s}] {:.0f}s  超额 {:+6.2f}%/Cal {:.3f}/夏普 {:.2f}  自身 {:+6.2f}%/Cal {:.3f}'
               '  日频Cal {}  最近年 {:+.1f}% 换手 {:.1f}% 负年 {}'.format(
-                  nm, time.time() - t1, rr['ann_ex'] * 100, rr['calmar'] or 0, rr['sharpe'],
+                  _show[:10], time.time() - t1, rr['ann_ex'] * 100, rr['calmar'] or 0, rr['sharpe'],
                   (rr.get('ann_top') or 0) * 100, rr.get('calmar_top') or 0,
                   ('{:.3f}'.format(rr['calmar_d']) if rr.get('calmar_d') is not None else '—'),
                   (rr.get('last_yr') or 0) * 100, (rr.get('turn') or 0) * 100,
                   rows[-1]['neg_yr'])
-              + '  区间 %d~%d' % (rows[-1]['bt_start'], rows[-1]['bt_end']))
+              + '  区间 %d~%d' % (rows[-1]['bt_start'], rows[-1]['bt_end'])
+              + (('  ← ' + _show) if len(_als) > 1 else ''))
 
     if rows:
         n = BF._merge_csv(a.out, rows, COLS)

@@ -56,7 +56,8 @@ print('=' * 96)
 print('【2】指标表：`in_bank` 列（判"在不在库"的**显式**依据）')
 print('=' * 96)
 chk("`COLS` 里含 `'in_bank'`", re.search(r"COLS = \[[^\]]*'in_bank'", fm, re.S) is not None)
-chk('每个结果行都写 `in_bank=it.get(...)`', 'in_bank=it.get(' in fm)
+chk("每个结果行都写 `in_bank`（2026-09-23 起：结果行由**别名扇出**产生 ⇒ 写 `_x.get('in_bank', 1)` ✓）",
+    'in_bank=_x.get(' in fm or 'in_bank=it.get(' in fm)
 
 print()
 print('=' * 96)

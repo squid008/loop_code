@@ -201,12 +201,24 @@ def main():
         print('【6】★★ 并行数**自动算**（用户："一键启动就全部五池，万一会爆内存就自动少一个池"）')
         print('=' * 96)
         mine.scheduler = lambda: []
-        # ★ 自动并行数 K = clamp(1, min(池数, (可用-3)//每引擎))；停不下来时**内存护栏会拒绝**
-        #   （1 个引擎也要 3+3=6 GB ⇒ 可用 <6 时拒绝是对的，别硬上 ✗）
-        for free, want in ((26.0, 5), (12.0, 3), (9.0, 2), (8.9, 1), (5.0, 'REJECT'), (3.5, 'REJECT')):
+        # ★★★★★ 2026-09-23 修本节（**它钉的是一批写死的旧常数** ✗）：
+        #   v1.21.39「统一槽位口径」把"每引擎按几 GB 算 + 能跑几个 + 护栏"全改由
+        #   `tools/parallel_runner.py` 的 `per_engine_gb()/slot_cap()` 决定（**单一事实源** ✓），
+        #   而本节还写着旧口径的期望（按 3.0 GB/引擎、且"可用 5 GB 必须拒绝"✗）
+        #   ⇒ 改口径后**守门反而报错**：实测 4/3/2/1（按预算 2.0 算，正确 ✓）但期望 3/2/1/REJECT ✗
+        #   ⚠ 且它还有一次**静默自跳** —— 真有挖掘在跑时 `_real_mining()` 会让本测试整体跳过
+        #     （因为它直接改 `_control.json` ✓），所以上一版的"全绿"**并没覆盖到这一节** ✓
+        #   ⇒ 修法：**期望值从单一事实源现算**（`slot_cap` + 护栏同式 `k×每引擎+3.0`），
+        #     不再写死常数 —— 以后口径再变，这里自动跟上 ✓（这才是守门该有的样子 ✓）
+        import parallel_runner as _PRT
+        _per = _PRT.per_engine_gb(2.0, pc)
+        for free in (26.0, 12.0, 9.0, 8.9, 5.0, 3.5):
             _set_ctl({'running': False, 'enabled': ['all', '300', '500', '1000', '50'],
                       'stopped': [], 'rounds': 1})
             mine.avail_gb = lambda f=free: f
+            _k = _PRT.slot_cap(free, 5, 2.0, pc)                 # ★ 单一事实源：此刻能跑几个 ✓
+            _need = _k * _per + 3.0                              # 与 `mine.start` 的护栏同式 ✓
+            want = 'REJECT' if free < _need else _k
             try:
                 mine.start(['all', '300', '500', '1000', '50'], rounds=1, exec_mode='parallel',
                            panel_cache=pc, mem_per_engine=2.0)
@@ -215,8 +227,8 @@ def main():
                 got = int(got[0].split('=')[1]) if got else None
             except mine.MineError as e:
                 got = 'REJECT' if e.code == 409 else 'ERR:%s' % e.code
-            chk('可用 %4.1f GB + 面板共享(3GB/引擎) ⇒ %s' % (
-                free, ('自动并行 %d' % want) if want != 'REJECT' else '内存护栏拒绝（409）'),
+            chk('可用 %4.1f GB + 每引擎预算 2.0 GB（实算 %.2f）⇒ %s' % (
+                free, _per, ('自动并行 %d' % want) if want != 'REJECT' else '内存护栏拒绝（409）'),
                 got == want, '实测 %s' % got)
 
         print()

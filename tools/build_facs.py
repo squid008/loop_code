@@ -277,13 +277,42 @@ def load_archive_ic(pool):
     return out
 
 
-def plan(items, root, only_new, force):
+def plan_rows(items):
+    """★ 2026-09-23 新增（**跨池同式子的"别名"**；纯函数 ⇒ 可单测 ✓ 见 `tools/_test_metrics_alias.py`）。
+
+    把 `items` 规划成 **(要算的唯一式子, 别名表)**：
+      · `uniq`  = 每个 `expr` 只留**池序最靠前**那一条（**用它做计算**，省时间 ✓）；
+      · `alias` = `expr -> [该式子下的**全部**条目]`（含它自己）—— 这些条目**每个都要落一份产物** ✓。
+
+    **为什么必须有它**（真缺口，用户 2026-09-23 之问"是不是 5 日 20 日都审查了？"查出来的 ✓）：
+      同一表达式会在**多个池各有一个编号**（跨池克隆）。实测：
+        `corr100(cs_scale(mf_x_sell), mf_l_sell)` 同时是 **300:F02 / 500:F01 / 1000:F01** ✓
+      而原实现是"**先按 expr 去重**、再按名字查产物" ✗ ⇒ 去重后只剩池序最靠前那个
+      （工具池序 `all,300,500,1000,50` ⇒ 留 `F02_300`）⇒ 另外两个编号**根本进不了待算队列**
+      ⇒ 它们的产物**永远不会生成** ✗
+      （实测后果：`docs/factor_metrics_fwd20.csv` 缺 `F01_500`/`F01_1000` ⇒ 看板口径标签
+        在这两个因子上永远显示"缺" ✗；而 5 日表里那两行是**老版本**留下的 ⇒ 两张表不一致 ✓）
+      ⇒ 本函数与 `factor_curves.py` **早已采用**的 alias 做法（"算一次、每个名字各落一份" ✓）对齐 ✓
+    """
+    alias, seen, uniq = {}, set(), []
+    for it in items:
+        alias.setdefault(it['expr'], []).append(it)
+        if it['expr'] in seen:
+            continue
+        seen.add(it['expr'])
+        uniq.append(it)
+    return uniq, alias
+
+
+def plan(items, root, only_new, force, alias=None):
     """把待处理条目分成三档（**必须在载面板之前做**，见 docstring 的「增量模式」一节）。
 
     :return: (full, quant_only, skipped)
         full       —— 需要\"求值 + 回测 + 剥风格\"的（值文件缺失）
         quant_only —— 值已落地、只缺 `values_q.h5` 快查副本（**不用载面板/不用回测**）
         skipped    —— 两个文件都在（`--only-new` 且非 `--force`）
+    :param alias: ★ 2026-09-23：`plan_rows()` 给的别名表 —— **同一式子的其它编号也要看**：
+        任一编号缺值文件 ⇒ 这一条要重算 ✓（否则"别名缺文件"会被判成"已就绪"✗ 静默不补 ✗）
 
     ★★ 为什么要在载面板**之前**分流：`build_facs.py` 全量跑 52 个要 **~21 分钟**，
       而其中真正的成本是\"每因子 求值 + 1~2 次全期回测\"；面板载入本身只 ~11s。
@@ -293,9 +322,12 @@ def plan(items, root, only_new, force):
     import factor_store as FS
     full, quant_only, skipped = [], [], []
     for it in items:
-        p, _ = FS.FactorStore(root=root).path_of(_name_of(it), it['expr'])
-        pq = os.path.join(os.path.dirname(p), 'values_q.h5')
-        has_f, has_q = os.path.exists(p), os.path.exists(pq)
+        _names = [_name_of(it)] + [_name_of(x) for x in ((alias or {}).get(it['expr']) or [])]
+        has_f, has_q = True, True
+        for _nm in _names:
+            p, _ = FS.FactorStore(root=root).path_of(_nm, it['expr'])
+            has_f = has_f and os.path.exists(p)
+            has_q = has_q and os.path.exists(os.path.join(os.path.dirname(p), 'values_q.h5'))
         if force or not has_f:
             full.append(it)
         elif not has_q:
@@ -375,16 +407,14 @@ def main():
                               node=nd, ic_lib=L.get('ic'),
                               ic_arc=ics.get(expr), ae_lib=L.get('ann_ex'), also=[]))
     _ic = lambda it: it['ic_arc'] if it['ic_arc'] is not None else it['ic_lib']
-    # 去重（跨池重复的式子只落一份值，记下来源）
-    seen, uniq = {}, []
-    for it in items:
-        if it['expr'] in seen:
-            seen[it['expr']]['also'].append(it['pool'])
-            continue
-        seen[it['expr']] = it
-        uniq.append(it)
+    # ★ 2026-09-23：去重（同一式子**只算一次**）+ **别名表**（同式子的每个编号**都要落一份值** ✓）
+    #   —— 原实现只落"池序最靠前那个编号"一份 ⇒ 其它池按自己编号查会"查不到" ✗（见 `plan_rows`）
+    uniq, alias = plan_rows(items)
     for it in uniq:
         it['ic_ref'] = _ic(it)
+        # ⚠ 别名条目也要各自带 `ic_ref`（各池库文档里各自记的 IC ✓）—— 别名落值/对账都要用 ✓
+        for _x in (alias.get(it['expr']) or []):
+            _x['ic_ref'] = _ic(_x)
     if a.limit:
         uniq = uniq[:a.limit]
     print('=' * 96)
@@ -393,7 +423,8 @@ def main():
     print('=' * 96)
 
     # ---- ★ 先分流（增量模式），再决定要不要载面板 ----
-    full, quant_only, skipped = ((plan(uniq, root, True, a.force) if a.only_new
+    #   ★ 2026-09-23：把 `alias` 传进去 —— **同式子的任一编号缺文件 ⇒ 这一条要重算** ✓
+    full, quant_only, skipped = ((plan(uniq, root, True, a.force, alias) if a.only_new
                                   else (uniq, [], [])))
     if a.only_new:
         print('  分流: 需重算 **{}** · 仅缺快查副本 **{}** · 已就绪跳过 **{}**'.format(
@@ -403,12 +434,14 @@ def main():
     t0 = time.time()
     # ---- 仅缺 `values_q.h5` 的：**不用载面板、不用回测**（读 h5→量化→写 h5）----
     for it in quant_only:
-        nm = _name_of(it)
-        try:
-            st.write_quant_copy(nm, it['expr'], overwrite=True)
-            print('  [{:<10s}] 仅补 values_q.h5 ✓'.format(nm))
-        except Exception as e:
-            print('  [{:<10s}] **补副本失败** {}: {}'.format(nm, type(e).__name__, e))
+        # ★ 2026-09-23：别名（同式子的其它编号）也要补副本 —— 它们共用同一份 `values.h5` 语义 ✓
+        for _x in (alias.get(it['expr']) or [it]):
+            nm = _name_of(_x)
+            try:
+                st.write_quant_copy(nm, it['expr'], overwrite=True)
+                print('  [{:<10s}] 仅补 values_q.h5 ✓'.format(nm))
+            except Exception as e:
+                print('  [{:<10s}] **补副本失败** {}: {}'.format(nm, type(e).__name__, e))
     if not full:
         print('\n⇒ 无需重算的因子（增量模式）—— **不载面板**，完成，用时 {:.0f}s'.format(
             time.time() - t0))
@@ -478,6 +511,23 @@ def main():
         except Exception as e:
             print('      [双写] values_q.h5 生成失败(不影响主流程): {}: {}'.format(
                 type(e).__name__, e))
+        # ★★ 2026-09-23：**同式子的每个编号各落一份值**（别名副本 ✓）
+        #   原来只落"池序最靠前那个编号"一份 ⇒ 别的池按自己编号查 facs 会"没有这个因子" ✗
+        #   （实测：`300:F02 / 500:F01 / 1000:F01` 同式子；此前靠"池内收尾按池单独跑"侥幸存在 ✓，
+        #     而**全局增量跑**（收尾 ① 不带 --pools）只会落 `F02_300` ⇒ 另两个编号永远补不上 ✗）
+        for _x in (alias.get(expr) or [it]):
+            _nmx = _name_of(_x)
+            if _nmx == nm:
+                continue
+            try:
+                st.write(_nmx, expr, fac.values, dates, cols, freq=5, unit='raw',
+                         source='lib:{}:gen{}'.format(_x['pool'], _x.get('gen')),
+                         sign=sign, leaf_set=None, cat=None)
+                st.write_quant_copy(_nmx, expr, overwrite=True)
+                print('      [别名] 同式子的 {} 也落一份 ✓'.format(_nmx))
+            except Exception as e:
+                print('      [别名] {} 落值失败（不影响主流程）{}: {}'.format(
+                    _nmx, type(e).__name__, e))
         # ---- 自检：IC 对账（**必须吼出来**，否则落地了错的因子值也没人发现）----
         flag = ''
         if ic_ref is not None and abs(ic_got - ic_ref) > a.ic_tol:
