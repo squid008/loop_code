@@ -176,9 +176,14 @@ export default function App() {
     try {
       const r = await api.mineStop(pool)
       const k = r.killed.filter(x => x.rc === 0).map(x => `${x.kind}#${x.pid}`).join(', ')
+      // ★★★★★ 2026-09-23（用户："我点全部停止好像没有看到审查过程？只看到并行中？我看错了？"）：
+      //   用户没看错 —— **全部停止并不总是收尾** ✓（只有"本轮有代跑完"才会收尾；一代都没跑完就跳过，
+      //   免得白跑 ~10 分钟全库体检 ✓）。过去前端**只报"已停止"、不带后端说明** ✗ ⇒ 用户无从得知 ✗
+      //   ⇒ 现在把后端的 `note`（含"什么时候才收尾 + 想立刻体检怎么跑"）附在"全部停止"的提示后面 ✓
       say(r.ok ? 'ok' : 'err',
         r.ok ? `已停止${pool ? `池 ${pool}（其他池不受影响）` : '全部'}，结束进程：${k || '无'}`
           + (r.tail ? `；已开始收尾审查（PID ${r.tail.pid}）` : '')
+          + (!pool && r.note ? `。${r.note}` : '')
              : `有进程没停掉：${r.stillRunning.map(s => `${s.kind}#${s.pid}`).join(', ')}`)
       await loadAll(true)
     } catch (e) {
@@ -343,12 +348,14 @@ export default function App() {
           </button>
           <button className="btn stop" disabled={mineBusy || !mine?.running} onClick={() => doStop()}
                   title={mine?.running
-                    ? '全部停止：结束当前那一代，然后自动做收尾审查再退出。正在跑的那一代会作废，下次重跑'
+                    ? '全部停止：结束当前那一代（作废、下次重跑）。若本轮有代跑完，调度器会先自动收尾审查再退出；一代都没跑完就直接退出，不做无谓的收尾'
                     : '当前没有在运行，无需停止'}>
             全部停止
           </button>
           {/* 「收尾审查」按钮已按用户要求隐藏（后端 /api/mine/global 仍在）：
-             现在每轮结束会自动收尾，「全部停止」后也会自动收尾，无需手动点 */}
+              每轮结束会自动收尾；「全部停止」后**若有新进展**（本轮有代跑完）也会自动收尾 ✓ ——
+              ⚠ 2026-09-23 更正：一代都没跑完时**会跳过收尾**（没有可审的东西，别白跑一遍全库体检 ✓）；
+              想手动收尾：命令行 `python tools/run_tracks.py --rounds=0` ✓ */}
           <button onClick={() => loadAll(true)} disabled={busy} className="btn">
             {busy ? '刷新中…' : '立即刷新'}
           </button>

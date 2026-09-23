@@ -896,6 +896,9 @@ def main():
               enabled=[p for p, _, _ in plan] or pools, curPool=None, curGen=None)
     dirty = False                # ★ 有没有“未被收尾覆盖过的新进展”
     stopped_by_user = False
+    # ★★ 2026-09-23：**在循环外先初始化** —— 因为"停止后要不要收尾"的判据要用它（见 L1037 ✓），
+    #   而"收到停止"可能发生在**第一轮正文之前**（那时循环体内的赋值还没执行 ⇒ 直接用会 NameError ✗）
+    ran_round = False            # 本轮有没有代跑完（收尾判据之一 ✓）
     # ★★★★★ 2026-09-23：**轮数上限每轮热读**（与并行模式同款，见 `parallel_runner.run` 的说明 ✓）
     #   原来 `for rnd in range(1, rounds + 1)` 把上限**启动那一刻就拍死** ✗ ⇒ 之后谁写控制文件里的
     #   `rounds`（面板改轮数 / 「启动本池」带轮数）都不生效 ✗✗ 而接口却声称"已更新" ⇒ 静默丢弃 ✗
@@ -1029,6 +1032,15 @@ def main():
     log('===== 全部轨道结束 =====')
     # ★★ 因"全部停"退出、且还有未被收尾覆盖的进展 ⇒ **自动收尾**
     #    （用户要求 4：「一键全部停掉后，它就自动进入收尾阶段」）
+    # ★★★★★ 2026-09-23（用户："我点全部停止好像没有看到审查过程？"）：**把"为什么没收尾"说出来** ✗
+    #   判据用 `ran_round`（**本轮**有没有代跑完 ✓），不用 `dirty` ✗ —— 后者会被"轮末收尾"清零 ✓
+    #   ⇒ 若停止发生在"上一轮已跑完并收尾过、这一轮才刚开始"时，用 `dirty` 会**误报**"本轮一代没跑完" ✗
+    #   跳过收尾本身**是对的** ✓（没有新进展就别白跑 ~10 分钟 ✗），但必须**有声音** ——
+    #   否则用户合理预期"点停止 = 一定看到审查" 会落空 ✗✗（与并行模式同款 ✓）
+    if stopped_by_user and not ran_round and not dry and not no_global:
+        log('  ★ 本轮**没有任何一代跑完**（在跑的都被停止 ⇒ 该代作废）')
+        log('     ⇒ 没有新进展可审，**跳过收尾**（不白跑一遍全库体检 ✓）')
+        log('     ⇒ 想"现在就体检一次"：`python tools/run_tracks.py --rounds=0` ✓')
     if stopped_by_user and dirty and not dry and not no_global:
         do_global_tail('★ 全部停止后')
         dirty = False
