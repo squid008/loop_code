@@ -80,18 +80,28 @@ print('=' * 100)
 HISTORICAL = ('change_log.md', 'docs/log/2026-09.md', 'docs/log/todo_done.md',
               'docs/loop_journal.md', 'docs/loop_journal_300.md', 'docs/loop_journal_500.md',
               'docs/loop_journal_1000.md', 'docs/loop_journal_50.md')
-ALLOW_LINES = {
-    ('README.md', 277): '版本表引文（v1.3.2 那行描述"当时改了什么"，旧脚本名是原文 ✓）',
-    ('README.md', 292): '版本表引文（v0.20.4 复盘，引的是当时的名字 ✓）',
-    ('docs/loop_todo.md', 506): '待办条目引文（它说的就是"文档里仍写旧路径"，属**被记录的对象** ✓）',
-    ('docs/loop_todo.md', 522): '台账引文（记录"`tools/calib_gates.py` → `calib_dedup_leaf.py`"这次改名 ✓）',
-    ('docs/loop_todo.md', 539): '台账引文（同上，复盘要点 ✓）',
-    ('docs/factor_roadmap.md', 170): '原文自己写着"（2026-09-09 并入本档案）"⇒ 保留出处 ✓',
+# ★★ 白名单按 **(文档, 引用串)** 做键 —— **不按行号** ✗
+#   为什么（v1.21.44 → v1.21.45，**当天就踩到** ✓）：第一版用行号做键 ✗，而我在同一批里往这些文档
+#   **加了说明文字**（行号整体下移 ✗）⇒ 白名单**全部失配**、那 6 处引文"复活"成"必须修" ✗✗
+#   ⇒ 教训：**行号是位置、不是身份**；对这种"同一句话的引用"必须按内容/key 匹配 ✓
+ALLOW_REFS = {
+    ('README.md', 'tools/_chk_ai_tone.py'):
+        '版本表引文（v1.3.2 那行描述"当时改了什么"，旧脚本名是原文 ✓）',
+    ('README.md', 'tools/calib_gates.py'):
+        '版本表引文（v0.20.4 复盘，引的是当时的名字；现名 `calib_dedup_leaf.py` ✓）',
+    ('docs/loop_todo.md', 'ai_test/calib_gates.py'):
+        '待办条目引文（它说的就是"文档里仍写旧路径"，属**被记录的对象** ✓）',
+    ('docs/loop_todo.md', 'tools/calib_gates.py'):
+        '台账引文（记录"`tools/calib_gates.py` → `calib_dedup_leaf.py`"这次改名 ✓）',
+    ('docs/factor_roadmap.md', 'docs/loop_ext_leaves.md'):
+        '原文自己写着"（2026-09-09 并入本档案）"⇒ 保留出处 ✓',
 }
 by_doc = defaultdict(list)
+n_allow = 0
 for cand, refs in missing.items():
     for doc, ln in refs:
-        if (doc, ln) in ALLOW_LINES:
+        if (doc, cand) in ALLOW_REFS:
+            n_allow += 1
             continue
         by_doc[doc].append((cand, ln))
 
@@ -99,6 +109,11 @@ act = {d: v for d, v in by_doc.items() if d not in HISTORICAL}
 his = {d: v for d, v in by_doc.items() if d in HISTORICAL}
 print('\n  ★ **活跃文档**（必须修）: %d 处，分 %d 个文档' % (sum(len(v) for v in act.values()), len(act)))
 print('  ○ 历史记录（**有意不改**）: %d 处，分 %d 个文档' % (sum(len(v) for v in his.values()), len(his)))
+if n_allow:
+    # ★ 显式报出来（**明示**而不是"悄悄放过" ✓ —— 白名单要让人看得见，才不会被滥用 ✓）
+    print('  ○ 行级引文（白名单，**有意保留**）: %d 处 —— 都是"记录当时叫什么名"的句子 ✓' % n_allow)
+    for (d0, c0), why in sorted(ALLOW_REFS.items()):
+        print('      %-26s %-34s %s' % (d0, c0, why))
 
 for doc in sorted(act, key=lambda x: -len(act[x])):
     print('\n  ===== %s（%d 处）=====' % (doc, len(act[doc])))
