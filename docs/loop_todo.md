@@ -10,7 +10,7 @@
 > - **本文件的「已完成」条目**：`docs/log/todo_done.md`（`§1.x` 已完成 + 进度日志 + R1~R8）
 > - 当日细节与踩坑：`.codebuddy/memory/YYYY-MM-DD.md`（**只读尾部 30~50 行**）
 > - 跨会话长期事实：`.codebuddy/memory/MEMORY.md`
-> - 运行速查：`python tools/tracks_status.py`（三/四池轨道一屏）· `python ai_test/status_all.py`（夜间流水线）
+> - 运行速查：`python tools/tracks_status.py`（三/四池轨道一屏）· `python history/ai_test_20260915/status_all.py`（夜间流水线）
 >
 > **⚠ 本文档不重复 roadmap 的内容，只引用 `§8.xx`** —— 见 §2.2 「Token 纪律」。
 
@@ -317,25 +317,33 @@ if ran_round and not no_global:
 
 ### 0.1 正在跑
 
-★ **当前无任何挖掘进程在跑**（2026-09-17 **12:54:41** 实测：调度器跑完**第 50/50 轮**后自行收尾退出，
-`_control.json` = `running:false · phase:idle · active:[]`）✓
+★ **当前无任何挖掘进程在跑**（2026-09-23 **19:28:19** 用户在面板点「全部停止」⇒ 3 个在跑的引擎
+就地结束、调度器复位退出；`_control.json` = `running:false · phase:idle · active:[]`）✓
 
-> 当天早些时候是**并行 3 引擎**在跑（`1000`/`50`/`300`，`--panel_cache=use`）——用户陆续把
-> `1000`/`50`/`500` 从轮转里停掉（`ctl.stopped`），`300` 一直跑到 **gen56**，12:54 全部结束 ✓
+> 那次被停掉的是 **1 轮**的并行 3 引擎（`1000` gen47 / `300` gen191 / `500` gen99，各跑 ~7.4min
+> ⇒ **该代作废、下次重跑** ✓，无脏数据 ✓）。**当前启用池 = `1000,300,500`、轮数上限 = 50** ✓
+> ★ 2026-09-23 起：**轮数上限可热改**（v1.21.43）——在面板改轮数 / 点「启动本池」带轮数都会立刻写进
+> `_control.json`，调度器**每轮重读** ⇒ **下一轮起生效**（正在跑的那一轮不受影响 ✓）
 > **查法（秒级）**：`python tools/tracks_status.py`（轨道一屏）或直接读 `ai_test/_tracks/_control.json` ✓
 
-- 要重启：`python tools/run_tracks.py`（默认 `--pools=300,500,1000` × 3 轮）
+- 要重启：`python tools/run_tracks.py`（默认 `--pools=300,500,1000` × 3 轮）或看板点「启动」
   ⚠ **它不支持 `--help`** —— 传了会**直接开跑** ✗（要只看计划用 `--dry`；要查参数用 `tools/_verify_extra_args.py`）
+- ★ 2026-09-23 起：**同一台机器只允许 1 个调度器**（v1.21.40 的"单实例闸"）——重复启动会被
+  明确拒绝（`rc=3` + 说清原因 ✓），不会再互相杀引擎 ✓
 
-### 0.2 各池现状（★ 2026-09-17 实测）
+### 0.2 各池现状（★ 2026-09-23 复核）
 
 | 池 | 最新代 | **入库因子（state 权威）** | 冻结骨架 | archive `passed=True` |
 |---|---|---|---|---|
-| `all` | 77 | **41** | 1 | 32 |
-| `300` | 56 | **2** | **0** | 3 |
-| `500` | 20 | **4** | **0** | 6 |
-| `1000` | 15 | **5** | **4** | 15 |
-| `50` | 6 | **0** | 1 | 0 |
+| `all` | 76 | **45** | 1 | 32 |
+| `300` | 190 | **5** | **0** | 3 |
+| `500` | 98 | **12** | **0** | 6 |
+| `1000` | 46 | **13**（含 1 个无编号 orphan） | **4** | 15 |
+| `50` | 66 | **0** | 1 | 0 |
+
+> ★ 最后两列（冻结骨架 / `archive passed`）**停更于 2026-09-17**，要看就现查
+> （`python tools/library_kpi.py --pool=X`）✓；前两列已于 2026-09-23 复核 ✓
+> **在库合计 = 75**（45+5+12+13+0 ✓ 与 `docs/factor_metrics*.csv` 的 `in_bank=1` 行数一致 ✓）
 
 > ⚠ **`passed=True` ≠ 入库数** —— `passed` 是"L2 通过"，入库还要过**骨架去重 / 收益流去重 /
 > 骨架上限**等闸门（`_save_state` 内）⇒ **以 `engine/loop_state*.pkl` 为准** ✓
@@ -409,12 +417,12 @@ if ran_round and not no_global:
 过期产物会**随着脚本重跑不断地长回来**，清一次断不了根。⇒ 定期执行：
 
 ```bash
-python ai_test/proj_scan.py            # ① 看规模/扩展名分布
-python ai_test/proj_scan.py --junk     #    找垃圾（附判定理由）
-python ai_test/proj_scan.py --big      #    找大文件
-python ai_test/cleanup_repo.py         # ② DRY-RUN
-python ai_test/cleanup_repo.py --verify #    关键文件是否幸存
-python ai_test/cleanup_repo.py --apply # ③ 执行（先写清单；归档可恢复）
+python history/ai_test_20260915/proj_scan.py            # ① 看规模/扩展名分布
+python history/ai_test_20260915/proj_scan.py --junk     #    找垃圾（附判定理由）
+python history/ai_test_20260915/proj_scan.py --big      #    找大文件
+python history/ai_test_20260915/cleanup_repo.py         # ② DRY-RUN
+python history/ai_test_20260915/cleanup_repo.py --verify #    关键文件是否幸存
+python history/ai_test_20260915/cleanup_repo.py --apply # ③ 执行（先写清单；归档可恢复）
 ```
 
 **★ 2026-09-14 首次执行的成果**（`history/cleanup_20260914_001311|001515_manifest.txt`）：
@@ -430,9 +438,9 @@ python ai_test/cleanup_repo.py --apply # ③ 执行（先写清单；归档可�
 
 **⚠ 明确保留（绝不能动）**：`engine/*.h5`（数据面板 1.8 GB，**每代都在读**）·
 `engine/loop_state*.pkl`（活 state）· `tools/_combo_all_neu_*.pkl`（**`combo_score.py` 生产输入**）·
-`ai_test/_bank_fac/bank00.pkl`（QA 夹具）· `strategies/**`（策略运行需要）。
+`history/ai_test_20260915/_bank_fac/bank00.pkl`（QA 夹具）· `strategies/**`（策略运行需要）。
 
-**★ 新增 `ai_test/README.md`** —— 操作台索引：日常工具清单（80/20）+ 命名约定 +
+**★ 新增 `history/ai_test_20260915/README.md`** —— 操作台索引：日常工具清单（80/20）+ 命名约定 +
 **为什么一次性脚本不能移到子目录**（它们用 `ROOT = dirname(HERE)` 定位，移动会破坏路径）。
 
 ### 2.5 ★★★★★ 架构债登记表（**软件工程体检**；2026-09-15 建立，P0-1 已清）
@@ -491,8 +499,8 @@ python tools/_audit_deadcode.py    # ★ 死代码（ast 精确判定，避免 f
 #### ★★★ 2026-09-15 第二轮审计（用户点名的"文件精简 + 两处打架"）—— **证据级结论**
 
 **审计工具（只读，可重复跑）**：`tools/_audit_files.py`（全项目 988 个文件 → LIVE/DOC/ORPHAN）
-· `ai_test/_audit_scope.py`（用户点名的目录逐个定性）· `ai_test/_audit_imports.py`（**精确**判依赖）·
-`ai_test/_audit_paths.py`（**源码里写的路径是否真的存在**）
+· `history/ai_test_20260915/_audit_scope.py`（用户点名的目录逐个定性）· `tools/_audit_imports.py`（**精确**判依赖）·
+`tools/_audit_paths.py`（**源码里写的路径是否真的存在**）
 
 **⚠⚠ 我犯过一次误报，已纠正（记下避免重犯）**：
 - 初版判据「文件名出现在生产 `.py` **文本**里」⇒ 说"`ai_test` 有 **12 个**生产依赖" ✗ **误报**
@@ -507,8 +515,8 @@ python tools/_audit_deadcode.py    # ★ 死代码（ast 精确判定，避免 f
 | **C4** | `tools/_test_ops_sync.py` 的 `ALLOW` 白名单里有**失效条目** `calib_gates.py` | 白名单本意是"允许出现算子清单的文件" | 清理 | 否 |
 | **C5** | `docs/log/2026-09.md` + `docs/loop_todo.md` 的**历史快照**已由 P1/P1b 处理 ✓ | — | 已完成 | — |
 | **C6** | ★ **`ai_test/` 150 个一次性脚本** | 精确判依赖后**只剩 1 个**（`library_kpi.py`，见 C1）| **可清**（建议先归档 `history/`）| ✅ 是 |
-| **C7** | `standard/style_paired_analysis.py` + `docs/loop_style_paired.md` | 2026-09-11 **批1 一次性配对验证**（结论已落 §8.5）| **可归档** | ✅ 是 |
-| **C8** | `standard/prof_evalreal.py`（性能剖析，一次性）| — | **可归档** | ✅ 是 |
+| **C7** | `history/20260915_cleanup/standard/style_paired_analysis.py` + `history/20260915_cleanup/standard/loop_style_paired.md` | 2026-09-11 **批1 一次性配对验证**（结论已落 §8.5）| **可归档** | ✅ 是 |
+| **C8** | `history/20260915_cleanup/standard/prof_evalreal.py`（性能剖析，一次性）| — | **可归档** | ✅ 是 |
 | **C9** | ⚠ **`docs/*.csv` 全部是"引擎输出"**（`loop_archive*`/`loop_pool_obs*`/`loop_strip_style*`/`loop_style_obs`/`pool_tags*`，共 **19 个**）| `tools/_audit_files.py` 判为 **★引擎写**；且**被 `.gitignore` 排除**（= 运行产物）| ★ **不是垃圾**：`loop_archive*.csv` = **入库清单（权威）**；是回测/组合输入 ⇒ **保留** | ⚠ 若嫌乱可按池归档 |
 | **C10** | ⚠ **`loop_journal_50.md`(9.7KB) / `loop_archive_50.csv` / `loop_pool_obs_50.csv` / `loop_strip_style_50.csv`** | 是 **`pool=50` 轨道**的产物 ⇒ **引擎写**，不是历史 | ★★ **2026-09-15 晚已恢复回 `docs/`**（前端已展示 50 池 ⇒ 数据要留）⇒ **保留** | ✅ 已办 |
 | **C11** | ⚠ **`standard/pool_tags.py`(9.3KB) 与 `qa_style_obs.py`(4.5KB) 被 `engine/` 引用** | `loop_engine.py`/`loop_pools.py`/`loop_metrics.py` | ★ **是生产依赖**，**不是**"标准测试的附属" ⇒ **不能动** | 否 |
@@ -695,7 +703,7 @@ handler 结束时**隐式 `del e`** ⇒ 那样"绑过"的名字到调用行**必
     `history/cleanup_B/history/cleanup_A/history/<file>`
     ⇒ ⇒ **我在 docstring 里声明的"幂等"是假的**——它不是幂等，而是**渐进式破坏**。
     **修法**：① 遍历时**跳过归档区**（`history/`）；② `PROTECT` 也加 `history/**`（双保险）；
-    ③ **清掉已产生的嵌套**（`ai_test/_fix_history_nesting.py`）。
+    ③ **清掉已产生的嵌套**（`history/ai_test_20260915/_fix_history_nesting.py`）。
     > **★ 通用教训**：**"可重复执行"（幂等）必须真的连跑两遍去验证**，不能只写在注释里。
     > 任何"清理/批处理/归档"脚本，**第一次跑完之后要再跑一次，确认第二次是"零动作"**。
     > 另外：`fnmatch` 不是路径匹配器，要按路径语义匹配就用 `PurePath.match` / 自己写（`*` 不跨 `/`）。
@@ -829,10 +837,10 @@ handler 结束时**隐式 `del e`** ⇒ 那样"绑过"的名字到调用行**必
 
 | 顺序 | 文件 | 内容 |
 |---|---|---|
-| 1 | **`ai_test/_valid_report.md`** | 按 gen 切分的对照表（基线 / v1 / **v2**） |
-| 2 | **`ai_test/_next_action.md`** | **结论 + 下一步的确切命令**（决策树写死在 `interpret_valid.py`） |
-| 3 | **`ai_test/_critic_sensor.md`** | B角建议 vs LLM建议 vs 实际产出（§1.1 用） |
-| 4 | **`ai_test/_tilt_report.md`** | `tilt` 诊断（"候选是不是同一种池内规模倾斜"） |
+| 1 | **`history/ai_test_20260915/_valid_report.md`** | 按 gen 切分的对照表（基线 / v1 / **v2**） |
+| 2 | **`history/ai_test_20260915/_next_action.md`** | **结论 + 下一步的确切命令**（决策树写死在 `interpret_valid.py`） |
+| 3 | **`history/ai_test_20260915/_critic_sensor.md`** | B角建议 vs LLM建议 vs 实际产出（§1.1 用） |
+| 4 | **`history/ai_test_20260915/_tilt_report.md`** | `tilt` 诊断（"候选是不是同一种池内规模倾斜"） |
 
 ### 5.2 判读决策树（核心指标 = **入库率**，基线 **2%**）
 
@@ -853,8 +861,8 @@ handler 结束时**隐式 `del e`** ⇒ 那样"绑过"的名字到调用行**必
 | 部件 | 说明 |
 |---|---|
 | 任务真相源 | **本文件** —— 任何新会话先读 §0/§1 |
-| 长跑本体 | `ai_test/night_pipeline.py` / `tools/run_tracks.py` / `ai_test/chain_*.py`（全部 **detached**，不依赖任何会话） |
-| 机械判读 | `ai_test/interpret_valid.py`（决策树→结论+命令）· `ai_test/valid_report.py`（按 gen 切分）· `tools/critic_sensor_report.py`（三方对比） |
+| 长跑本体 | `history/ai_test_20260915/night_pipeline.py` / `tools/run_tracks.py` / `ai_test/chain_*.py`（全部 **detached**，不依赖任何会话） |
+| 机械判读 | `history/ai_test_20260915/interpret_valid.py`（决策树→结论+命令）· `history/ai_test_20260915/valid_report.py`（按 gen 切分）· `tools/critic_sensor_report.py`（三方对比） |
 | 互斥 | §3「当前占用」+ 40 分钟时间戳 |
 | 有界 | 每轮 ≤10 分钟；做不完把进度写回本文件 |
 

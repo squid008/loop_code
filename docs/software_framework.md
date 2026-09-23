@@ -15,12 +15,12 @@
 | 定位 | 自动**挖掘**（生成 → 筛选 → 入库） | **平台**（因子库 / 看板 / 回测 / 公式编辑器） |
 | 技术栈 | Python 自研引擎 + B角 LLM 审查 | FastAPI 后端 + 前端（React/TS） |
 | 表达式 | 自有前缀式：`max(ts_min20(cs_rank(x)), y)` | **qlib ops**：`Mean/Std/Ref/Corr/Rank/Quantile/Slope` + `$close` |
-| 叶子 | **54** = 量价 7 + 派生 12 + 资金流 16 + **BARRA 11** + **财报PIT 8** | 量价 + 资金流（moneyflow3）+ L2 方言 `L2_AMO(n,b\|s)`；**无 BARRA / 财报PIT** |
+| 叶子 | **61** = 量价 7 + 派生 12 + 资金流 16 + **BARRA 11** + **财报PIT 15**（★ 2026-09-23 复核；单一事实源 `engine/loop_fields.py::LEAVES` ✓） | 量价 + 资金流（moneyflow3）+ L2 方言 `L2_AMO(n,b\|s)`；**无 BARRA / 财报PIT** |
 | 算子 | `ts_* / log/abs/neg/sign/cs_* / add/sub/mul/div/corr*/min/max`——**无比较/布尔算子，结构上产不出 0/1 因子** | 含益盟/通达信全套（`If/Gt/And/Count/FILTER/SMA/HHVBARS`…）→ **多 0/1 触发型** |
 | 评估 | `standard/standard_test.py`：Top10% 多头 + **十档分层** + 费后 + 分段 + 风格归因 + **多池** | M5 待开发（对齐聚宽：IC / **5 组** / 多空 / 衰减，1/5/20 日） |
 | 存储现状 | `loop_state.pkl` + `loop_archive.csv` + Markdown | 设计稿：每因子一 h5 + `<name>_meta.json`（**M6 未落地**） |
 | 库机制 | `loop_state.pkl` 里的 `bank`（list[Node]） | **`FACTOR_PROVIDERS` + `catalog.py`**（加因子不改接口/前端） |
-| 落地进度 | gen50 收官、25 个入库因子（F01~F25） | **M1/M2/M3 完成；M4 因子库 / M5 看板 / M6 模式B 均未开发** |
+| 落地进度 | **多池持续在挖**（★ 2026-09-23：全A 76 代 · 300 190 · 500 98 · 1000 46 · 50 66），在库 **75**（权威见 `docs/loop_todo.md §0`） | **M1/M2/M3 完成；M4 因子库 / M5 看板 / M6 模式B 均未开发**（对方侧，2026-09-11 记录） |
 
 > **关键时间窗**：对方 M4/M5/M6 还没写代码，**现在改设计稿成本最低**。
 
@@ -237,7 +237,7 @@ qlib 表达式引擎是为"少量因子、精确回测"设计的。强行统一 
   报告头改为 `成本 0.007往返(压力档)   成分内口径 A`。
 - **验收**：py_compile 全过；默认档复现压测值（F26 超额 **+4.59%**）、
   `--cost-name=实盘(滑点千1.5)` 复现实盘值（**+7.48%**），与改造前逐位一致；
-  `ai_test/qa_fam_smoke.py` **8/8 全过**（含 `loop_engine.py --help` 启动冒烟）。
+  `history/ai_test_20260915/qa_fam_smoke.py` **8/8 全过**（含 `loop_engine.py --help` 启动冒烟）。
   → **零行为变更**（引擎默认仍是 0.004，`standard_test` 默认仍是 0.007）。
 - **D · 可选精度提升**：印花税 **2023-08-28 起由千一减半为万五**，全样本用 `0.001` 偏保守；
   要更准可做**时变成本**（2018~2023.08 用 `0.0016`，其后 `0.0011`）。
@@ -256,7 +256,7 @@ qlib 表达式引擎是为"少量因子、精确回测"设计的。强行统一 
 
 ## 4. 存储选型
 
-### 4.1 实测（`ai_test/bench_factor_store.py`，5000 股 × 2500 日 float32 = 50MB，D 盘 NVMe SSD，中位耗时）
+### 4.1 实测（`history/ai_test_20260915/bench_factor_store.py`，5000 股 × 2500 日 float32 = 50MB，D 盘 NVMe SSD，中位耗时）
 
 | 方案 | 大小MB | 单日读 | 250日 | 随机100日 | 单股全史 | 全量读 |
 |---|---|---|---|---|---|---|
@@ -275,7 +275,7 @@ qlib 表达式引擎是为"少量因子、精确回测"设计的。强行统一 
 3. **chunk 是零和的**：优化单日读必然牺牲全量读（63.6 vs 18.0）或单股全史。
 4. **`(date,inst)` 连续 + 不压缩 + 每因子一 h5** = HDF5 家族综合最优。
 
-### 4.2 真实因子字节成本（`ai_test/bench_real_factor_bytes.py`，L1 子面板 2094日×2000股，真实 NaN 17~28%）
+### 4.2 真实因子字节成本（`history/ai_test_20260915/bench_real_factor_bytes.py`，L1 子面板 2094日×2000股，真实 NaN 17~28%）
 
 | 编码 | F14 | F20 | F23 |
 |---|---|---|---|

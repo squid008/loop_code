@@ -73,6 +73,13 @@ chk('池内收尾**含** facs 落地 / 指标表 / 曲线三段 ✓',
     'build_facs.py' in _seg and 'factor_metrics.py' in _seg and 'factor_curves.py' in _seg)
 chk('全局收尾仍做那两件（没被误删 ✓）',
     'cross_pool_review.py' in RT and 'export_factor_registry.py' in RT)
+# ★★★★★ 2026-09-23（文档体检抓到的真缺口）：**跨池派生视图**（`docs/factor_library_crosspool.md`）
+#   原来**谁都不调** `tools/build_crosspool_view.py` ✗ ⇒ 它停在 2026-09-14（池库早已从 ~52 涨到 75 ✗）
+#   ⇒ 现在归**全局收尾**（②b ✓，与 ①② 同性：产物就一份，多池并发会互相覆盖 ✗）
+chk('★ 全局收尾**必须调** build_crosspool_view.py（否则那份视图没人更新 ✗）',
+    'build_crosspool_view.py' in RT)
+chk('★ 池内收尾**不许**调它（一份产物，5 个池并发写会互相覆盖 ✗）',
+    'build_crosspool_view' not in _seg)
 
 print()
 print('[3] 看板启动默认带上这两步（用户点按钮即生效 ✓）')

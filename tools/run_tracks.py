@@ -525,6 +525,24 @@ def _global_tail_impl(tag=''):
     except Exception as e:
         log('      [!] 审查失败({}: {})'.format(type(e).__name__, e))
     log('  ⇒ 精选池见 docs/factor_pool_selected.md（比"入库数"更接近"能用几个"）')
+    # ★★★★★ 2026-09-23（文档体检）：补 ②b —— **跨池派生视图**（`docs/factor_library_crosspool.md`）
+    #   真问题：那个文件由 `tools/build_crosspool_view.py` 生成，但**收尾管线从来没调过它** ✗
+    #   ⇒ 实测它停在 **2026-09-14**（而池库已从 ~52 个涨到 **75** 个 ✗）—— 看它的人会读到一份
+    #     9 天前的镜像 ✗✗（同 v1.21.26 那个"收尾只跑一半"的坑：**产物在，但没人更新它** ✗）
+    #   ⇒ 与 ①②一样放进"全局收尾"（它只读 `docs/loop_strip_style_*.csv` + 各池库 ⇒ **不用载面板**、
+    #     秒级 ✓），失败不致命（`[!]` 记账继续 ✓）
+    log('  [收尾 ②b] 跨池派生视图（docs/factor_library_crosspool.md）')
+    try:
+        r = subprocess.run([PY, '-u', 'tools/build_crosspool_view.py'],
+                           cwd=ROOT, capture_output=True, text=True,
+                           encoding='utf-8', errors='replace', timeout=600,
+                           creationflags=NO_WIN)
+        for ln in (r.stdout or '').splitlines()[-4:]:
+            log('      ' + ln[:150])
+        if r.returncode != 0:
+            log('      [!] 跨池视图非零退出={} -> 不影响其余收尾'.format(r.returncode))
+    except Exception as e:
+        log('      [!] 跨池视图失败({}: {}) -> 不影响其余收尾'.format(type(e).__name__, e))
     # ★★★★ 2026-09-17（用户之问："新入库的 500 F06 为啥有曲线图，但超额年化那些指标都是 —？"）：
     #   根因之一是**流程缺口** —— 收尾只跑了「facs 落地 + 跨池审查」，**没跑指标表与曲线** ✗
     #   ⇒ 每次新因子入库后，看板里它的「超额年化/卡玛/夏普」全是 `—`、图也缺 ⇒ 用户以为出错 ✗✗

@@ -69,10 +69,30 @@ print('【文档路径引用检查】%d 个文档；命中 %d 处存在 ✓；**
 print('=' * 100)
 
 # ★★★ 关键分类：**历史记录改不得** —— 它们记录"当时用了什么"，路径失效是正常的 ✓
-HISTORICAL = ('change_log.md', 'docs/log/2026-09.md', 'docs/log/todo_done.md')
+#
+# ★★★★★ 2026-09-23（用户："检查各种 md、对项目做个体检"）本轮**补全**了两处漏判：
+#   ① `docs/loop_journal*.md` 也是**逐代日志**（与 change_log 同性：记录"当时跑了什么" ✓）——
+#      原来不在 HISTORICAL 里 ⇒ 它那 4 处失效引用被算成"必须修" ✗（会误导人改日志 ✗）
+#   ② **行级引文**：README「版本与回退」表、`loop_todo.md` 的台账/待办里，会出现
+#      "\`旧路径\` → 新名" 这种**引用当时的名字**的句子 ⇒ 改了**反而错** ✗（而按文档分类盖不住 ✗）
+#      ⇒ 加一张**显式行级名单** `ALLOW_LINES`（附理由 ✓）：命中即算"有意不改" ✓
+#   ⇒ 从此本工具的"活跃文档（必须修）"应当为 **0**；不为 0 就是真问题 ✓
+HISTORICAL = ('change_log.md', 'docs/log/2026-09.md', 'docs/log/todo_done.md',
+              'docs/loop_journal.md', 'docs/loop_journal_300.md', 'docs/loop_journal_500.md',
+              'docs/loop_journal_1000.md', 'docs/loop_journal_50.md')
+ALLOW_LINES = {
+    ('README.md', 277): '版本表引文（v1.3.2 那行描述"当时改了什么"，旧脚本名是原文 ✓）',
+    ('README.md', 292): '版本表引文（v0.20.4 复盘，引的是当时的名字 ✓）',
+    ('docs/loop_todo.md', 506): '待办条目引文（它说的就是"文档里仍写旧路径"，属**被记录的对象** ✓）',
+    ('docs/loop_todo.md', 522): '台账引文（记录"`tools/calib_gates.py` → `calib_dedup_leaf.py`"这次改名 ✓）',
+    ('docs/loop_todo.md', 539): '台账引文（同上，复盘要点 ✓）',
+    ('docs/factor_roadmap.md', 170): '原文自己写着"（2026-09-09 并入本档案）"⇒ 保留出处 ✓',
+}
 by_doc = defaultdict(list)
 for cand, refs in missing.items():
     for doc, ln in refs:
+        if (doc, ln) in ALLOW_LINES:
+            continue
         by_doc[doc].append((cand, ln))
 
 act = {d: v for d, v in by_doc.items() if d not in HISTORICAL}

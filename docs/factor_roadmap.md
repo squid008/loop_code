@@ -78,6 +78,12 @@
 ---
 
 ## 总路线（用户确认，自主执行不逐轮请示）
+
+> ★ 2026-09-23（文档体检）：以下 2~4 条是**当时的目标与结论（历史）**——里面写的"叶子 54 / gen50 收官 /
+> 入库 11→23 / 收官态 bank 9"都是**当时的快照** ✓。**要看"现在到底多少"请一律以 `docs/loop_todo.md §0`
+> 为准**（2026-09-23 复核：叶子 **61**（`loop_fields.py::LEAVES`）· 全A **76** 代 · 在库合计 **75**）✓
+> 历史条目**有意保留原文**（不重写记录 ✓，与 `change_log.md` 同规矩 ✓）
+
 1. ~~**财报/基本面因子批次**~~ → **已完成**（Round5/5b/5c/6/7）
 2. ~~**聚宽因子手册批次**~~ → **已完成**（Round6，31因子）
 3. **中金 Loop 全自动引擎** → **已跑通并收官 gen22（2026-09-09），扩叶子池后自 gen23 重启**
@@ -90,7 +96,7 @@
    （见 Round27）。实时进度：`engine/loop_watcher.log` / `loop_status.py`（命令见 README.md）。
 
 ## 检验口径规范（2026-09-07 定稿，四口径实验后）
-实验脚本 `ai_test/all01_dev/chk_neut_order3.py`，结果 `chk_neut_order3.txt`
+实验脚本 `history/research/dev/all01_dev/chk_neut_order3.py`，结果 `chk_neut_order3.txt`
 | 口径 | 做法 | 性质 |
 |---|---|---|
 | A | 中性化(原始值) → rank | round1~5 旧口径；对裸的极端厚尾比率会离群 |
@@ -127,7 +133,7 @@ IC 仅 0.010~0.016, 但 IC_IR 0.20~0.32、Calmar 0.25~0.46 —— 已属可用�
 - 区间 2018-01 起；FWD=5 交易日；成本单边千一；10组、Top组多头
 - 11项简化门槛：|IC|>0.02、IC胜率>0.52、Calmar>0.5、最近年超额>0、亏损年≤1且>-2%、与入库因子IC相关<0.7
 - 历史结论：量价/资金流/BARRA 四轮共263因子 → 通过 0 个，预测力几乎全来自市值+行业暴露
-- 中性化代码范式在 `ai_test/round3.py`(ln市值) 与 `ai_test/round4.py`(BARRA size+行业)
+- 中性化代码范式在 `history/research/round3.py`(ln市值) 与 `history/research/round4.py`(BARRA size+行业)
 
 ## 数据事实（探针确认）
 - `panel.h5`：3309日×5384股（2013-01~2026-08），含 close/mktcap 等；`universe.h5` 可交易池 bool
@@ -136,9 +142,13 @@ IC 仅 0.010~0.016, 但 IC_IR 0.20~0.32、Calmar 0.25~0.46 —— 已属可用�
 - **PIT 语义坑**：`operating_revenue/net_profit_parent_company` 等为**累计值(YTD)**；`*TTM` 为滚动12月；
   资产负债表字段(current_assets/current_liabilities/gross_profit)对银行股为 NaN（银行无此科目）
   → 同比用 q vs q-4（去年同 quarter 累计同比）；盈利质量/估值尽量用 TTM 分子保证跨披露期可比
-- `ai_test/all01_dev/probe_fund_fields.txt`：候选财报字段覆盖率已抽查（多数 35~40/40 只）
+- `history/research/dev/all01_dev/probe_fund_fields.py`：候选财报字段覆盖率已抽查（多数 35~40/40 只）
 
 ## 8. 遗留资产与续跑指南
+
+> ★ 2026-09-23（文档体检）：本节写于 **2026-09-10（gen50 收官时）**，是**当时的快照**——
+> "9 个入库 / bank 9 / 失败库 1738" 等数字**早已被后续推进覆盖** ✓。现状请看 `docs/loop_todo.md §0`
+> （2026-09-23 复核：全A **76** 代 · 在库合计 **75**）✓ 本节的**续跑方法**与**目录约定**仍然有效 ✓
 
 **资产清单**
 - 因子：`docs/factor_library.md`（9 个入库因子 + 指标）；L2 流水 `docs/loop_archive.csv`（240 行明细，本地逐代累积）；gen16 前旧快照已归 `history/loop_archive.legacy_pre_gen16.csv`
