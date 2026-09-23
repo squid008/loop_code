@@ -756,12 +756,24 @@ def stop(pool=None, **kw):
             'tail': tail, 'note': note}
 
 
-def start_pool(pool):
+def start_pool(pool, rounds=None):
     """★ 单独**启动/恢复**某池 —— 调度器在 ⇒ 就地恢复；不在 ⇒ **自动重启调度器** ✓
 
     ⚠ 2026-09-16 修 BUG B：原实现"调度器不在就 409 报错" ⇒
       用户"停掉最后一个启用的池"后（调度器随之退出）**再也点不动** ✗
       ⇒ 改为：自动重启调度器（启用集合 = 现有启用 ∪ {该池}）✓
+
+    ★★★★★ 2026-09-23 修用户实测（_"我单池点启动，面板上轮数我填了 50，怎么轮数上限还是 1 呢？"_）：
+      **两处叠加** ✗：
+        ① **前端/接口根本没把面板轮数传下来** —— `PoolBody` 只有 `pool`、`api.ts` 的
+           `mineStartPool(pool)` 也只发 `{pool}` ✗ ⇒ 后端只能"沿用控制文件里的旧 `rounds`"
+           （= 上一次启动留下的值；例如 08:58 那次我用 `--rounds=1` 重启过 ⇒ **面板填 50 也没用** ✗✗）
+        ② 更隐蔽：**调度器已在跑**时，本函数只写 `enabled/stopped`、**从来不写 `rounds`** ✗
+           —— 而 `start()`（一键启动）那条路是写的 ✓ ⇒ **同一件事两条路行为不一致** ✗
+      ⇒ 现在：`rounds` 显式入参（`None` ⇒ 沿用 ctl，**保持旧行为** ✓），**两个分支都写** ✓
+      ⚠ 配套：调度器要**每轮热读 `rounds`** 才有意义（原来 `for rnd in range(1, rounds+1)`
+        在启动时就把上限**拍死** ✗ ⇒ 写进 ctl 也不会生效 ✗）—— 见 `tools/parallel_runner.py`
+        与 `tools/run_tracks.py`（轮转）里"每轮热读"那两处 ✓
     """
     if pool not in core.POOL_KEYS:
         raise MineError('未知池名: %s' % pool)
@@ -770,14 +782,19 @@ def start_pool(pool):
     #     ⚠ **绝不碰其它池的 `stopped`**（否则"启动 500"会把刚停的 all/1000 又拉回来 ✗）
     st = [p for p in (c.get('stopped') or []) if p != pool]
     en = sorted(set(list(c.get('enabled') or core.POOL_KEYS) + [pool]))
+    rl = int(rounds if rounds is not None else (c.get('rounds') or DEFAULT_ROUNDS))
+    if not (ROUNDS_MIN <= rl <= ROUNDS_MAX):
+        raise MineError('轮数必须在 %d~%d 之间（收到 %s）' % (ROUNDS_MIN, ROUNDS_MAX, rounds))
     if scheduler():
-        _write_ctl(stopped=st, enabled=en, stopAll=False)
+        _write_ctl(stopped=st, enabled=en, stopAll=False, rounds=rl)
         return {'ok': True, 'pool': pool, 'enabled': en, 'stopped': st, 'restarted': False,
+                'rounds': rl,                       # ★ 面板要回读"实际生效的上限" ✓
                 # ★ 2026-09-16：并行模式下**运行期动态加入** ⇒ 提示要分模式（别让人以为要等下一轮 ✗）
-                'note': ('已把池 %s 加入%s（%s）；其它池的停止状态保持不变'
+                'note': ('已把池 %s 加入%s（%s）；轮数上限已设为 %d（下一轮起生效）；'
+                         '其它池的停止状态保持不变'
                          % (pool, '并行' if (c.get('execMode') == 'parallel') else '轮转',
                             '马上会起一个引擎，不用等下一轮' if (c.get('execMode') == 'parallel')
-                            else '下一轮就轮到它')),
+                            else '下一轮就轮到它', rl)),
                 'merged': True}
     # ★ 调度器不在 ⇒ 自动重启。⚠ **必须 `reset_stopped=False`** ——
     #   否则 `start()` 默认会 `stopped=[]`，把用户的剔除**全清掉** ✗（用户实测的 BUG）
@@ -785,13 +802,14 @@ def start_pool(pool):
     #   调度器不在时**只启动这一个池**（`enabled = [pool]`）—— 原实现拿"控制文件里遗留的 enabled
     #   集合"去重启 ⇒ 点一个池会把上次那一堆**全拉起来** ✗（与"挨个点"的预期相反）
     #   想全部参与 ⇒ 用「一键启动全部」（它走 `start(reset_stopped=True)`）✓
-    rounds = int(c.get('rounds') or DEFAULT_ROUNDS)
+    rounds = rl
     en = [pool]
     r = start(en, rounds, reset_stopped=False)
-    _write_ctl(stopped=st, enabled=en)      # ★ 重启后把“只移除该池”的 stopped 写回 ✓
+    _write_ctl(stopped=st, enabled=en, rounds=rounds)   # ★ 重启后把"只移除该池"的 stopped 写回 ✓
     return {'ok': True, 'pool': pool, 'enabled': en, 'stopped': st, 'restarted': True,
+            'rounds': rounds,
             'started': r.get('started'), 'note':
-            ('调度器原本不在运行，已自动重启（轮数沿用 %d）：启用池=%s；'
+            ('调度器原本不在运行，已自动重启（轮数 %d）：启用池=%s；'
              '池 %s 已加入轮转，其它池的停止状态保持不变' % (rounds, en, pool))}
 
 

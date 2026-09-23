@@ -188,12 +188,16 @@ def mine_stop(body: StopBody):
 
 class PoolBody(BaseModel):
     pool: str
+    # ★★★★★ 2026-09-23（用户实测："我单池点启动，面板上轮数我填了 50，怎么轮数上限还是 1 呢？"）：
+    #   原来这里**只有 `pool`** ✗ ⇒ 面板填的轮数**根本传不下来** ⇒ 后端只能沿用控制文件里的旧值 ✗
+    #   ⇒ 补上可选的 `rounds`（不传 ⇒ 沿用现有控制文件，**旧行为不变** ✓）
+    rounds: int | None = None           # ★ 与 `StartBody.rounds` 同一语义（1~200）✓
 
 
 @app.post('/api/mine/start_pool', summary='单独恢复某池（从停止集合移除，下一轮即轮到它）')
 def mine_start_pool(body: PoolBody):
     try:
-        return mine.start_pool(body.pool)
+        return mine.start_pool(body.pool, rounds=body.rounds)
     except mine.MineError as e:
         raise HTTPException(e.code, e.msg)
 

@@ -397,6 +397,8 @@ export interface MinePoolResp {
   pool: string
   enabled: string[]
   stopped: string[]
+  /** ★ 2026-09-23：本次**实际生效**的轮数上限（面板回读用 ✓；不传 rounds 时 = 沿用的 ctl 值） */
+  rounds?: number
   /** ★ 调度器在跑 ⇒ 只是"把该池并回启用集"（并行下**马上**会起引擎；轮转下等下一轮） */
   merged?: boolean
   restarted?: boolean
@@ -451,8 +453,11 @@ export const api = {
     post<MineStartResp>('/mine/start', { pools, rounds, ...(opts ?? {}) }),
   mineStop: (pool?: string) =>
     post<MineStopResp>('/mine/stop', pool ? { scope: 'pool', pool } : { scope: 'all' }),
-  mineStartPool: (pool: string) =>
-    post<MinePoolResp>('/mine/start_pool', { pool }),
+  // ★★★★★ 2026-09-23（用户："我单池点启动，面板上轮数我填了 50，怎么轮数上限还是 1 呢？"）：
+  //   原来这里**只发 `{pool}`** ✗ ⇒ 面板填的轮数根本没送出去 ⇒ 后端只能沿用控制文件里的旧值 ✗
+  //   ⇒ 补上 `rounds`（不传 ⇒ 后端沿用现有 ctl，**旧行为不变** ✓）
+  mineStartPool: (pool: string, rounds?: number) =>
+    post<MinePoolResp>('/mine/start_pool', rounds == null ? { pool } : { pool, rounds }),
   mineGlobal: () => post<{ ok: boolean; pid: number; alive: boolean | null; log: string; note: string }>(
     '/mine/global', {}, 60000),
 }

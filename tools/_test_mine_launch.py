@@ -11,11 +11,22 @@
 ⚠ 本测试**不起真进程**（用假 `Popen` 只抓命令行），并**快照/还原** `_control.json`（逐字节校验）
   —— 按项目铁律："凡临时改写文件再还原的工具，必须还原后校验" ✓
   ★ 每个小节**先把 ctl 摆成确定状态**再断言（否则"沿用上次设置"的语义会让用例互相污染✗ —— 实测踩过）
+
+★★★★★ 2026-09-23 改：**不再因"真实挖掘在跑"而整体跳过** ✗✗
+  原来：`_real_mining()` 检测到调度器/引擎 ⇒ `return 0`（**静默跳过**）——
+  设计初衷是对的（本测试要改写 `_control.json`，与调度器每代写同一个文件会互相打架 ✗），
+  但**后果很坏**：上一版（v1.21.39 统一槽位口径）发版时线上正在挖 ⇒ 它自跳 ⇒ 它那一节
+  **钉死的旧常数**（3.0 GB/引擎 / 可用 5 GB 应拒绝）早已与真实行为不符（应为 4/3/2/1）
+  却以"全绿"过关 ✗✗ —— **守门静默失效比没有守门更危险**。
+  ⇒ 现在改成**与真实控制文件彻底隔离**：把 `mine.CTL_FILE` / `mine.CTL_LOCK` 指到**临时副本**
+    ⇒ 它再也碰不到真实 ctl ⇒ **挖掘在跑也照跑**（不再跳过 ✓），且"还原后逐字节一致"的校验
+    仍然成立（只是校验的是临时文件 ✓）。
 """
 import hashlib
 import io
 import json
 import os
+import shutil
 import sys
 import tempfile
 import types
@@ -80,13 +91,20 @@ def _set_ctl(d):
 
 
 def main():
-    # ★★★ 2026-09-17：**有人在挖 ⇒ 本测试必挂（且不是它自己的错）** —— 全量回归被它误报过两次 ✗✗
-    #   真因见 `_real_mining()` 的说明（两边抢同一个 `_control.json`）⇒ 与 `_test_parallel_runner`
-    #   同款做法：**检测到就跳过**并说清原因（rc=0，不误报 ✓）
+    # ★★★ 2026-09-17：**有人在挖 ⇒ 两边抢同一个 `_control.json` ⇒ 本测试会误报** ✗（回归被它误报过两次）
+    # ★★★★★ 2026-09-23：**不再跳过** —— 改成把控制文件**指到临时副本**（见文件头说明）✓
+    #   于是"挖掘在跑"只影响"真实 ctl 会变"，而本测试压根不碰它 ✓
     if _real_mining():
-        print('  [SKIP] 检测到**真实挖掘在跑**（调度器或引擎）—— 本测试会改写 `_control.json`，')
-        print('         与调度器每代的写交错就会误报。想跑它就单独重跑（或先全部停止）✓')
-        return 0
+        print('  [note] 检测到**真实挖掘在跑** —— 本测试已与真实控制文件隔离（用临时副本），照跑 ✓')
+    _tmpd = tempfile.mkdtemp(prefix='_mine_launch_ctl_')
+    _real_ctl, _real_lock = mine.CTL_FILE, mine.CTL_LOCK
+    if os.path.isfile(_real_ctl):
+        try:
+            shutil.copy2(_real_ctl, os.path.join(_tmpd, '_control.json'))
+        except Exception:
+            pass
+    mine.CTL_FILE = os.path.join(_tmpd, '_control.json')
+    mine.CTL_LOCK = mine.CTL_FILE + '.lock'
     ctl_p = mine.CTL_FILE
     before = _sha(ctl_p)
     raw_before = open(ctl_p, 'rb').read() if os.path.isfile(ctl_p) else None
@@ -264,6 +282,57 @@ def main():
                 chk('note 里明确说了"自动关掉面板共享"', '自动关掉' in (r.get('note') or ''))
             except mine.MineError as e:
                 chk('缓存缺失时应降级而不是报错', False, str(e.msg)[:50])
+
+        print()
+        print('【9】★★★★★ 「启动本池」必须**带上并生效**面板轮数')
+        print('     （2026-09-23 用户实测："我单池点启动，面板上轮数我填了 50，怎么轮数上限还是 1 呢？"）')
+        print('=' * 96)
+        # ★ 真因两处：① 前端/接口不传 rounds ② 调度器把上限启动时拍死（写 ctl 也不生效 ✗）
+        #   本节只测**后端这一半**（接线那一半在 `_test_frontend_wiring.py`【9】/ hot-read 在代码注释 ✓）
+        mine.scheduler = lambda: []
+        mine.avail_gb = lambda: 20.0
+        # ① 调度器不在 ⇒ 自动重启时，命令行必须带面板轮数（原来只会沿用 ctl 里的旧值 ✗）
+        _set_ctl({'running': False, 'enabled': ['300'], 'stopped': [], 'rounds': 1})
+        r = mine.start_pool('500', rounds=7)
+        a = FakeProc.last
+        chk('★ 重启命令行含 `--rounds=7`（面板填的 7，**不是** ctl 里的 1 ✓）',
+            '--rounds=7' in a, str(a[2:]))
+        chk('★ 返回体回读 `rounds=7`（面板据此显示"实际生效的上限" ✓）', r.get('rounds') == 7, str(r))
+        chk('★ 控制文件 `rounds` 也被写成 7（看板状态区读的就是它 ✓）',
+            mine.ctl().get('rounds') == 7, str(mine.ctl().get('rounds')))
+        _c = mine.ctl()
+        chk('★ 重启时**只启用该池**、且不碰其它池的剔除配置',
+            _c.get('enabled') == ['500'] and _c.get('stopped') == [], str(_c))
+
+        # ② 调度器**已在跑** ⇒ 就地更新时也必须写 `rounds`（原来这条分支**从来不写** ✗）
+        _set_ctl({'running': True, 'enabled': ['300'], 'stopped': [], 'rounds': 1,
+                  'execMode': 'parallel'})
+        _real_sched = mine.scheduler
+        mine.scheduler = lambda: [{'pid': 1, 'cmd': 'python tools\\run_tracks.py --pools=300',
+                                   'pools': None}]
+        r2 = mine.start_pool('300', rounds=50)
+        chk('★★ 已在跑 ⇒ `rounds` 被就地更新为 50（原来这条分支**完全不写** ✗）',
+            mine.ctl().get('rounds') == 50, str(mine.ctl().get('rounds')))
+        chk('★★ 返回体 `merged=True`、`restarted=False`、`rounds=50`（语义不变 + 回读新上限 ✓）',
+            r2.get('merged') is True and r2.get('restarted') is False and r2.get('rounds') == 50,
+            str(r2))
+        chk('已在跑时**不动 `enabled` 的其它池**（只并回该池 ✓）',
+            mine.ctl().get('enabled') == ['300'], str(mine.ctl().get('enabled')))
+
+        # ③ 不传 rounds ⇒ **沿用 ctl**（老前端 / CLI 打接口时的兼容行为 ✓）
+        _set_ctl({'running': True, 'enabled': ['300'], 'stopped': [], 'rounds': 12,
+                  'execMode': 'parallel'})
+        r3 = mine.start_pool('300')
+        chk('不传 `rounds` ⇒ 沿用 ctl 的 12（**旧行为不变** ✓；api.ts 也是"传才发"✓）',
+            mine.ctl().get('rounds') == 12 and r3.get('rounds') == 12, str(r3.get('rounds')))
+        # ④ 越界拒绝（绝不静默钳位 —— 免得"我填了 0 结果它跑 1 轮"✗）
+        for bad in (0, -3, 999):
+            try:
+                mine.start_pool('300', rounds=bad)
+                chk('越界轮数 %s 应被拒绝' % bad, False, '居然通过 ✗')
+            except mine.MineError as e:
+                chk('越界轮数 %s ⇒ 拒绝（%s）' % (bad, str(e.msg)[:30]), e.code == 400)
+        mine.scheduler = _real_sched
     finally:
         mine.subprocess, mine.time = old_sub, old_time
         mine.scheduler, mine.avail_gb = old_sched, old_avail
@@ -275,9 +344,12 @@ def main():
         after = _sha(ctl_p)
         ok = (after == before)
         print()
-        print('还原 _control.json: %s' % ('✓ 逐字节一致' if ok else '✗ 不一致 (%s -> %s)' % (before, after)))
+        print('还原临时 ctl: %s' % ('✓ 逐字节一致' if ok else '✗ 不一致 (%s -> %s)' % (before, after)))
         if not ok:
-            FAIL.append('_control.json 还原后不一致')
+            FAIL.append('临时 _control.json 还原后不一致')
+        # ★ 2026-09-23：把 `mine.CTL_FILE/CTL_LOCK` 还回真实值 + 清掉临时目录（真实 ctl **从未被本测试碰过** ✓）
+        mine.CTL_FILE, mine.CTL_LOCK = _real_ctl, _real_lock
+        shutil.rmtree(_tmpd, ignore_errors=True)
 
     print()
     if FAIL:

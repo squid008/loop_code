@@ -444,8 +444,23 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
     running = []
     last_brief = 0.0
     try:
-        for rnd in range(1, rounds + 1):
+        # ★★★★★ 2026-09-23（用户实测："我单池点启动，面板上轮数我填了 50，怎么轮数上限还是 1 呢？"）：
+        #   **轮数上限必须每轮热读** —— 原来写的是 `for rnd in range(1, rounds + 1)` ✗
+        #   ⇒ 上限在**启动那一刻就被拍死** ⇒ 之后谁往控制文件写 `rounds`（面板改轮数 /
+        #     「启动本池」带轮数 / `mine.start()` 的"已在跑 ⇒ 就地更新"）**全都毫无作用** ✗✗
+        #     而接口与前端却都声称"已更新轮数" ⇒ 典型的**静默丢弃**（本项目最忌 ✗）
+        #   ⇒ 改成无限循环 + **每轮从 ctl 读当前上限** ✓ —— 与 `enabled/stopped` 同一套"每轮重读"语义 ✓
+        #   ⚠ 缺省回落：ctl 里没有 / 被清成 0 ⇒ 用启动参数 `rounds`（旧行为不丢 ✓）
+        rnd = 0
+        while True:
+            rnd += 1
             ctl = RT.read_ctl()
+            _r_now = int(ctl.get('rounds') or rounds or 1)        # ★ 热读轮数上限
+            if _r_now < 1:
+                _r_now = 1
+            if rnd > _r_now:
+                RT.log('[CTL] ★ 轮数上限 %d 已跑满 ⇒ 结束轮转（随后自动收尾）' % _r_now)
+                break
             if ctl.get('stopAll'):
                 RT.log('[CTL] ★ 收到「全部停止」⇒ 结束轮转（随后自动收尾）')
                 stopped_by_user = True
@@ -458,7 +473,7 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
             RT.log('')
             RT.log('#' * 76)
             RT.log('## 第 {} / {} 轮   启用池={}   本轮停={}   并行上限={}{}'.format(
-                rnd, rounds, sorted(en), sorted(st) or '无',
+                rnd, _r_now, sorted(en), sorted(st) or '无',
                 _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine, panel_cache),
                 '(自动)' if auto_parallel else ''))
             RT.log('#' * 76)
@@ -669,7 +684,8 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
             # ---- 一轮结束 ⇒ 自动收尾（**必须等本轮全部跑完**：跨池审查要求"无人在写 docs/"）----
             #   ⚠ 走到这里保证"没有在跑的、也没有待启动的"（上面 `break` 的条件）⇒ 不必再判 queue ✓
             if ran_round and not no_global:
-                RT.do_global_tail('第 {} / {} 轮结束（并行模式）'.format(rnd, rounds))
+                # ★ 2026-09-23：报"当前热读到的上限"（`_r_now`），不再报启动时那个死值 ✗
+                RT.do_global_tail('第 {} / {} 轮结束（并行模式）'.format(rnd, _r_now))
                 dirty = False
             if stopped_by_user:
                 break

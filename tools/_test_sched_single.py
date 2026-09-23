@@ -14,6 +14,10 @@
         · 有 `--force_single=1` 逃生口 ✓
   【2】功能：互斥量语义 —— 抢两次 ⇒ 第二次必失败（同进程也成立 ✓，内核语义）；
         释放后可再抢 ✓
+        ★★ 这三小步用**本测试私有的互斥量名**（`…_selftest_<pid>`）—— 因为**真实挖掘调度器
+        可能正在跑**，它持有的是**正式名字**那把锁 ✗ 共用会让"抢 ⇒ 成功"假失败（实测踩过 ✓）
+  【3·注】"控制文件未被动"那条断言只在**本机没有真调度器**时才判（判据 = 能否抢到正式名字那把锁 ✓）；
+        有人在跑时它每代都在写 ctl ⇒ 该断言不适用（打印 note 跳过，**不算失败** ✓）
   【3】端到端：**本进程持有锁**时，真跑 `run_tracks.py --pools=300 --rounds=1 --dry`
         ⇒ 必须以 **rc=3** 退出、且**不碰** `_control.json` ✓（用 --dry ⇒ 万一闸失效也只打印、
         绝不真起引擎 ✓ 安全的负向测试 ✓）
@@ -78,11 +82,17 @@ except Exception as e:                                                          
     FAIL.append('导入 run_tracks 失败：%r' % (e,))
 
 if _imp:
+    # ★★★★★ 2026-09-23（自己踩的坑）：互斥量语义那三小步必须用**本测试私有的名字** ✗
+    #   原因：**真实挖掘调度器可能正在跑**（它就持有那个正式名字 ✓）⇒ 若共用同一个名字：
+    #     · 第一步"抢 ⇒ 成功"会**假失败**（人家替你持着 ✗）
+    #     · 第三步"释放后再抢"也会**假失败**（同理 ✗）
+    #   —— 而本测试**没有任何理由**去碰真实调度器那把锁 ⇒ 私有名字更干净、也照样验证内核语义 ✓
+    _TNAME = 'Local\\loop_code_sched_selftest_%d' % os.getpid()
     if RTM._MUTEX_HANDLE is not None:              # 保险：先把自己那份放掉
         RTM._MUTEX_HANDLE = None
-    ok1, why1 = RTM.acquire_single_instance()
+    ok1, why1 = RTM.acquire_single_instance(_TNAME)
     chk('第一次抢 ⇒ 成功（why=%s）' % why1, ok1 is True, '得到 %r/%r' % (ok1, why1))
-    ok2, why2 = RTM.acquire_single_instance()
+    ok2, why2 = RTM.acquire_single_instance(_TNAME)
     chk('★ 第二次抢（同名，同进程也算"已存在"）⇒ **必须失败**（why=exists）',
         ok2 is False and why2 == 'exists', '得到 %r/%r' % (ok2, why2))
     # 放掉我们自己那份 ⇒ 再抢必须成功（说明"进程退出即解锁"这条语义成立 ✓）
@@ -94,19 +104,41 @@ if _imp:
             ctypes.WinDLL('kernel32').CloseHandle(_h)
         except Exception:
             pass
-    ok3, why3 = RTM.acquire_single_instance()
+    ok3, why3 = RTM.acquire_single_instance(_TNAME)
     chk('★ 释放后（=进程退出语义）⇒ 再抢成功（无脏锁 ✓）',
         ok3 is True, '得到 %r/%r' % (ok3, why3))
+    if RTM._MUTEX_HANDLE is not None:               # 用完就放（别把私名锁带出本节 ✓）
+        try:
+            import ctypes
+            ctypes.WinDLL('kernel32').CloseHandle(RTM._MUTEX_HANDLE)
+        except Exception:
+            pass
+        RTM._MUTEX_HANDLE = None
 
     print()
-    print('[3] 端到端：本进程持锁 ⇒ 真跑一个调度器必须 rc=3、且不碰控制文件')
+    print('[3] 端到端：本进程持锁 ⇒ 真跑一个调度器必须 rc=3')
     CTL = os.path.join(ROOT, 'ai_test', '_tracks', '_control.json')
+    # ★ "控制文件一个字节都没动"这条断言只在本机**没有真调度器**时才可判（否则人家每代都在写它 ✗）
+    #   ⇒ 判据 = 能不能抢到**正式名字**那把锁：抢到 ⇒ 无调度器（测完立刻放掉 ✓）；抢不到 ⇒ 有人在跑 ✓
+    _okr, _whyr = RTM.acquire_single_instance()
+    _solo = bool(_okr)
+    if _okr and RTM._MUTEX_HANDLE is not None:
+        try:
+            import ctypes
+            ctypes.WinDLL('kernel32').CloseHandle(RTM._MUTEX_HANDLE)
+        except Exception:
+            pass
+        RTM._MUTEX_HANDLE = None
+    if not _solo:
+        print('  [note] 检测到**真实调度器在跑**（正式互斥量已被占用）⇒ 跳过"控制文件未被动"那条断言 ✓')
     _before = None
     if os.path.exists(CTL):
         try:
             _before = json.load(io.open(CTL, encoding='utf-8'))
         except Exception:
             _before = None
+    # ★ 自己持锁（受测的其实是"闸会拦住"，用正式名字 ✓）⇒ 真跑一个调度器（`--dry` ⇒ 绝不起引擎 ✓）
+    RTM.acquire_single_instance()
     _env = dict(os.environ)
     _env['PYTHONIOENCODING'] = 'utf-8'
     r = subprocess.run([sys.executable, '-u', 'tools/run_tracks.py',
@@ -125,9 +157,12 @@ if _imp:
             _after = json.load(io.open(CTL, encoding='utf-8'))
         except Exception:
             _after = None
-    chk('★★ 控制文件**一个字节都没动**（闸在 write_ctl 之前 ✓）',
-        _before == _after,
-        'before=%s after=%s' % (str(_before)[:120], str(_after)[:120]))
+    if _solo:
+        chk('★★ 控制文件**一个字节都没动**（闸在 write_ctl 之前 ✓）',
+            _before == _after,
+            'before=%s after=%s' % (str(_before)[:120], str(_after)[:120]))
+    else:
+        print('      （控制文件此刻由真实调度器在写 ⇒ 该断言本次不适用 ✓）')
     # 把锁还给"后面还要用它的进程"（本测试进程马上就退出了 ✓ 显式放掉更干净）
     _h2 = RTM._MUTEX_HANDLE
     RTM._MUTEX_HANDLE = None

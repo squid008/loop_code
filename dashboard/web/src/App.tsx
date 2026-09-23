@@ -188,24 +188,29 @@ export default function App() {
   }, [loadAll])
 
   // 单独启动 / 恢复某个池（调度器不在时会自动重启）
+  // ★★★★★ 2026-09-23（用户："我单池点启动，面板上轮数我填了 50，怎么轮数上限还是 1 呢？"）：
+  //   原来**不传轮数** ✗ ⇒ 后端只能沿用控制文件里的旧 `rounds`（上次启动留下的值）✗
+  //   ⇒ 现在把面板上的 `rounds` 一起发过去 ✓（后端会写进控制文件；调度器**每轮热读** ⇒ 下一轮生效 ✓）
   const doStartPool = useCallback(async (pool: string) => {
     setMineBusy(true)
     try {
-      const r = await api.mineStartPool(pool)
+      const r = await api.mineStartPool(pool, rounds)
       // ★ 2026-09-16（用户："停止一个池然后重新启动，怎么没马上开挖？"）：
       //   并行模式下**运行期动态加入**（不用等下一轮）⇒ 提示要分模式说清楚 ✓
       const _par = mine?.execMode === 'parallel'
+      // ★ 2026-09-23：把**实际生效的轮数**也说出来（面板回读 `r.rounds`；不传时 = 沿用的 ctl 值 ✓）
+      const _rl = r.rounds ?? rounds
       say('ok', r.restarted
-        ? `调度器之前没在运行，已自动重启。池 ${pool} 已加入${_par ? '并行' : '轮转'}（当前启用：${r.enabled.join(',')}）`
+        ? `调度器之前没在运行，已自动重启（轮数上限 ${_rl}）。池 ${pool} 已加入${_par ? '并行' : '轮转'}（当前启用：${r.enabled.join(',')}）`
         : (r.merged
-          ? `池 ${pool} 已重新加入${_par ? '并行' : '轮转'}：${_par ? '马上就会起一个引擎（不用等下一轮）' : '下一轮轮到它'}`
-          : `池 ${pool} 已重新加入${_par ? '并行' : '轮转'}`))
+          ? `池 ${pool} 已重新加入${_par ? '并行' : '轮转'}（轮数上限 ${_rl}，下一轮起生效）：${_par ? '马上就会起一个引擎（不用等下一轮）' : '下一轮轮到它'}`
+          : `池 ${pool} 已重新加入${_par ? '并行' : '轮转'}（轮数上限 ${_rl}）`))
       await loadAll(true)
     } catch (e) {
       say('err', `启动本池失败：${e instanceof Error ? e.message : String(e)}`)
       await loadAll(true)
     } finally { setMineBusy(false) }
-  }, [loadAll])
+  }, [loadAll, rounds, mine?.execMode])
 
   useEffect(() => { loadAll() }, [loadAll])
   useEffect(() => {

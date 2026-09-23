@@ -332,6 +332,36 @@ chk('启动参数回归测试在册（假 Popen + 快照还原 ctl）',
     and '_control.json' in open(r'D:\loop_code\tools\_test_mine_launch.py', encoding='utf-8').read())
 
 print()
+print('【9】★★★★★ 「轮数上限」的接线（2026-09-23 用户实测："我单池点启动，面板上轮数我填了 50，'
+      '怎么轮数上限还是 1 呢？"）')
+# 真因（两处叠加 ✗）：① 前端/接口根本不传 rounds ② 调度器把上限**启动时拍死**（写 ctl 也不生效 ✗）
+#   ⇒ 本节的断言正好各钉一处，防止再回退 ✓
+mainpy = io.open(r'D:\loop_code\dashboard\api\app\main.py', encoding='utf-8').read()
+rtpy = io.open(r'D:\loop_code\tools\run_tracks.py', encoding='utf-8').read()
+chk('api.ts：`mineStartPool` 接受并**真的发送** `rounds`（原来只发 `{pool}` ✗）',
+    re.search(r'mineStartPool: \(pool: string, rounds\?: number\)', api) is not None
+    and re.search(r'rounds == null \? \{ pool \} : \{ pool, rounds \}', api) is not None)
+chk('App.tsx：`doStartPool` 调用时**带上面板轮数**',
+    re.search(r'api\.mineStartPool\(pool, rounds\)', src) is not None)
+chk('App.tsx：`rounds` 进了 `useCallback` 依赖（否则面板改了不生效 ✗）',
+    re.search(r'\}, \[loadAll, rounds', src) is not None)
+chk('main.py：`PoolBody` 有 `rounds`，且路由把它传给 `start_pool`',
+    re.search(r'rounds: int \| None = None', mainpy) is not None
+    and 'mine.start_pool(body.pool, rounds=body.rounds)' in mainpy)
+chk('mine.py：`start_pool(pool, rounds=None)` 收轮数，且**两个分支都写** ctl',
+    re.search(r'def start_pool\(pool, rounds=None\)', minepy) is not None
+    and 'rounds=rl)' in minepy and 'enabled=en, rounds=rounds)' in minepy)
+chk('★★ parallel_runner：轮数上限**每轮热读**（`_r_now = int(ctl.get(\'rounds\')` ✓）',
+    re.search(r"_r_now = int\(ctl\.get\('rounds'\)", prpy) is not None)
+chk('★★ parallel_runner：**没有**启动时拍死的 `for rnd in range(1, rounds + 1)` ✗',
+    # ⚠ 必须按**行首**匹配：注释里就引用了这句老写法（解释它为何被换掉）⇒ 简单 in 判断会被自己的注释绊倒 ✗
+    re.search(r'^\s*for rnd in range\(1, rounds \+ 1\):', prpy, re.M) is None)
+chk('★★ run_tracks（轮转分支）：同样每轮热读 ✓',
+    re.search(r"_r_now = int\(ctl\.get\('rounds'\)", rtpy) is not None)
+chk('★★ run_tracks（轮转分支）：同样没有拍死写法 ✗',
+    re.search(r'^\s*for rnd in range\(1, rounds \+ 1\):', rtpy, re.M) is None)
+
+print()
 if FAIL:
     print('★★ 接线检查失败 %d 项：' % len(FAIL))
     for f in FAIL:

@@ -878,8 +878,19 @@ def main():
               enabled=[p for p, _, _ in plan] or pools, curPool=None, curGen=None)
     dirty = False                # ★ 有没有“未被收尾覆盖过的新进展”
     stopped_by_user = False
-    for rnd in range(1, rounds + 1):
+    # ★★★★★ 2026-09-23：**轮数上限每轮热读**（与并行模式同款，见 `parallel_runner.run` 的说明 ✓）
+    #   原来 `for rnd in range(1, rounds + 1)` 把上限**启动那一刻就拍死** ✗ ⇒ 之后谁写控制文件里的
+    #   `rounds`（面板改轮数 / 「启动本池」带轮数）都不生效 ✗✗ 而接口却声称"已更新" ⇒ 静默丢弃 ✗
+    rnd = 0
+    while True:
+        rnd += 1
         ctl = read_ctl()
+        _r_now = int(ctl.get('rounds') or rounds or 1)        # ★ 热读轮数上限（缺省回落启动参数 ✓）
+        if _r_now < 1:
+            _r_now = 1
+        if rnd > _r_now:
+            log('[CTL] ★ 轮数上限 %d 已跑满 ⇒ 结束轮转（随后自动收尾）' % _r_now)
+            break
         if ctl.get('stopAll'):
             log('[CTL] ★ 收到「全部停止」⇒ 结束轮转（随后自动收尾）')
             stopped_by_user = True
@@ -891,7 +902,7 @@ def main():
             break
         log('')
         log('#' * 76)
-        log('## 第 {} / {} 轮   启用池={}   本轮停={}'.format(rnd, rounds, sorted(en), sorted(st) or '无'))
+        log('## 第 {} / {} 轮   启用池={}   本轮停={}'.format(rnd, _r_now, sorted(en), sorted(st) or '无'))
         log('#' * 76)
         ran_round = False
         for p, g0, done in plan:
