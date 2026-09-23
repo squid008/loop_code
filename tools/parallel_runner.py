@@ -306,6 +306,42 @@ def _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine):
     return max(1, min(runnable, cap))
 
 
+def fair_order(cand, gens, last_start, min_gens_per_round, order=()):
+    """★★★ 2026-09-23 新增：候选池的**公平排队**（纯函数 ⇒ 可单测 ✓，见 `tools/_test_sched_fair.py`）。
+
+    为什么加（**真 bug**，用户 2026-09-23 实测发现 ✓）：
+        用户："1000 池跑了 6 代，500 才跑 1 代？出问题了吧"
+      真因不在引擎、不在内存，而在**候选顺序** ✗：
+        · 候选原来来自 `en`（**`set`** ⇒ 迭代顺序**任意**，且在同一进程里**固定不变** ✗）
+          —— 上一行注释写着"顺序按 `enabled` 列表，稳定"✗，**代码与注释不符** ✗✗
+        · 而启动**只取 `cand[0]`** ⇒ 每当一个槽位空出来，**排在前面的那个池每次都抢到** ✗✗
+        · 更要命：它**从不看 `gens`** —— 谁欠本轮配额、谁等得久，一律不看 ✗
+      实测后果（3 池 + 并行上限 2 ⇒ 必然有池排队）：
+        09-22 22:47 → 09-23 08:18（**9.5 小时**）：500 只跑 1 代（gen94 ✓），
+        而 300 连跑 **13 代**（gen170→182 ✗✗）；日志实证"**槽位刚空就被抢**"：
+        `00:25:07 [END] pool=500` ⇒ `00:25:07 [START] pool=300` ✗
+      危害不止"不公平"：**收轮判据 = 每个启用池都完成 ≥ `min_gens_per_round` 代**
+        ⇒ 被饿的池永远攒不够 ⇒ `cand` 永不为空 ⇒ **轮末全局收尾**（跨池审查 / 精选池 /
+        登记表重导）**一直不执行** ✗✗（正是 v1.21.18 治过的症状，换了个入口复发 ✗）
+
+    排序键（先欠账 → 再 FIFO → 最后"没跑过的先上"）：
+        ① `gens[p] >= min_gens_per_round` —— **False（还欠本轮配额）排最前** ✓
+           为什么：欠账的池**卡着收轮** ✗；已跑够的池只是"顺带多挖" ✓
+        ② `last_start[p]`（本轮**上次启动时刻**；没启动过 = `0.0` ⇒ 最前）—— **谁等得久谁先** ✓
+           为什么：这是"**刚跑完就立刻又抢槽位**"的解药 ✓（它的 `last_start` 最新 ⇒ 排最后 ✓）
+        ③ `gens[p]` · ④ `order` 里的位置 —— 只为**确定性**（同分时**不看运气** ✓）
+
+    ⚠ **不改变既有语义**（只排序：候选集合一个不增不减 ✓）：
+        · "快池照旧一直领活" ✓ —— 慢池**在跑**时它压根不在候选里，立刻领 ✓
+        · 只有"**欠账池正在排队等槽位**"时，快池才让位 ✓（这才是用户要的公平 ✓）
+    """
+    idx = {p: i for i, p in enumerate(order)}
+    return sorted(cand, key=lambda p: (gens.get(p, 0) >= min_gens_per_round,
+                                       last_start.get(p, 0.0),
+                                       gens.get(p, 0),
+                                       idx.get(p, 99)))
+
+
 def _running_brief(running, now):
     return ' | '.join('%s gen%d(%.0fmin)' % (t['pool'], t['gen'], (now - t['t0']) / 60.0)
                       for t in running) or '无'
@@ -394,6 +430,7 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
             #       ⇒ 既不会自动顶上来，又让你手动加的那个立刻开挖 ✓✓
             launched = set()                 # 本轮已启动
             gens = {}                        # ★ 2026-09-19（第 1 步）：池 -> 本轮已完成代数（到 K 就收手 ✓）
+            last_start = {}                  # ★ 2026-09-23：池 -> 本轮**上次启动时刻**（公平排队用 ✓，见 fair_order）
             retries = {}                     # ★ 池 -> 本轮"崩溃重试"已用次数（见 `MAX_CRASH_RETRY`）
             deferred = {}                    # 池 -> 顺延那一刻的 stopped 快照（用来认"你重新启用"）
             ran_round = False
@@ -404,7 +441,11 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                     RT.log('[CTL] ★ 收到「全部停止」⇒ 不再补新任务，等在跑的 {} 个自然结束'.format(
                         len(running)))
                 # ★ 启用集/剔除集**每轮迭代重读**（用户随时可能加/停池）—— 放在最前面，下面都要用
-                en = set(ctl.get('enabled') or [p for p, _, _ in plan])
+                # ★★★ 2026-09-23：同时留一份**有序**名单 `_en_list`（= 控制文件 `enabled` 的书写顺序 ✓）
+                #   —— 原来只有 `en`（**set** ✗）却拿它当候选顺序 ⇒ "谁抢到槽位靠运气" ✗✗
+                #   （真 bug；判断与排序见 `fair_order` ✓）
+                _en_list = list(ctl.get('enabled') or [p for p, _, _ in plan])
+                en = set(_en_list)
                 st = set(ctl.get('stopped') or [])
                 # ★★★ 有效并行上限：`--auto_parallel` 时**每次都按"当前启用池数 + 可用内存"重算**
                 #   2026-09-16 用户实测：「点一个启动、再点一个池子，怎么是加入轮转而不是并行？」
@@ -516,13 +557,19 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                 #   ⇒ 真因：`plan` 是**启动时 `--pools=300` 拍死的** ⇒ 后来加的池**既不在候选、也不在队列**
                 #     ⇒ **永远不会**在这个调度器里跑（连下一轮都不会）✗✗（我上一版只在"重启路径"测过，
                 #     漏了"已有调度器在跑时加池"，测试盲区）
-                #   ⇒ 现在：候选 = `en - stopped - 本轮已启动`（顺序按 `enabled` 列表，稳定）✓
-                cand = [p for p in en
+                #   ⇒ 现在：候选 = `en - stopped - 本轮已启动`（★ 2026-09-23 起：顺序由 `fair_order` 定 ✓）
+                #     ⚠ 曾经这里写"顺序按 `enabled` 列表，稳定"，而代码遍历的是 **`en`（set）** ✗
+                #       ⇒ 注释与实现不符 ⇒ 排到前面那个池**每次都抢到空槽** ✗✗（真 bug，见 `fair_order` ✓）
+                cand = [p for p in _en_list
                         if p not in launched and p not in st
                         and (p not in deferred
                              or (p in deferred[p] and p not in st))]   # ★ 你放回来的 ⇒ 允许马上上
+                # ★★★★★ 2026-09-23（用户："1000 池跑了 6 代，500 才跑 1 代？出问题了吧"）：
+                #   **欠账优先 + 谁等得久谁先**（治"槽位刚空就被同一个池抢走" ⇒ 被饿的池攒不够代
+                #   ⇒ 收轮永远收不了口 ⇒ 轮末全局收尾不执行 ✗）—— 详见 `fair_order` ✓
+                cand = fair_order(cand, gens, last_start, min_gens_per_round, _en_list)
                 if not running and not cand:
-                    _left = [p for p in en if p not in launched]
+                    _left = [p for p in _en_list if p not in launched]
                     if _left:
                         RT.log('[CTL] 本轮剩余 {} 个池未启动（{}）⇒ 留到下一轮'
                                '（下一轮按你保留的启用集重新组队）'.format(len(_left), ' '.join(_left)))
@@ -550,6 +597,7 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                         continue
                     cand.pop(0)
                     launched.add(p)                      # ★ 真正启动才记"本轮已启动"
+                    last_start[p] = time.time()          # ★ 2026-09-23：公平排队用（FIFO ⇒ 刚跑完的排最后 ✓）
                     gen, done = RT.next_gen(p)           # ★ 每代现取（journal 是唯一事实源）
                     t = _launch(p, gen, n, l2, extra, inject_spec, pools, panel_cache)
                     t['done'] = done

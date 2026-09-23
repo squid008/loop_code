@@ -159,7 +159,12 @@ def main():
     # ★★ 2026-09-16 v1.10.1/v1.12.0（用户："停止一个池然后重新启动，怎么没马上开挖？" +
     #   "点了一个启动、再点一个池子启动，怎么是加入轮转而不是并行？"）
     chk('A11 ★★ 动态候选来自**当前启用集**（不是启动时 `--pools` 快照）',
-        re.search(r'cand = \[p for p in en', pr) is not None and 'p not in launched' in pr,
+        # ★ 2026-09-23：候选改从**有序** `_en_list` 取（修"槽位靠 set 顺序碰运气"的真 bug ✓，
+        #   见 `tools/_test_sched_fair.py`）⇒ 本断言同步加严：既要"候选来自 ctl.enabled"，
+        #   又要"它是一份**列表**（保序）"✓
+        re.search(r'cand = \[p for p in _en_list', pr) is not None
+        and 'p not in launched' in pr
+        and re.search(r"_en_list = list\(ctl\.get\('enabled'\)", pr) is not None,
         '用 `plan` ⇒ 后来加的池**永远不会**跑（连下一轮都不跑）✗ —— 用户实测到的点')
     chk('A12 ★ 顺延池「被重新启用 ⇒ 允许马上上」（既不自顶、又能手动加）',
         'deferred[p]' in pr and 'p in deferred[p] and p not in st' in pr)
