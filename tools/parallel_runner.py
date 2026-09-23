@@ -326,26 +326,52 @@ def slot_cap(free_gb, n_pools, mem_per_engine, panel_cache='use', min_free_gb=MI
     return max(1, min(n, int((float(free_gb) - float(min_free_gb)) // per)))
 
 
-def _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine, panel_cache='use'):
-    """★ **有效并行上限**（2026-09-16 用户实测「加的池只排队、不并行」后新增）。
+def _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine, panel_cache='use',
+             running=0, free_gb=None, free0_gb=None):
+    """★ **有效并行上限** = 这台机器此刻能**同时**跑几个引擎（`auto` 时**每次迭代重算** ✓）。
 
-    `--auto_parallel=1`（看板默认）⇒ **每次迭代重算**：
-        `min(可跑池数, floor((可用内存 - 余量) / 每引擎预算))`，至少 1
-      ⇒ "能开几个开几个、快爆就少开"（用户要的语义）✓ ；池子加进来 ⇒ 上限**自动跟着长** ✓
+    `--auto_parallel=1`（看板默认）⇒ `min(可跑池数, 启动时容量, 此刻总容量, 此刻还塞得下的)`，至少 1
     非 auto ⇒ 直接用 `--max_parallel`（显式指定，一动不动）✓
 
     ⚠ 它只决定"**要不要起新引擎**"；**已经在跑的绝不因上限变小而被杀**（宁慢不炸）✓
 
     ★★★★★ 2026-09-23（"统一口径"）：算法搬进 `slot_cap()` ⇒ **与看板启动那一刻同一个公式** ✓
        并且**补上了面板惩罚**（`per_engine_gb` ⇒ 面板缓存关着时"每引擎"要算上 4.42 GB ✓）。
+
+    ★★★★★ 2026-09-24 修**回填永远发生不了**（用户实测 09-23 20:48：_"我停1000池啦，它还在等啊"_）✗✗
+      **病根：口径张冠李戴** —— `slot_cap(avail_gb(), …)` 算出来的是"**还能再开几个**"
+      （`avail_gb()` 已经扣掉了**在跑的引擎**占的内存 ✓），却被当成"**同时最多几个**"去和
+      `len(running)` 比 ✗ ⇒ `slot_cap = 在跑数 − 1` 时闸门就永远关着 ✗：
+        `20:48:09 [RUN] 在跑 2 个 … 上限 2(自动) | 可用 17.3 GB` ⇒ `2 < 2` 假 ⇒ **50 起不来** ✗
+      （`(17.3 − 3.0)//5.0 = 2` —— 而这 17.3 GB 是**三减掉在跑两个之后**剩的 ✗）
+      ⇒ 历史症状全都对得上：**任一池跑完腾出的槽，回填不上** ⇒ 排队池等到全轮结束才轮到 ✗✗
+
+      **修法**：算"总容量"时把**在跑的 k 个按预算加回可用内存**（`free + k×per` ✓）——
+      语义就变成"如果从零开始，这台机器能同时跑几个"✓；再加**启动那一刻的容量**当**天花板**
+      （`free0_gb`，防"内存被在跑的吃光后总容量虚高"⇒ 悄悄多开 ✗），以及"此刻真的还塞得下
+      几个"（`cap_fit`，与启动循环里那道 `free < per_engine_gb` 同义 ✓）。
+      ⇒ 现在**空出一个槽就会有池顶上** ✓，且**绝不会超过启动那一刻按内存定的槽位** ✓
+        （今天现场：`k=2, free=17.3, free0=24.3, 池=3` ⇒ `min(3, 3, 3, 4) = 3 > 2` ✓ ⇒ 50 上 ✓）
+
+    ⚠ 三个参数都有默认值 ⇒ **旧调用（拿实时内存、没传在跑数）结果一字不变** ✓
+      （守门 `tools/_test_slot_caliber.py` ②①这些仍照旧 ✓；新增回填那节见同文件【5】✓）
     """
     if not auto_parallel:
         return max_parallel
     runnable = len([p for p in en if p not in st])
-    free = avail_gb()
+    per = max(per_engine_gb(mem_per_engine, panel_cache), 0.5)
+    k = max(0, int(running or 0))
+    free = avail_gb() if free_gb is None else free_gb
     if free is None:
         return max(1, min(runnable, max_parallel))
-    return max(1, min(runnable, slot_cap(free, runnable, mem_per_engine, panel_cache)))
+    # ① **总容量**：把"在跑的 k 个"按预算加回去 ⇒ 得到"从零开始能同时跑几个"（回填的关键 ✓）
+    cap_total = slot_cap(float(free) + k * per, runnable, mem_per_engine, panel_cache)
+    # ② **天花板** = 启动那一刻的容量（`free0_gb` 来自 `run()`；没传 ⇒ 退化成①，旧行为 ✓）
+    cap0 = (cap_total if free0_gb is None
+            else slot_cap(free0_gb, runnable, mem_per_engine, panel_cache))
+    # ③ **此刻真的还塞得下几个**（可用内存已接近余量 ⇒ 不许再加；与启动循环那道内存闸同义 ✓）
+    cap_fit = k + int(max(0.0, float(free) - MIN_FREE_GB) // per)
+    return max(1, min(runnable, cap_total, cap0, cap_fit))
 
 
 def fair_order(cand, gens, last_start, min_gens_per_round, order=()):
@@ -460,7 +486,10 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
     if auto_parallel:
         RT.log('   ★ 上限会自动放宽：**你随时点「启动本池」加池，只要有内存就会立刻并行开起来** ✓'
                '（加池不需要重启调度器）')
-    RT.log('   可用内存 {:.1f} GB'.format(avail_gb()))
+    # ★★★★★ 2026-09-24：记下**启动那一刻**的可用内存 —— 它是运行期闸门的**天花板**
+    #   （`_eff_max(free0_gb=…)` ⇒ 不许"因为内存被在跑的吃光后总容量虚高"而悄悄多开 ✗）
+    _free0 = avail_gb()
+    RT.log('   可用内存 {:.1f} GB'.format(_free0))
     if panel_cache == 'off':
         RT.log('   [!] 面板缓存关着：每个引擎会**各建一份 4.42 GB 面板** ⇒ '
                '并行 N 个 = N 份 ⇒ 建议加 --panel_cache=use（先跑 tools/build_panel_cache.py）')
@@ -506,8 +535,9 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
             RT.log('#' * 76)
             RT.log('## 第 {} / {} 轮   启用池={}   本轮停={}   并行上限={}{}'.format(
                 rnd, _r_now, sorted(en), sorted(st) or '无',
-                _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine, panel_cache),
-                '(自动)' if auto_parallel else ''))
+                _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine, panel_cache,
+                         running=len(running), free0_gb=_free0),
+                '(自动·总容量)' if auto_parallel else ''))
             RT.log('#' * 76)
             # ---- ★★ 本轮状态：**动态队列**（不是"轮初拍死的列表"）----
             #   ★ 2026-09-16 二次修订（用户实测："我停止一个池然后重新启动，怎么没马上开挖？"）：
@@ -544,7 +574,12 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                 #   2026-09-16 用户实测：「点一个启动、再点一个池子，怎么是加入轮转而不是并行？」
                 #   ⇒ 真因之二：并行数是**启动那一刻按 `len(pools)` 算死的**（1 个池 ⇒ `--max_parallel=1`）
                 #     ⇒ 后来加的池**永远只能排队**（哪怕内存富余）✗ ⇒ 现在 auto 模式下**动态放宽** ✓
-                eff_max = _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine, panel_cache)
+                #   ★★★★★ 2026-09-24：**必须把"在跑数 + 启动时可用内存"传进去** ✗✗
+                #     —— 否则算出来的是"**还能再开几个**"（`avail_gb()` 已扣掉在跑的 ✗），
+                #        却拿它当"**同时最多几个**"比 ⇒ **回填永远发生不了**（用户实测 09-23 20:48
+                #        "我停1000池啦，它还在等啊" ✓）。详见 `_eff_max` 的文档 ✓
+                eff_max = _eff_max(max_parallel, auto_parallel, en, st, mem_per_engine, panel_cache,
+                                   running=len(running), free0_gb=_free0)
                 if stopped_by_user:
                     for p in en:
                         if p not in launched:
@@ -746,9 +781,13 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                     now = time.time()
                     if now - last_brief > 60:         # 每分钟一条进度（别刷屏）
                         last_brief = now
-                        RT.log('[RUN] 第 {} 轮 | 在跑 {} 个: {} | 待启动 {} | 上限 {}{} | 可用 {:.1f} GB'.format(
-                            rnd, len(running), _running_brief(running, now), len(cand), eff_max,
-                            '(自动)' if auto_parallel else '', avail_gb()))
+                        # ★ 2026-09-24：把"**在排队的是谁**"打出来（原来只有个数 ✗ ⇒ 用户问
+                        #   "50 还在等？"时得自己猜 ✓）；并把 `自动` 写清是"**总容量**"
+                        #   （含在跑的那几个 ✓ —— 免得再被读成"还能开几个" ✗）
+                        RT.log('[RUN] 第 {} 轮 | 在跑 {} 个: {} | 待启动 {} {} | 上限 {}{} | 可用 {:.1f} GB'.format(
+                            rnd, len(running), _running_brief(running, now), len(cand),
+                            ('(' + ' '.join('%s' % x for x in cand) + ')') if cand else '',
+                            eff_max, '(自动·总容量)' if auto_parallel else '', avail_gb()))
                     time.sleep(5)
             # ---- 一轮结束 ⇒ 自动收尾（**必须等本轮全部跑完**：跨池审查要求"无人在写 docs/"）----
             #   ⚠ 走到这里保证"没有在跑的、也没有待启动的"（上面 `break` 的条件）⇒ 不必再判 queue ✓

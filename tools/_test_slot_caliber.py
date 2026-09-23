@@ -11,12 +11,16 @@
         而真实上限是 2 ✗✗
     ⇒ 现在两边都调 `tools/parallel_runner.py` 的 `per_engine_gb` / `slot_cap` ✓
 
-本守门钉四件：
+本守门钉五件：
   【1】静态：单一事实源在位；`mine.py` **不再**有本地口径常数/本地算式 ✗
   【2】功能：★ 核心 —— `_eff_max`（运行期）与 `slot_cap`（启动时同一函数）**答案必须相等** ✓
         ＋ 面板缓存关着时必须把那 4.42 GB 算进去 ✓（运行期原来漏了 ✗）
   【3】接口/前端：`slotCap` / `effMaxParallel` 透传到 DTO，且启动按钮显示**真实值**（不是天花板 ✓）
   【4】文案：口径串不许出现 Markdown `**`（用户可见、会原样显示星号 ✗）
+  【5】★★ 回填：`_eff_max` 必须算「**同时最多几个**」（把在跑的按预算加回可用内存 ✓）——
+        原来算的是「**还能再开几个**」却拿去和 `len(running)` 比 ✗ ⇒ **空出的槽永远回填不上** ✗✗
+        （用户实测 2026-09-23 20:48：_`我停1000池啦，它还在等啊`_ ⇒ 排队中的 50 起不来 ✓）
+        ＋ 天花板 = 启动那一刻的容量（不许因"加回去"而悄悄多开 ✗）＋ 内存真紧时照旧不起 ✓
 """
 import io
 import os
@@ -130,10 +134,54 @@ for _s in re.findall(r'>([^<>{}]*槽位[^<>{}]*)<', APP):
     chk('JSX 文本「%s…」无 `**` ✓' % _s.strip()[:26], '**' not in _s)
 
 print()
+print('[5] ★ 回填：空出一个槽要能**立刻顶上**（2026-09-24 修"排队池永远等不到"✗✗）')
+#   病根：`_eff_max` 拿 `slot_cap(avail_gb(), …)`（= "**还能再开几个**" ✗，因为 `avail_gb()`
+#   已经扣掉了在跑的引擎占的内存）去和 `len(running)`（= **同时在跑几个**）比 ✗ ⇒ 张冠李戴。
+#   用户现场（09-23 20:48）：_`我停1000池啦，它还在等啊`_ ——
+#     启动 24.3 GB / 5 池 ⇒ 上限 4；停掉 all+1000 后：**在跑 2**（300/500）、可用 **17.3 GB**、
+#     排队的还有 **50**（启用剩 3 个）⇒ 旧实现 `slot_cap(17.3, 3, 5.0) = 2` ✗ ⇒ `2 < 2` 假 ⇒ 50 起不来 ✗
+if _ok:
+    _real_avail5 = PRM.avail_gb
+    try:
+        # ★ 让实现**只可能**用入参（`avail_gb()` 返回 4.0 —— 若谁又去读实时内存，答案立刻错 ✗）
+        PRM.avail_gb = (lambda: 4.0)
+        _old_formula = PRM.slot_cap(17.3, 3, 5.0, 'use')
+        _now = PRM._eff_max(4, True, {'300', '500', '50'}, {'all', '1000'}, 5.0, 'use',
+                            running=2, free_gb=17.3, free0_gb=24.3)
+        chk('★ 现场复现：在跑 2 / 可用 17.3 / 启动时 24.3 ⇒ 上限 **3**（> 在跑数 ⇒ 50 能顶上 ✓）',
+            _old_formula == 2 and _now == 3,
+            '旧口径（"还能开几个"✗）算出 %r = 在跑数 ⇒ 永远回填不上；新实现 %r'
+            % (_old_formula, _now))
+        chk('★ 入参优先（`free_gb` 给了就用它，不许偷读实时内存 ✗）',
+            _now == 3, '若读的是 `avail_gb()=4.0` ⇒ 会算成 2 ✗')
+        # 天花板：在跑 4（可用已被吃掉大半）⇒ 仍是启动那一刻的 4，**不许悄悄多开** ✗
+        _cap4 = PRM._eff_max(4, True, {'all', '300', '500', '1000', '50'}, set(), 5.0, 'use',
+                             running=4, free_gb=11.1, free0_gb=24.3)
+        chk('★ 天花板 = 启动那一刻的容量（在跑 4 / 启动时 24.3 ⇒ 仍是 **4**，不多开 ✗）',
+            _cap4 == 4, '得到 %r' % (_cap4,))
+        # 内存真的紧 ⇒ 照旧不起（可用 3.2 GB ≈ 只剩系统余量）
+        _tight = PRM._eff_max(4, True, {'all', '300', '500', '1000', '50'}, set(), 5.0, 'use',
+                              running=4, free_gb=3.2, free0_gb=24.3)
+        chk('★ 内存真的紧 ⇒ 上限 = 在跑数（`4 < 4` 假 ⇒ 不起新引擎 ✓ 宁慢不炸 ✓）',
+            _tight == 4, '得到 %r' % (_tight,))
+        # 旧调用（不传在跑数 / 不传启动时内存）⇒ **结果一字不变** ✓（守门【2】那批仍照旧 ✓）
+        _compat = PRM._eff_max(9, True, {'1000', '300', '500'}, set(), 7.0, 'use',
+                               free_gb=18.6)
+        chk('★ 旧调用（不给 `running` / `free0_gb`）结果不变（18.6/7.0/共享 ⇒ 2 ✓）',
+            _compat == 2 == PRM.slot_cap(18.6, 3, 7.0, 'use'), '得到 %r' % (_compat,))
+    finally:
+        PRM.avail_gb = _real_avail5
+    chk('★ `run()` 真的把"在跑数 + 启动时内存"传给了 `_eff_max`（否则本版白修 ✗）',
+        'running=len(running), free0_gb=_free0' in PR)
+    chk('★ 启动那一刻的可用内存被记下来（`_free0 = avail_gb()` ✓）', '_free0 = avail_gb()' in PR)
+    chk('★ 旧的"张冠李戴"算式已绝迹（`slot_cap(free, runnable, …)` 不再直接喂 `avail_gb()` ✗）',
+        'slot_cap(free, runnable, mem_per_engine, panel_cache)' not in PR)
+
+print()
 if FAIL:
     print('✗ 槽位口径守门失败 %d 项：' % len(FAIL))
     for f in FAIL:
         print('   [FAIL] %s' % f)
     sys.exit(1)
-print('✓ 槽位口径：全过（启动/护栏/运行期/显示四路同一个公式 ✓）')
+print('✓ 槽位口径：全过（启动/护栏/运行期/回填/显示五路同一个公式 ✓）')
 sys.exit(0)
