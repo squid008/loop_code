@@ -501,40 +501,12 @@ def ts_mean(x, w):
     return pd.DataFrame(x).rolling(w, min_periods=max(2, w // 2)).mean().values
 
 
-def ts_std(x, w):
-    return pd.DataFrame(x).rolling(w, min_periods=max(2, w // 2)).std().values
-
-
-def ts_sum(x, w):
-    return pd.DataFrame(x).rolling(w, min_periods=max(2, w // 2)).sum().values
-
-
-def ts_max(x, w):
-    return pd.DataFrame(x).rolling(w, min_periods=max(2, w // 2)).max().values
-
-
-def ts_min(x, w):
-    return pd.DataFrame(x).rolling(w, min_periods=max(2, w // 2)).min().values
-
-
-def ts_rank(x, w):
-    """过去w日当前值的分位(快)"""
-    mn = ts_min(x, w)
-    mx = ts_max(x, w)
-    return (x - mn) / (mx - mn + 1e-12)
-
-
 def ts_delay(x, n):
     return pd.DataFrame(x).shift(n).values
 
 
 def ts_delta(x, n):
     return x - pd.DataFrame(x).shift(n).values
-
-
-def ts_corr(x, y, w):
-    return pd.DataFrame(x).rolling(w, min_periods=max(3, w // 2)).corr(
-        pd.DataFrame(y)).values
 
 
 

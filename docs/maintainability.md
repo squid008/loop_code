@@ -71,10 +71,12 @@
 
 ### L1 死代码清理（低风险，机械可验证）
 - [x] `factor_miner.py` 删 6 个零引用旧实现（`ts_decay`/`evaluate_dual`/`fmt_dual`/`run_round_real`/`load_lib`/`save_lib`）—— 全量回归 50/50 ✓
-- ⚠ **L1-② 复查降级为中风险**：`loop_engine.py` 的 pandas 老算子（`ts_std/ts_sum/ts_rank/ts_corr/ts_delay/ts_delta`）
-  **并非死码** —— 被 `history/research/round1.py`/`round2.py`/`bench_ops.py`（git 追踪的**归档研究脚本**）
-  `from factor_miner import ...` 引用 ✗（且 `round1.py` 早已坏：它还 import 早就不存在的 `factor_miner.ts_mean`）
-  ⇒ 属「移除仍被归档脚本引用的旧 API」，**需你拍板**：一并归档/删这些研究脚本，还是把老算子冻结为「研究遗留」保留
+- [x] **L1-② 完成（用户拍板选 a）**：删 `loop_engine.py` 6 个死 pandas 老算子
+  （`ts_std/ts_sum/ts_rank/ts_corr/ts_max/ts_min`，−28 行）+ 3 个归档研究脚本
+  （`history/research/round1.py`/`round2.py`/`bench_ops.py`，均 git 追踪、已坏/失效）
+  ★ 死/活判定以 `ops_registry.py` 唯一事实源为准：`ts_delay`/`ts_delta` 绑 `('le', ...)` → 走本文件
+  pandas 版（**活，保留**）；`ts_mean` 被去相关闸门 L2819 直接调用（**活，保留**）；其余 6 个绑
+  `('fo', ...)` → 走 fastops ⇒ pandas 版**零引用**（`ts_max/min` 只被死 `ts_rank` 调用）⇒ 删 ✓
 - [ ] `factor_miner.py` 其余「仅本文件引用」的疑似死链逐个 grep 甄别
 - [ ] `loop_pools.pool_masks` / `loop_watch.now_s` / `ml_common.cross_rank` 逐个甄别
 - 验收：`_audit_deadcode.py` 的「彻底无引用」清零（registry 例外除外）+ 全量回归绿
