@@ -442,6 +442,33 @@ def pending_pools(en, st, deferred):
     return [p for p in en if p not in st and p not in deferred]
 
 
+def candidate_pools(en_list, st, launched, deferred, killed_user):
+    """本轮**可启动**的池 = 启用 − 已停 − 本轮已启动 − 本轮已放弃（deferred）✓（纯函数 ⇒ 可单测）
+
+    ★★★★★ 2026-09-25 修（用户实测："我重新开启（沪深300），它怎么要排队了？"）：
+      300 在 19:31 **已启动过**（20 秒后被用户停掉）⇒ 留在 `launched` 里；而原来 `launched`
+      **只有**两处 `discard`：① `_reap` 成功分支"跑完一代继续领" ② 崩溃重试 ✗
+      ⇒ "**被用户停掉**"的池**本轮再也回不来** ✗；同时它 0 代 ⇒ 收轮判据 `_again` 恒 True
+      ⇒ 本轮永不收口 ⇒ 死等 ✗✗（详见 `docs/loop_todo.md §1.32` ✓）
+      ⇒ 修：`_reap` 时把"被停那一刻的 stopped 快照"记进 `killed_user[pool]`；
+        这里只要它**又回到了启用集**（不在 `st`）就放它回候选 ✓
+        （与 `deferred` 那条"你放回来的 ⇒ 允许马上上"是**同一条语义** ✓）
+
+    ⚠ 顺序不变量：`st`（已单独停）**永远一票否决**（放最前 ✓）；`launched` / `deferred`
+    各自带一个"你放回来"的逃逸口 ✓
+    """
+    out = []
+    for p in en_list:
+        if p in st:                                   # 已单独停 ⇒ 永远不进候选
+            continue
+        if p in launched and p not in killed_user.get(p, ()):   # 本轮启动过且没被"停-再启用" ⇒ 挡住
+            continue
+        if p in deferred and not (p in deferred[p] and p not in st):  # deferred 的逃逸口（沿用 ✓）
+            continue
+        out.append(p)
+    return out
+
+
 def _running_brief(running, now):
     return ' | '.join('%s gen%d(%.0fmin)' % (t['pool'], t['gen'], (now - t['t0']) / 60.0)
                       for t in running) or '无'
@@ -552,6 +579,9 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
             last_start = {}                  # ★ 2026-09-23：池 -> 本轮**上次启动时刻**（公平排队用 ✓，见 fair_order）
             retries = {}                     # ★ 池 -> 本轮"崩溃重试"已用次数（见 `MAX_CRASH_RETRY`）
             deferred = {}                    # 池 -> 顺延那一刻的 stopped 快照（用来认"你重新启用"）
+            # ★★★★★ 2026-09-25（§1.32）：池 -> **被用户停掉那一刻**的 stopped 快照
+            #   （用来认"你停过、现在又放回来"⇒ `candidate_pools` 放它本轮再上 ✓）
+            killed_user = {}
             # ★★★★★ 2026-09-23：**本轮在排队**的池（被"槽位/内存"挡住、还没启动的 ✓）——
             #   用户"单独停池"时要靠它区分**闲置**（本来不参与 ⇒ 不自动补位 ✓）与
             #   **排队中**（本来就等着上 ⇒ 空出的槽该给它 ✓）。判据/用法见 `topup_defer_list` ✓
@@ -655,6 +685,11 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                                     except Exception:         # noqa: BLE001
                                         _ln = ''
                                     RT.log('      [!] 定位用：' + _ln[:160])
+                        # ★★★★★ 2026-09-25（§1.32）：**被用户停掉的池**，记下"被停那一刻的
+                        #   stopped 快照" —— `candidate_pools` 据此认"你又把它放回来了"⇒ 本轮再上 ✓
+                        #   （原来只有"跑完一代"与"崩溃重试"会 `discard` ⇒ 被停的池死等 ✗）
+                        if t.get('killed') and not stopped_by_user:
+                            killed_user[t['pool']] = set(RT.read_ctl().get('stopped') or [])
                         if t.get('killed') and len(deferred) == 0 and not stopped_by_user:
                             # ★★★★★ 2026-09-23 修（用户实测："我一键开启了全部，然后把全A 停止了，
                             #   为啥上证50池没有马上启动起来？"）：
@@ -712,10 +747,7 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                 #   ⇒ 现在：候选 = `en - stopped - 本轮已启动`（★ 2026-09-23 起：顺序由 `fair_order` 定 ✓）
                 #     ⚠ 曾经这里写"顺序按 `enabled` 列表，稳定"，而代码遍历的是 **`en`（set）** ✗
                 #       ⇒ 注释与实现不符 ⇒ 排到前面那个池**每次都抢到空槽** ✗✗（真 bug，见 `fair_order` ✓）
-                cand = [p for p in _en_list
-                        if p not in launched and p not in st
-                        and (p not in deferred
-                             or (p in deferred[p] and p not in st))]   # ★ 你放回来的 ⇒ 允许马上上
+                cand = candidate_pools(_en_list, st, launched, deferred, killed_user)
                 # ★★★★★ 2026-09-23（用户："1000 池跑了 6 代，500 才跑 1 代？出问题了吧"）：
                 #   **欠账优先 + 谁等得久谁先**（治"槽位刚空就被同一个池抢走" ⇒ 被饿的池攒不够代
                 #   ⇒ 收轮永远收不了口 ⇒ 轮末全局收尾不执行 ✗）—— 详见 `fair_order` ✓

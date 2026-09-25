@@ -162,7 +162,7 @@ def main():
         # ★ 2026-09-23：候选改从**有序** `_en_list` 取（修"槽位靠 set 顺序碰运气"的真 bug ✓，
         #   见 `tools/_test_sched_fair.py`）⇒ 本断言同步加严：既要"候选来自 ctl.enabled"，
         #   又要"它是一份**列表**（保序）"✓
-        re.search(r'cand = \[p for p in _en_list', pr) is not None
+        re.search(r'cand = candidate_pools\(_en_list, st, launched, deferred, killed_user\)', pr) is not None
         and 'p not in launched' in pr
         and re.search(r"_en_list = list\(ctl\.get\('enabled'\)", pr) is not None,
         '用 `plan` ⇒ 后来加的池**永远不会**跑（连下一轮都不跑）✗ —— 用户实测到的点')

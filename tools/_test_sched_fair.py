@@ -46,8 +46,10 @@ def chk(desc, cond, hint=''):
 
 print('[1] 静态：候选顺序不再靠 `set` 碰运气，且记了 FIFO 时间戳')
 chk('有纯函数 fair_order（⇒ 可单测 ✓）', 'def fair_order(' in PR)
-chk('★ 候选**从有序名单** `_en_list` 生成（`for p in _en_list` ✓）',
-    re.search(r'cand = \[p for p in _en_list', PR) is not None)
+chk('★ 候选**从有序名单** `_en_list` 生成（`candidate_pools(_en_list, …)` + `for p in en_list` ✓）',
+    re.search(r'cand = candidate_pools\(_en_list, st, launched, deferred, killed_user\)', PR) is not None
+    and re.search(r'def candidate_pools\(', PR) is not None
+    and re.search(r'for p in en_list', PR) is not None)
 chk('★ 不再从 `set` 生成候选（`cand = [p for p in en` 那种老写法必须绝迹 ✗）',
     re.search(r'cand = \[p for p in en\b', PR) is None)
 chk('★ 候选排过序（`cand = fair_order(cand, gens, last_start, min_gens_per_round` ✓）',
