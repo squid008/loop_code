@@ -429,27 +429,8 @@ def guard_mix(mix):
     return [round(a, 6), round(b, 6), 0.15, 0.20, 0.15]
 
 
-def suggest(diag, cur=None):
-    """根据诊断输出下一代搜索策略(规则透明, 每条带触发原因)
-
-    ★★★ 2026-09-14 重构（`docs/loop_todo.md` §1.1 修法 ②③④）—— 加了三件事：
-
-    **(A) 动作记忆 + 饱和检测**：每条规则动作有**稳定 ID**（见 `RULE_NAMES`）。
-        同一动作**连续 `SAT_N` 代**被施加 ⇒ 判为**饱和** ⇒ **冷却 `COOL_N` 代不再施加**，并留痕。
-        **动机**：实测 rule5 在 **96/96 代**上都触发（`fail_calmar` 区间仅 0.846~1.000）
-        ⇒ 它不是"自适应"而是**固定偏移** ⇒ `depth` 被**永久**推到 `[3,4,4]`、`mix` 交叉撞 0.4。
-
-    **(B) LLM 否决 / 降权通道**：`cur['_veto']` 里被 LLM 点名否决的动作，本代**跳过**；
-        同一动作被 LLM **连续否决 `LLM_MUTE_N` 次** ⇒ 升级为**永久哨兵 `MUTE`**
-        —— 用户原话「**让它永久闭嘴**」，不再一代一代地拦。
-        **动机**：`ai_review()` 的返回值此前**只打印、从不回写 `sug`** ⇒ 85/98 次独立、一致的反驳**全被浪费**。
-
-    **(C) 用"真正卡住的那道门"当判据**：池内模式下 rule5 改看 **`fail_pool_calmar`**（池口径 = 真实卡点）；
-        无池数据时退回**对账后**的 `fail_calmar`。
-
-    ⚠ **禁止静默**（见 roadmap §8.44 铁律）：任何"动作没施加"都必须由 `_guard` 写进 `reasons`，
-    这样 journal 里永远能回答"这代为什么没加交叉"。
-    """
+def _init_sug(cur, diag):
+    """初始化策略状态 s + 动作历史字典 + 审计理由列表。"""
     cur = cur or {}
     gen = int(diag.get('gen') or 0)
     s = dict(leaf_w=dict(cur.get('leaf_w', {})),
@@ -477,6 +458,119 @@ def suggest(diag, cur=None):
     base, ineff, cmul = s['_base'], s['_ineff'], s['_cool_mul']
     n_blocked = [0]
     n_ineff = [0]
+    return s, reasons, tgt, n_blocked, n_ineff
+
+
+def _apply_rules(s, diag, _guard, _set, _mark):
+    """按诊断施加 7 条规则动作（r1~r7）。"""
+    # 1) 叶子过度集中 -> 压低该叶子
+    if diag.get('leaf_conc', 0) > 0.40 and _guard('r1_leaf_conc'):
+        top = diag['leaf_top'][0]
+        _set('leaf_w.' + top, 0.25)
+        _mark('r1_leaf_conc', f"叶子[{top}]占比{diag['leaf_conc']:.0%}过高 -> 权重压到0.25, 逼引擎换字段")
+    # 2) 稳定性差 -> 抬高门槛 + 偏好长周期算子
+    if (diag.get('stab_med', 1) < 0.60 or diag.get('stab_lt50', 0) > 0.40) and _guard('r2_stab_low'):
+        _set('min_stab', min(0.60, s['min_stab'] + 0.15))
+        for o in SLOW_OPS:
+            _set('op_bias.' + o, 1.8)
+        for o in FAST_OPS:
+            _set('op_bias.' + o, 0.4)
+        _mark('r2_stab_low', f"稳定性中位{diag.get('stab_med',0):.2f}(低) -> min_stab提到{s['min_stab']:.2f}, "
+                             f"偏好长周期算子")
+    # 3) 结构多样性低 -> 加强探索(随机槽固定15%走数据驱动加权, 故提变异逼换新信号源)
+    if diag.get('struct_div', 1) < 0.35 and _guard('r3_struct_div'):
+        m = s['mix']
+        _set('mix', [min(0.40, m[0] + 0.10), max(0.10, m[1] - 0.10), m[2], m[3], m[4]])
+        _mark('r3_struct_div', f"结构多样性{diag.get('struct_div',0):.2f}(同质化) -> "
+                               f"变异预算提至{s['mix'][0]:.0%}逼探索新信号源")
+    # 4) L2 主要因换手失败 -> 再抬稳定性
+    if diag.get('fail_turn', 0) > 0.40 and _guard('r4_fail_turn'):
+        _set('min_stab', min(0.75, s['min_stab'] + 0.10))
+        _mark('r4_fail_turn', f"L2中{diag['fail_turn']:.0%}因换手过高失败 -> min_stab再+0.10")
+    # 5) L2 主要因 Calmar 不足 -> 加强交叉(把已有信号组合起来) / 深度加深
+    #    ★ (C) **判据选"真正卡住的那道门"**：池内模式下池口径才是真实卡点。
+    #      为什么不能只看全A：pool=1000 实测「全A 门槛已放开（--min_calmar=0）却仍报 100%」，
+    #      而真正决定成败的是「任一池 Calmar > --min_pool_calmar」这道池门槛。
+    #    ★ 另给一个**不随配置漂移**的锚 `fail_calmar_neg`（真·信号弱），用于人工对照。
+    _sig, _sig_src = None, ''
+    if diag.get('fail_pool_calmar') is not None:
+        _sig = float(diag['fail_pool_calmar'])
+        _sig_src = '池口径: {}池 Calmar > {:g}'.format(
+            '任一' if diag.get('gate_pool_mode', 'any') == 'any' else '全部',
+            float(diag.get('gate_min_pool_calmar', 0)))
+    elif diag.get('fail_calmar') is not None:
+        _sig = float(diag['fail_calmar'])
+        _sig_src = '全A 口径: Calmar <= {:g}'.format(float(diag.get('gate_min_calmar', 0.5)))
+    if _sig is not None and _sig > 0.55 and diag.get('n_l2', 0) >= 8 and _guard('r5_calmar_cross'):
+        m = s['mix']
+        _set('mix', [m[0] * 0.85, min(0.45, m[1] + 0.15), m[2], m[3], m[4]])
+        _set('depth', [3, 4, 4])
+        _mark('r5_calmar_cross', f"L2中{_sig:.0%}因Calmar不足[{_sig_src}] -> 交叉+15%, 深度加深")
+    # 6) 又绕回已知族 -> 收紧去相关阈值(对象=人工基准+历代入库bank, 对齐中金"入库IC<0.70")
+    #    ⚠ 原实现 known_ratio 高时放宽到0.85是反的: 已知族候选占满L1却无法入库,
+    #    应把更像已知者的拦在L2外, 逼搜索离开已知族; 放宽只会放更多同族进L2.
+    if diag.get('known_ratio', 0) > 0.60 and _guard('r6_known_ratio'):
+        floor = 0.65 if diag.get('n_pass', 0) == 0 else 0.70
+        if s['decorr'] > floor:
+            _set('decorr', max(floor, s['decorr'] - 0.05))
+            _mark('r6_known_ratio', f"{diag['known_ratio']:.0%}候选仍含已知族字段 -> decorr收紧到"
+                                    f"{s['decorr']:.2f}(0.70≈中金入库IC相关口径)")
+        else:
+            _mark('r6_known_ratio', f"{diag['known_ratio']:.0%}候选仍含已知族字段，"
+                                    f"但 decorr={s['decorr']:.2f} 已达 floor={floor:.2f} -> 不重复收紧")
+    # 7) 连续无产出 -> 换方向: 提高深度 + 提高随机
+    if diag.get('n_pass', 0) == 0 and diag.get('n_l2', 0) >= 10 and _guard('r7_zero_pass'):
+        _set('depth', [3, 4, 5])
+        _mark('r7_zero_pass', "本代0通过 -> 深度放宽到3~5, 探索更复杂结构")
+
+
+def _finalize_sug(s, reasons, base, n_blocked):
+    """收尾：无动作提示 + 审计小结 + mix 配比护栏。"""
+    if not reasons:
+        reasons.append("各项指标正常, 维持当前策略")
+    # ★ 审计小结：让 journal 一眼看出"这代被拦下了几条动作"（否则静默=未来的排查噩梦）
+    if n_blocked[0]:
+        reasons.append("—— 本代共拦截 {} 条动作（饱和/LLM 否决），详见上面【拦截】行".format(n_blocked[0]))
+    # 出口统一护栏: 规则(含从旧state继承的cfg)算出任何 mix 都强制回到中金规格内,
+    # 且修正前后不一致时留痕, 便于在 journal 里追踪护栏生效
+    mix_raw = list(s['mix'])
+    s['mix'] = guard_mix(s['mix'])
+    if any(abs(x - y) > 1e-9 for x, y in zip(s['mix'], mix_raw)):
+        reasons.append(f"配比护栏: 变异/交叉各≥{MIX_MIN:.0%}且合计50%重归一化, "
+                       f"扰动/引导/随机固定15/20/15(中金规格) -> "
+                       f"mix={[round(x, 3) for x in s['mix']]}")
+        # ★★ 必须**同步快照里的「新值」**（2026-09-14）：`guard_mix` 在动作之后改了 `mix`，
+        #   而 §1.1 的回退判据是「**当前值 == 本动作写入的值**」⇒ 不同步的话
+        #   `mix` 永远匹配不上 ⇒ **回退被静默跳过**（棘轮对 mix 失效）✗
+        for _aid, _b in base.items():
+            _pm = (_b.get('params') or {}).get('mix')
+            if _pm and list(_pm[1]) != list(s['mix']):
+                _pm[1] = list(s['mix'])
+    return s, reasons
+def suggest(diag, cur=None):
+    """根据诊断输出下一代搜索策略(规则透明, 每条带触发原因)
+
+    ★★★ 2026-09-14 重构（`docs/loop_todo.md` §1.1 修法 ②③④）—— 加了三件事：
+
+    **(A) 动作记忆 + 饱和检测**：每条规则动作有**稳定 ID**（见 `RULE_NAMES`）。
+        同一动作**连续 `SAT_N` 代**被施加 ⇒ 判为**饱和** ⇒ **冷却 `COOL_N` 代不再施加**，并留痕。
+        **动机**：实测 rule5 在 **96/96 代**上都触发（`fail_calmar` 区间仅 0.846~1.000）
+        ⇒ 它不是"自适应"而是**固定偏移** ⇒ `depth` 被**永久**推到 `[3,4,4]`、`mix` 交叉撞 0.4。
+
+    **(B) LLM 否决 / 降权通道**：`cur['_veto']` 里被 LLM 点名否决的动作，本代**跳过**；
+        同一动作被 LLM **连续否决 `LLM_MUTE_N` 次** ⇒ 升级为**永久哨兵 `MUTE`**
+        —— 用户原话「**让它永久闭嘴**」，不再一代一代地拦。
+        **动机**：`ai_review()` 的返回值此前**只打印、从不回写 `sug`** ⇒ 85/98 次独立、一致的反驳**全被浪费**。
+
+    **(C) 用"真正卡住的那道门"当判据**：池内模式下 rule5 改看 **`fail_pool_calmar`**（池口径 = 真实卡点）；
+        无池数据时退回**对账后**的 `fail_calmar`。
+
+    ⚠ **禁止静默**（见 roadmap §8.44 铁律）：任何"动作没施加"都必须由 `_guard` 写进 `reasons`，
+    这样 journal 里永远能回答"这代为什么没加交叉"。
+    """
+    s, reasons, tgt, n_blocked, n_ineff = _init_sug(cur, diag)
+    act, veto, cool = s['_act'], s['_veto'], s['_cool']
+    base, ineff, cmul = s['_base'], s['_ineff'], s['_cool_mul']
 
     # ---- ★ 当前动作上下文：让 `_set()` 自动把"改了哪些参数"归到**本动作**名下 ----
     #   为什么用上下文而不是让每个调用点手写旧值：
@@ -657,86 +751,9 @@ def suggest(diag, cur=None):
                     pr[p][1] = _get_param(s, p)      # 同段内又改同参数 -> 更新「最后写入」
         reasons.append('【{}】{}'.format(aid, txt))
 
-    # 1) 叶子过度集中 -> 压低该叶子
-    if diag.get('leaf_conc', 0) > 0.40 and _guard('r1_leaf_conc'):
-        top = diag['leaf_top'][0]
-        _set('leaf_w.' + top, 0.25)
-        _mark('r1_leaf_conc', f"叶子[{top}]占比{diag['leaf_conc']:.0%}过高 -> 权重压到0.25, 逼引擎换字段")
-    # 2) 稳定性差 -> 抬高门槛 + 偏好长周期算子
-    if (diag.get('stab_med', 1) < 0.60 or diag.get('stab_lt50', 0) > 0.40) and _guard('r2_stab_low'):
-        _set('min_stab', min(0.60, s['min_stab'] + 0.15))
-        for o in SLOW_OPS:
-            _set('op_bias.' + o, 1.8)
-        for o in FAST_OPS:
-            _set('op_bias.' + o, 0.4)
-        _mark('r2_stab_low', f"稳定性中位{diag.get('stab_med',0):.2f}(低) -> min_stab提到{s['min_stab']:.2f}, "
-                             f"偏好长周期算子")
-    # 3) 结构多样性低 -> 加强探索(随机槽固定15%走数据驱动加权, 故提变异逼换新信号源)
-    if diag.get('struct_div', 1) < 0.35 and _guard('r3_struct_div'):
-        m = s['mix']
-        _set('mix', [min(0.40, m[0] + 0.10), max(0.10, m[1] - 0.10), m[2], m[3], m[4]])
-        _mark('r3_struct_div', f"结构多样性{diag.get('struct_div',0):.2f}(同质化) -> "
-                               f"变异预算提至{s['mix'][0]:.0%}逼探索新信号源")
-    # 4) L2 主要因换手失败 -> 再抬稳定性
-    if diag.get('fail_turn', 0) > 0.40 and _guard('r4_fail_turn'):
-        _set('min_stab', min(0.75, s['min_stab'] + 0.10))
-        _mark('r4_fail_turn', f"L2中{diag['fail_turn']:.0%}因换手过高失败 -> min_stab再+0.10")
-    # 5) L2 主要因 Calmar 不足 -> 加强交叉(把已有信号组合起来) / 深度加深
-    #    ★ (C) **判据选"真正卡住的那道门"**：池内模式下池口径才是真实卡点。
-    #      为什么不能只看全A：pool=1000 实测「全A 门槛已放开（--min_calmar=0）却仍报 100%」，
-    #      而真正决定成败的是「任一池 Calmar > --min_pool_calmar」这道池门槛。
-    #    ★ 另给一个**不随配置漂移**的锚 `fail_calmar_neg`（真·信号弱），用于人工对照。
-    _sig, _sig_src = None, ''
-    if diag.get('fail_pool_calmar') is not None:
-        _sig = float(diag['fail_pool_calmar'])
-        _sig_src = '池口径: {}池 Calmar > {:g}'.format(
-            '任一' if diag.get('gate_pool_mode', 'any') == 'any' else '全部',
-            float(diag.get('gate_min_pool_calmar', 0)))
-    elif diag.get('fail_calmar') is not None:
-        _sig = float(diag['fail_calmar'])
-        _sig_src = '全A 口径: Calmar <= {:g}'.format(float(diag.get('gate_min_calmar', 0.5)))
-    if _sig is not None and _sig > 0.55 and diag.get('n_l2', 0) >= 8 and _guard('r5_calmar_cross'):
-        m = s['mix']
-        _set('mix', [m[0] * 0.85, min(0.45, m[1] + 0.15), m[2], m[3], m[4]])
-        _set('depth', [3, 4, 4])
-        _mark('r5_calmar_cross', f"L2中{_sig:.0%}因Calmar不足[{_sig_src}] -> 交叉+15%, 深度加深")
-    # 6) 又绕回已知族 -> 收紧去相关阈值(对象=人工基准+历代入库bank, 对齐中金"入库IC<0.70")
-    #    ⚠ 原实现 known_ratio 高时放宽到0.85是反的: 已知族候选占满L1却无法入库,
-    #    应把更像已知者的拦在L2外, 逼搜索离开已知族; 放宽只会放更多同族进L2.
-    if diag.get('known_ratio', 0) > 0.60 and _guard('r6_known_ratio'):
-        floor = 0.65 if diag.get('n_pass', 0) == 0 else 0.70
-        if s['decorr'] > floor:
-            _set('decorr', max(floor, s['decorr'] - 0.05))
-            _mark('r6_known_ratio', f"{diag['known_ratio']:.0%}候选仍含已知族字段 -> decorr收紧到"
-                                    f"{s['decorr']:.2f}(0.70≈中金入库IC相关口径)")
-        else:
-            _mark('r6_known_ratio', f"{diag['known_ratio']:.0%}候选仍含已知族字段，"
-                                    f"但 decorr={s['decorr']:.2f} 已达 floor={floor:.2f} -> 不重复收紧")
-    # 7) 连续无产出 -> 换方向: 提高深度 + 提高随机
-    if diag.get('n_pass', 0) == 0 and diag.get('n_l2', 0) >= 10 and _guard('r7_zero_pass'):
-        _set('depth', [3, 4, 5])
-        _mark('r7_zero_pass', "本代0通过 -> 深度放宽到3~5, 探索更复杂结构")
-    if not reasons:
-        reasons.append("各项指标正常, 维持当前策略")
-    # ★ 审计小结：让 journal 一眼看出"这代被拦下了几条动作"（否则静默=未来的排查噩梦）
-    if n_blocked[0]:
-        reasons.append("—— 本代共拦截 {} 条动作（饱和/LLM 否决），详见上面【拦截】行".format(n_blocked[0]))
-    # 出口统一护栏: 规则(含从旧state继承的cfg)算出任何 mix 都强制回到中金规格内,
-    # 且修正前后不一致时留痕, 便于在 journal 里追踪护栏生效
-    mix_raw = list(s['mix'])
-    s['mix'] = guard_mix(s['mix'])
-    if any(abs(x - y) > 1e-9 for x, y in zip(s['mix'], mix_raw)):
-        reasons.append(f"配比护栏: 变异/交叉各≥{MIX_MIN:.0%}且合计50%重归一化, "
-                       f"扰动/引导/随机固定15/20/15(中金规格) -> "
-                       f"mix={[round(x, 3) for x in s['mix']]}")
-        # ★★ 必须**同步快照里的「新值」**（2026-09-14）：`guard_mix` 在动作之后改了 `mix`，
-        #   而 §1.1 的回退判据是「**当前值 == 本动作写入的值**」⇒ 不同步的话
-        #   `mix` 永远匹配不上 ⇒ **回退被静默跳过**（棘轮对 mix 失效）✗
-        for _aid, _b in base.items():
-            _pm = (_b.get('params') or {}).get('mix')
-            if _pm and list(_pm[1]) != list(s['mix']):
-                _pm[1] = list(s['mix'])
-    return s, reasons
+    _apply_rules(s, diag, _guard, _set, _mark)
+
+    return _finalize_sug(s, reasons, base, n_blocked)
 
 
 def report(diag, sug, reasons, path):
