@@ -474,6 +474,68 @@ def _running_brief(running, now):
                       for t in running) or '无'
 
 
+def _setup_parallel(pools, rounds, max_parallel, auto_parallel, mem_per_engine, panel_cache, dry):
+    """启动段：构建 plan + 启动日志 + 写控制文件 + 初始化状态；dry 时返回 None。"""
+    plan = []
+    for p in pools:
+        g0, done = RT.next_gen(p)
+        plan.append((p, g0, done))
+    RT.log('=' * 76)
+    RT.log('★★ 并行模式: 池={} 每池 {} 轮 | 并行上限={}{} | 每引擎预算={:.1f} GB | '
+           '面板缓存={}'.format(pools, rounds, max_parallel,
+                            '（**自动**：按可用内存与启用池数动态定）' if auto_parallel else '',
+                            mem_per_engine, panel_cache))
+    if auto_parallel:
+        RT.log('   ★ 上限会自动放宽：**你随时点「启动本池」加池，只要有内存就会立刻并行开起来** ✓'
+               '（加池不需要重启调度器）')
+    # ★★★★★ 2026-09-24：记下**启动那一刻**的可用内存 —— 它是运行期闸门的**天花板**
+    #   （`_eff_max(free0_gb=…)` ⇒ 不许"因为内存被在跑的吃光后总容量虚高"而悄悄多开 ✗）
+    _free0 = avail_gb()
+    RT.log('   可用内存 {:.1f} GB'.format(_free0))
+    if panel_cache == 'off':
+        RT.log('   [!] 面板缓存关着：每个引擎会**各建一份 4.42 GB 面板** ⇒ '
+               '并行 N 个 = N 份 ⇒ 建议加 --panel_cache=use（先跑 tools/build_panel_cache.py）')
+    RT.log('=' * 76)
+    if dry:
+        RT.log('（--dry：只列计划，不执行）')
+        return None
+
+    RT.write_ctl(running=True, round=0, rounds=rounds, phase='mine',
+                 enabled=[p for p, _, _ in plan] or list(pools), curPool=None, curGen=None)
+    dirty = False
+    stopped_by_user = False
+    running = []
+    last_brief = 0.0
+    return plan, _free0, dirty, stopped_by_user, running, last_brief
+
+
+def _cleanup_parallel(running, stopped_by_user, dirty, no_global):
+    """退出清理：收子进程 + 全部停止后的收尾 + 复位控制文件。"""
+    # ★ 调度器退出前：把还在跑的子进程**收干净**（否则它们会变成无主进程继续吃内存）
+    for t in running:
+        try:
+            if t['pr'].poll() is None:
+                t['pr'].terminate()
+        except Exception:
+            pass
+    for t in running:
+        try:
+            t['pr'].wait(timeout=30)
+        except Exception:
+            pass
+        try:
+            t['o'].close()
+            t['e'].close()
+        except Exception:
+            pass
+    if stopped_by_user and dirty and not no_global:
+        RT.do_global_tail('★ 全部停止后（并行模式）')
+        dirty = False
+    RT.write_ctl(running=False, phase='idle', curPool=None, curGen=None,
+                 stopAll=False, tailAt=None, active=[])
+    RT.log('  [CTL] 调度器退出（已复位控制文件）✓')
+
+
 def run(pools, rounds, n, l2, extra, inject_spec, no_global,
         max_parallel=3, mem_per_engine=3.0, panel_cache='off', dry=False,
         auto_parallel=False, gens_per_round=1, pool_tail=False, min_gens_per_round=3):
@@ -501,36 +563,10 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
         而**聚合文件**（登记表 / 跨池审查 / 精选池）仍留在轮末由 `do_global_tail` 统一做 ✓
         ⇒ 于是"挖到因子 ⇒ 几分钟内就有指标和曲线"，不必等到整轮结束 ✓
     """
-    plan = []
-    for p in pools:
-        g0, done = RT.next_gen(p)
-        plan.append((p, g0, done))
-    RT.log('=' * 76)
-    RT.log('★★ 并行模式: 池={} 每池 {} 轮 | 并行上限={}{} | 每引擎预算={:.1f} GB | '
-           '面板缓存={}'.format(pools, rounds, max_parallel,
-                            '（**自动**：按可用内存与启用池数动态定）' if auto_parallel else '',
-                            mem_per_engine, panel_cache))
-    if auto_parallel:
-        RT.log('   ★ 上限会自动放宽：**你随时点「启动本池」加池，只要有内存就会立刻并行开起来** ✓'
-               '（加池不需要重启调度器）')
-    # ★★★★★ 2026-09-24：记下**启动那一刻**的可用内存 —— 它是运行期闸门的**天花板**
-    #   （`_eff_max(free0_gb=…)` ⇒ 不许"因为内存被在跑的吃光后总容量虚高"而悄悄多开 ✗）
-    _free0 = avail_gb()
-    RT.log('   可用内存 {:.1f} GB'.format(_free0))
-    if panel_cache == 'off':
-        RT.log('   [!] 面板缓存关着：每个引擎会**各建一份 4.42 GB 面板** ⇒ '
-               '并行 N 个 = N 份 ⇒ 建议加 --panel_cache=use（先跑 tools/build_panel_cache.py）')
-    RT.log('=' * 76)
-    if dry:
-        RT.log('（--dry：只列计划，不执行）')
+    _setup = _setup_parallel(pools, rounds, max_parallel, auto_parallel, mem_per_engine, panel_cache, dry)
+    if _setup is None:
         return 0
-
-    RT.write_ctl(running=True, round=0, rounds=rounds, phase='mine',
-                 enabled=[p for p, _, _ in plan] or list(pools), curPool=None, curGen=None)
-    dirty = False
-    stopped_by_user = False
-    running = []
-    last_brief = 0.0
+    plan, _free0, dirty, stopped_by_user, running, last_brief = _setup
     try:
         # ★★★★★ 2026-09-23（用户实测："我单池点启动，面板上轮数我填了 50，怎么轮数上限还是 1 呢？"）：
         #   **轮数上限必须每轮热读** —— 原来写的是 `for rnd in range(1, rounds + 1)` ✗
@@ -839,28 +875,6 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
                     RT.log('     ⇒ 想"现在就体检一次"：`python tools/run_tracks.py --rounds=0` ✓')
                 break
     finally:
-        # ★ 调度器退出前：把还在跑的子进程**收干净**（否则它们会变成无主进程继续吃内存）
-        for t in running:
-            try:
-                if t['pr'].poll() is None:
-                    t['pr'].terminate()
-            except Exception:
-                pass
-        for t in running:
-            try:
-                t['pr'].wait(timeout=30)
-            except Exception:
-                pass
-            try:
-                t['o'].close()
-                t['e'].close()
-            except Exception:
-                pass
-        if stopped_by_user and dirty and not no_global:
-            RT.do_global_tail('★ 全部停止后（并行模式）')
-            dirty = False
-        RT.write_ctl(running=False, phase='idle', curPool=None, curGen=None,
-                     stopAll=False, tailAt=None, active=[])
-        RT.log('  [CTL] 调度器退出（已复位控制文件）✓')
+        _cleanup_parallel(running, stopped_by_user, dirty, no_global)
     RT.log('===== 全部轨道结束（并行模式）=====')
     return 0

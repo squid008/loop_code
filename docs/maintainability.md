@@ -100,7 +100,8 @@
   - [x] `run_tracks.main` **433→76 行**：抽 `_parse_args`（191 行）+ `_rotate_schedule`/`_finalize_schedule`
     （轮转主循环 + 退出收尾）
   - [~] `loop_critic.suggest` **308→207 行**（第一步：抽 `_init_sug`/`_apply_rules`/`_finalize_sug`；闭包网 ctx 化留第二步）
-  - [ ] `parallel_runner.run`（390，双层 while + 动态队列，需 ctx 化）
+  - [x] `parallel_runner.run` **390→~344 行**：抽 `_setup_parallel`/`_cleanup_parallel`（启动段 + 退出清理；
+    主循环 307 行的调度状态机保留）
 - 验收：每拆一个配守门 + 全量回归绿 + 行为逐字不变（必要时 diff 产物）
 
 ### L3 上帝模块拆分（高风险，最后做，分多步）
