@@ -107,7 +107,9 @@
 ### L3 上帝模块拆分（高风险，分多步，进行中）
 - [x] **Step 1：抽 `Node` + `collect` 到 `engine/loop_expr.py`**（表达式核心类型/遍历单一事实源）
   —— 顺带根治「两份 Node」问题（Node 独立后天然单类）；82 个 `import loop_engine as LE` 全部透明 ✓
-- [ ] Step 2：抽失败模式库 / 跨量纲 / 亲本选择 / LLM 引导 等段落（它们 import `loop_expr`，不再 import 整个 engine）
+- [~] Step 2：抽失败模式库 / 跨量纲 / 亲本选择 / LLM 引导 等段落（进行中）：
+  - [x] **Step 2a：抽跨量纲审查 `dim_of`/`review_expr`/`_FIELD_DIM` 到 `engine/loop_dims.py`**（只依赖 loop_expr + loop_fields）
+  - [ ] Step 2b：抽失败模式库 / 亲本选择 / LLM 引导（它们还依赖 skeleton/LEAVES/UNARY/BINARY，需先抽「表达式核心常量/函数」）
 - [ ] Step 3：`run()` ctx 化，拆子步骤
 - 验收：每步守门 + 全量回归 + **与实盘挖掘结果对照**（同一代 seed 复跑，产出必须一致）
 
