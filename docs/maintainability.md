@@ -89,8 +89,13 @@
 > （本轮 `LIB` 常量被 `round1.py` import，就是漏搜导致的；好在该脚本本就已坏，不影响生产 ✓）
 
 ### L2 重复常量抽取 / 次级大函数拆分（中风险，行为不变）
-- [ ] `strategies/` 重复常量 → 抽 `strategies/common.py`（或标注「研究留档冻结」由你定）
-- [ ] 次级大函数（run_tracks.main / parallel_runner.run / factor_curves.main / combo_*）逐段拆纯函数
+- [x] `strategies/` 重复常量 → 用户拍板「冻结不动」（研究留档，不抽）✓
+- [~] 次级大函数逐段拆纯函数（进行中）：
+  - [x] `combo_build.main` **304→40 行**：抽 `_parse_args`/`_load_bank`/`_load_base`/`_eval_factors`/
+    `_build_weights`/`_synthesize`/`_emit_report` 7 个纯函数；守门 `tools/_test_combo_build.py` **15/15**；
+    顺带删死 import `datetime`
+  - [ ] `run_tracks.main`（447）· `parallel_runner.run`（390）· `factor_curves.main`（370）·
+    `combo_constrain.run`（369）· `loop_critic.suggest`（308）
 - 验收：每拆一个配守门 + 全量回归绿 + 行为逐字不变（必要时 diff 产物）
 
 ### L3 上帝模块拆分（高风险，最后做，分多步）

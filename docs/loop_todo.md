@@ -473,8 +473,11 @@ md 总览 ✓ · md 明细 ✓ · **不在** JSONL ✓ · **不在** 登记表 �
   （`ts_mean` 被闸门直接调用、`ts_delay`/`ts_delta` 绑 registry `('le',...)`，均为活）
 - ✅ **L1-③ 完成**：删 `engine/ml_common.py`（废弃的「双重同伴效应」研究数据层，live 无人 import）
   + `peer_effect.py`/`verify_neutral.py` 两个归档研究脚本；剩余极小死码（`pool_masks`/`now_s`，各 1 行）价值≈0 暂不删
-- ⬜ L2 次级大函数（run_tracks.main / parallel_runner.run / factor_curves.main / combo_*）拆分
-  （`strategies/` 重复常量 → **你已拍板「冻结不动」**，仅登记在 `maintainability.md` 台账，不抽 ✓）
+- ⏳ L2 次级大函数拆分（进行中）：
+  - ✅ `combo_build.main` **304→40 行**（抽 7 个纯函数 + 守门 15/15 + 全量回归 51/51）
+  - ⬜ `run_tracks.main`(447) · `parallel_runner.run`(390) · `factor_curves.main`(370) ·
+    `combo_constrain.run`(369) · `loop_critic.suggest`(308)
+  （`strategies/` 重复常量 → **你已拍板「冻结不动」** ✓）
 - ⬜ L3 `loop_engine` 模块化 + `run()` ctx 化（最后做，需与实盘对照）
 
 ---

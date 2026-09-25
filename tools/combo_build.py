@@ -28,7 +28,6 @@ import os
 import pickle
 import sys
 import time
-from datetime import datetime
 
 import numpy as np
 import pandas as pd
@@ -53,7 +52,8 @@ OUT = os.path.join(HERE, '_combo_build_report.md')
 FAC_OUT = os.path.join(HERE, '_combo_fac.pkl')
 
 
-def main():
+def _parse_args():
+    """解析命令行参数（手动解析，与历史用法保持一致）。"""
     pool = 'all'
     ICW_WIN = 250          # 滚动 IC 窗口（交易日）
     DEC_WIN = 250          # 去相关重算窗口
@@ -70,33 +70,37 @@ def main():
             DEC_THR = float(a.split('=', 1)[1])
         elif a == '--neutral':
             NEUTRAL = True
+    return pool, ICW_WIN, DEC_WIN, DEC_THR, NEUTRAL
+
+
+def _load_bank(pool):
+    """按池读 state 里的入库因子 bank。"""
     LE.set_mine_pool(pool)
-    t_all = time.time()
-    print('=' * 78)
-    print('池 ={}  ICW_WIN={}  DEC_WIN={}  DEC_THR={}'.format(pool, ICW_WIN, DEC_WIN, DEC_THR))
-
     st = pickle.load(open(LE.STATE, 'rb'))
-    bank = st.get('bank', []) or []
-    if len(bank) < 2:
-        print('入库因子不足 2 个，无法合成')
-        return 1
-    print('入库因子 {} 个'.format(len(bank)))
+    return st.get('bank', []) or []
 
+
+def _load_base(NEUTRAL):
+    """加载数据面板 + 未来收益 + 可选的中性化基准 ZS。"""
     base = LE.base_fields()
     B, dates, cols, close = base['B'], base['dates'], base['cols'], base['close']
     T, S = close.shape
     U = FM.get_universe().reindex(index=dates, columns=cols).fillna(False).values
     fwd_ret = (close.shift(-(1 + FM.FWD)) / close.shift(-1) - 1).values
-    from scipy.stats import spearmanr
     # ★ 市值+成交额秩中性化（--neutral）：§8.37 实测全A 合成 tilt=+3.73% ⇒ 相当一部分超额
     #   来自**小盘倾斜**；而"300 成分内基本无效"（Calmar 0.012）也说明它主要靠池外风格。
     #   ⇒ 先对每个因子做 `neutral_rank`（与 standard_test【6】剥风格同口径），再合成。
+    ZS = None
     if NEUTRAL:
         _sf = LE.style_features(B)
         ZS = [_sf['lncap'], _sf['lnamt']]
         print('[--neutral] 每个因子先对 lncap+lnamt 秩中性化再合成', flush=True)
+    return B, dates, cols, close, T, S, U, fwd_ret, ZS
 
-    # ---- ① 逐因子: 定向 + rank 缓存 + 逐期超额/IC ----
+
+def _eval_factors(bank, B, dates, cols, close, U, fwd_ret, NEUTRAL, ZS):
+    """① 逐因子: 定向 + cs_rank 缓存 + 逐期超额/IC -> (RANKS, EXS, ICS, NAMES)"""
+    from scipy.stats import spearmanr
     print('\n[1] 逐因子：定向 + cs_rank 缓存 + evaluate_real ...', flush=True)
     RANKS, EXS, ICS, NAMES = [], {}, {}, []
     for k, nd in enumerate(bank, 1):
@@ -138,17 +142,11 @@ def main():
         except Exception as e:
             print('  [{}/{}] 失败 {}: {}'.format(k, len(bank), type(e).__name__,
                                                 str(e)[:60]), flush=True)
-    N = len(NAMES)
-    if N < 2:
-        print('可用因子不足')
-        return 1
-    print('\n缓存 rank 面板 {} 个 (~{:.1f} GB)'.format(
-        N, sum(a.nbytes for a in RANKS) / 1024 ** 3), flush=True)
+    return RANKS, EXS, ICS, NAMES
 
-    EX = pd.DataFrame(EXS)                 # 逐期超额(T'', N)
-    ICdf = pd.DataFrame(ICS).reindex(index=dates)   # 逐日 IC(T, N)
 
-    # ---- ② 三种权重方案（逐日 W(T,N)）----
+def _build_weights(T, N, dates, ICdf, EX, NAMES, ICW_WIN, DEC_WIN, DEC_THR):
+    """② 三种权重方案（逐日 W(T,N)）-> (Ws, sel_hist)"""
     print('\n[2] 构造权重 ...', flush=True)
     Ws = {}
 
@@ -196,11 +194,13 @@ def main():
         dec[t:] = sel
         sel_hist.append((str(d)[:10], len(chosen)))
     Ws['C_滚动去相关等权'] = dec
-    print('  去相关选中因子数（每次重算）:',
-          ', '.join('{}:{}'.format(a, b) for a, b in sel_hist[-6:]), flush=True)
+    return Ws, sel_hist
 
-    # ---- ③ 合成 + 回测 ----
+
+def _synthesize(Ws, RANKS, dates, cols, close, N):
+    """③ 合成 + 回测 -> (rows, FAC)"""
     print('\n[3] 合成 + 回测 ...', flush=True)
+    T, S = close.shape
     rows = []
     FAC = {}          # ★ 保存**全部方案**的合成因子（2026-09-13 用户指出：只存 C 且被覆盖）
     for nm, W in Ws.items():
@@ -244,8 +244,11 @@ def main():
                   r['turn'], sum(1 for x in seg if x > 0)), flush=True)
         FAC[nm] = fd.astype('float32')
         del F, fd
+    return rows, FAC
 
-    # ---- ④ 报告 ----
+
+def _emit_report(pool, N, ICW_WIN, DEC_WIN, DEC_THR, rows, FAC, Ws, NAMES, dates, NEUTRAL):
+    """④ 报告: 写 markdown + 保存各方案 pkl + 导出配方。"""
     L = ['# 多因子合成报告（roadmap §8.36）', '',
          '池 = `{}`；入库因子 **{} 个**；参数 ICW_WIN={} DEC_WIN={} DEC_THR={}'.format(
              pool, N, ICW_WIN, DEC_WIN, DEC_THR), '',
@@ -355,6 +358,41 @@ def main():
         print('已写合成因子(方案C, 兼容名) ->', FAC_OUT)
     print()
     print(txt)
+
+
+def main():
+    pool, ICW_WIN, DEC_WIN, DEC_THR, NEUTRAL = _parse_args()
+    t_all = time.time()
+    print('=' * 78)
+    print('池 ={}  ICW_WIN={}  DEC_WIN={}  DEC_THR={}'.format(pool, ICW_WIN, DEC_WIN, DEC_THR))
+
+    bank = _load_bank(pool)
+    if len(bank) < 2:
+        print('入库因子不足 2 个，无法合成')
+        return 1
+    print('入库因子 {} 个'.format(len(bank)))
+
+    B, dates, cols, close, T, S, U, fwd_ret, ZS = _load_base(NEUTRAL)
+
+    RANKS, EXS, ICS, NAMES = _eval_factors(bank, B, dates, cols, close, U, fwd_ret, NEUTRAL, ZS)
+    N = len(NAMES)
+    if N < 2:
+        print('可用因子不足')
+        return 1
+    print('\n缓存 rank 面板 {} 个 (~{:.1f} GB)'.format(
+        N, sum(a.nbytes for a in RANKS) / 1024 ** 3), flush=True)
+
+    EX = pd.DataFrame(EXS)                 # 逐期超额(T'', N)
+    ICdf = pd.DataFrame(ICS).reindex(index=dates)   # 逐日 IC(T, N)
+
+    Ws, sel_hist = _build_weights(T, N, dates, ICdf, EX, NAMES, ICW_WIN, DEC_WIN, DEC_THR)
+    print('  去相关选中因子数（每次重算）:',
+          ', '.join('{}:{}'.format(a, b) for a, b in sel_hist[-6:]), flush=True)
+
+    rows, FAC = _synthesize(Ws, RANKS, dates, cols, close, N)
+
+    _emit_report(pool, N, ICW_WIN, DEC_WIN, DEC_THR, rows, FAC, Ws, NAMES, dates, NEUTRAL)
+
     print('总用时 {:.0f}s'.format(time.time() - t_all))
     return 0
 
