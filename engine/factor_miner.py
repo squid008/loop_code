@@ -13,7 +13,6 @@
 换仓: 5日    成本: 单边千一    分组: 10组, Top组多头
 """
 import os
-import json
 import time
 import warnings
 import numpy as np
@@ -24,7 +23,6 @@ warnings.filterwarnings('ignore')
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PANEL = os.path.join(HERE, 'panel.h5')
-LIB = os.path.join(HERE, 'factor_lib.json')
 UNIVERSE = os.path.join(HERE, 'universe.h5')
 
 _UNIV = None
@@ -64,14 +62,6 @@ def ts_pos(df, w):
     mn = ts_min(df, w)
     mx = ts_max(df, w)
     return (df - mn) / (mx - mn + 1e-12)
-
-
-def ts_decay(df, w):
-    """线性衰减加权均值(近期权重高)"""
-    wt = np.arange(1, w + 1, dtype=np.float64)
-    wt /= wt.sum()
-    return df.rolling(w, min_periods=max(2, w // 2)).apply(
-        lambda x: np.dot(x, wt[-len(x):] / wt[-len(x):].sum()), raw=True)
 
 
 def ts_corr(x, y, w):
@@ -453,57 +443,6 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
     return res
 
 
-def evaluate_dual(fac, close, name='', cost=COST_RT, cash=1.0):
-    """双口径并行: 九年(full) vs 最近600交易日(recent600), 返回 (r_full, r_600)"""
-    r_full = evaluate_real(fac, close, name, cost=cost, cash=cash, window='full')
-    r_600 = evaluate_real(fac, close, name, cost=cost, cash=cash, window='recent600')
-    return r_full, r_600
-
-
-def fmt_dual(r, extra=''):
-    """单行双口径报告文本"""
-    def _s(x):
-        if x is None:
-            return 'N/A'
-        return (f"IC={x['ic']:+.4f} 费后超额={x['ann_ex']*100:+6.2f}% "
-                f"Calmar={x['calmar'] if x['calmar'] else 0:5.2f} "
-                f"夏普={x['sharpe']:5.2f} 换手={x.get('turn', np.nan)*100:4.1f}% "
-                f"负年={sum(1 for v in x['yr'].values() if v <= 0)} "
-                f"最近2年={x['last2_yr']*100:+.1f}%/{x['last_yr']*100:+.1f}%")
-    return (f"{r[0]['name']:26s}{extra:6s} | full : {_s(r[0])}\n"
-            f"{'':26s}{'':6s} | 近600: {_s(r[1])}")
-
-
-def run_round_real(F, close, tag='', min_ic=0.02, verbose=True, **kw):
-    """用 evaluate_real 批量检验"""
-    rows, ic_store = [], {}
-    for i, (nm, fac) in enumerate(F.items(), 1):
-        try:
-            f = cs_rank(fac.astype('float64'))
-            r = evaluate_real(f, close, nm, **kw)
-            del f
-        except Exception as e:
-            if verbose:
-                print(f"  [{i}/{len(F)}] {nm} ERR {type(e).__name__}: {str(e)[:60]}")
-            continue
-        if r is None:
-            if verbose:
-                print(f"  [{i}/{len(F)}] {nm} 样本不足")
-            continue
-        ic_store[nm] = r.pop('ic_series')
-        ok, msg = pass_filter(r, min_ic)
-        r['pass'] = 'PASS' if ok else msg[:30]
-        rows.append(r)
-        if verbose:
-            print(f"  [{i}/{len(F)}] {nm:18s} IC={r['ic']:+.4f} IR={r['ic_ir']:+.3f} "
-                  f"超额={r['ann_ex']*100:+6.2f}% Calmar={r['calmar'] if r['calmar'] else 0:5.2f} "
-                  f"换手={r.get('turn', np.nan)*100:4.1f}% | {r['pass']}")
-    res = pd.DataFrame(rows)
-    if len(res):
-        res = res.sort_values('ann_ex', ascending=False)
-    return res, ic_store
-
-
 # ===================== 验证 =====================
 def evaluate(fac, close, name='', verbose=False):
     """单因子检验: IC / 分组 / 年度稳定性
@@ -668,16 +607,3 @@ def show(res, title=''):
         for _, r in res[res['pass'] == 'PASS'].iterrows():
             yr = {k: f"{v*100:+.1f}%" for k, v in sorted(r['yr'].items())}
             print(f"  {r['name']:18s} IC={r['ic']:+.4f} 超额={r['ann_ex']*100:+.2f}%  {yr}")
-
-
-def load_lib():
-    if os.path.exists(LIB):
-        with open(LIB, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    return {'kept': [], 'tested': [], 'rejected': {}, 'round': 0}
-
-
-def save_lib(lib):
-    with open(LIB, 'w', encoding='utf-8') as f:
-        json.dump(lib, f, ensure_ascii=False, indent=1,
-                  default=lambda o: None if isinstance(o, (pd.Series, np.ndarray)) else str(o))

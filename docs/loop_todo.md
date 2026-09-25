@@ -456,6 +456,25 @@ md 总览 ✓ · md 明细 ✓ · **不在** JSONL ✓ · **不在** 登记表 �
 
 ---
 
+### 1.33 【进行中·易维护性】体检后「结构没拆」整改 —— 规则与执行台账见 **`docs/maintainability.md`**（唯一规则源）
+
+> ★ 2026-09-25 用户：_"针对易维护性出方案，写进 md 成规则，然后按风险从低到高干"_（挖掘已停 ✓）
+> 体检结论：**纪律/测试 A 级、结构 C 级**——唯一上帝模块 `engine/loop_engine.py`（3917 行 / run() 1079 行）。
+> **规则 8 条（R1~R8）已写进 `docs/maintainability.md`**：函数 ≤120 行 · 文件 ≤800 行 · 单一事实源 ·
+> 无死代码 · 单一实现 · ctx 拆分 · 守门 · 提交同步 —— **以后改代码都要遵守，违规只减不增** ✓
+
+**执行进度（按风险低→高，逐项验收）**：
+- ✅ **L0 文档规则化**（本文件 + `docs/maintainability.md`）
+- ✅ **L1-① 死代码清理第一刀**：`factor_miner.py` 删 6 个零引用旧实现
+  （`ts_decay` / `evaluate_dual` / `fmt_dual` / `run_round_real` / `load_lib` / `save_lib`）——
+  ⚠ 保留 `cs_zscore`（注释写明"保留仅作反面示例"，是**教学例外** ✓）
+- ⬜ L1-② `loop_engine.py` 删 pandas 老算子（`ts_std/ts_sum/ts_rank/ts_corr/ts_delay/ts_delta`）
+- ⬜ L1-③ 其余疑似死链逐个 grep 甄别（`pool_masks`/`now_s`/`cross_rank`/`industry_names`…）
+- ⬜ L2 重复常量抽取 + 次级大函数（run_tracks.main / parallel_runner.run / factor_curves.main…）拆分
+- ⬜ L3 `loop_engine` 模块化 + `run()` ctx 化（最后做，需与实盘对照）
+
+---
+
 ### 1.20 ★★★【铁律·2026-09-14 用户拍定】**不要用"放宽门槛"凑因子数量** —— 瓶颈是**信号源多样性**，不是数量
 
 **用户原话**：
@@ -630,6 +649,10 @@ panelCache:"use" · active:[{pool:all, gen:79, pid:7808}]` ✓（驱动器日志
 **空闲轮目标 <8k tokens。** §1 全部 `[x]` 后，每轮只追加一行日志，不做别的。
 
 ### 2.4 ★ 定期维护：**防屎山**（2026-09-14 建立，**每阶段结束跑一次**）
+
+> ★★ **2026-09-25 起，代码易维护性规则移到专门文档 `docs/maintainability.md`**（R1~R8：
+> 函数/文件长度 · 单一事实源 · 无死代码 · 单一实现 · ctx 拆分 · 守门 · 提交同步）+ 台账与执行进度
+> 见 **§1.33** ✓ —— 本节只保留**产物清理**（文件/缓存）这一半。
 
 过期产物会**随着脚本重跑不断地长回来**，清一次断不了根。⇒ 定期执行：
 
