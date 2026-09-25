@@ -108,7 +108,7 @@ def size_pct_of(mc_row, picks):
     return float(pd.Series(sel[ok]).rank(pct=True).mean())
 
 
-def run():
+def _parse_args():
     ap = argparse.ArgumentParser()
     ap.add_argument('--fac', default=os.path.join(HERE, '_combo_all_neu_B.pkl'))
     ap.add_argument('--modes', default='s0,s05,m1,s1,s2,s3')
@@ -133,9 +133,9 @@ def run():
     ap.add_argument('--pool', default='all')
     # ★ 显式指定基准指数（默认按 `--pool` 自动取 300/500/1000 对应指数）
     ap.add_argument('--index', default='')
-    a = ap.parse_args()
-
-    t0 = time.time()
+    return ap.parse_args()
+def _load_and_prep(a, t0):
+    """加载面板/因子 + 构建可交易域、回测网格与数据数组。"""
     close, mktcap, U, ind, INAMES = load_data()
     dates, cols = close.index.values, close.columns
     print('=' * 88)
@@ -192,7 +192,17 @@ def run():
     if need_ind and Gv is None:
         print('  ⚠ 行业面板缺失 ⇒ 自动去掉 s1/s2/s3（先跑 build_industry.py）')
         modes = [m for m in modes if m not in ('s1', 's2', 's3')]
+    return dict(close=close, mktcap=mktcap, U=U, ind=ind, INAMES=INAMES, F=F,
+                dates=dates, cols=cols, Pv=Pv, RIDX=RIDX, Fv=Fv, Uv=Uv,
+                MCv=MCv, lnmc=lnmc, Gv=Gv, rb=rb, modes=modes)
 
+
+def _simulate(a, ctx):
+    """逐期回测主循环（含 resid/pick_* 闭包与 S05 分解）。"""
+    close = ctx['close']
+    Fv = ctx['Fv']; Uv = ctx['Uv']; MCv = ctx['MCv']; lnmc = ctx['lnmc']
+    Gv = ctx['Gv']; INAMES = ctx['INAMES']; rb = ctx['rb']
+    modes = ctx['modes']; RIDX = ctx['RIDX']
     rec = {m: dict(pn=[], ben=[], bmc=[], bidx=[], turn=[], spct=[], idev=[], nh=[], ov0=[])
            for m in modes}
     prev = {m: set() for m in modes}
@@ -377,7 +387,11 @@ def run():
                 if g_t[o] >= 0:
                     wb[min(g_t[o], len(INAMES) - 1)] += w_cap[o]
             rec[m]['idev'].append(float(np.abs(wi - wb).max()))
+    return rec, n_used
 
+
+def _report(a, rec, modes, n_used, t0):
+    """汇总输出：双口径超额 + 代价分解 + 写文件。"""
     # ---------- 汇总 ----------
     NAME = {'s0': 'S0 现状(全池 top)', 's05': 'S05 仅行业权重校正', 'm1': 'M1 市值中性',
             's1': 'S1 行业中性', 's2': 'S2 +市值中性', 's3': 'S3 +权重上限%.1f%%' % (a.max_w * 100)}
@@ -476,6 +490,12 @@ def run():
              % (a.pool, '（全A）' if a.pool == 'all' else '（**成分股内**）'))
     io.open(out_md, 'w', encoding='utf-8').write('\n'.join(L))
     print('\n[DONE] -> %s   （%d 期, 用时 %.0fs）' % (out_md, n_used, time.time() - t0))
+def run():
+    a = _parse_args()
+    t0 = time.time()
+    ctx = _load_and_prep(a, t0)
+    rec, n_used = _simulate(a, ctx)
+    _report(a, rec, ctx['modes'], n_used, t0)
     return 0
 
 
