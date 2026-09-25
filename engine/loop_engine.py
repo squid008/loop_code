@@ -154,6 +154,8 @@ DEFAULT_CFG = dict(leaf_w={}, op_bias={}, depth=[2, 3, 4],
 from loop_fields import MF16, BARRA_LEAVES, FA_LEAVES, LEAVES, FIELDS
 from loop_expr import Node, collect            # ★ L3 拆分：表达式核心类型/遍历单一事实源
 from loop_dims import review_expr, dim_of      # ★ L3 拆分：跨量纲审查单一事实源
+from loop_ops import (UNARY, BINARY, ts_delay, ts_delta, cs_rank_op,
+                     cs_demean_op, cs_scale_op)  # ★ L3 拆分：算子表+le算子
 from loop_faillib import flib_mark, fail_lib_cleanup, bad_skels  # ★ L3 拆分：失败模式库
 from loop_expr import (norm_op, skeleton, skeleton_freq, subtree_skels,
                         has_frozen_skel, fsa_period, sole_leaf,
@@ -508,58 +510,12 @@ def ts_mean(x, w):
     return pd.DataFrame(x).rolling(w, min_periods=max(2, w // 2)).mean().values
 
 
-def ts_delay(x, n):
-    return pd.DataFrame(x).shift(n).values
-
-
-def ts_delta(x, n):
-    return x - pd.DataFrame(x).shift(n).values
-
-
-
 # ⚠ 2026-09-15（架构清扫 P0-1）删除 4 个**死代码**：`ts_max_op` / `ts_min_op` /
 #   `ts_corr20_op` / `ts_corr60_op` —— 早期实现残留（当时算子表还没统一用
 #   `_mx`/`_mn`/`_cr`），经 `tools/_audit_deadcode.py` 实测：**本文件内外均无引用** ✗
 #   且与 `UNARY` 里的 `ts_max20`/`ts_min20`/`corr20`/`corr60` 功能重复 ✓
 
 
-def cs_rank_op(x):
-    return cs_rank(pd.DataFrame(x)).values
-
-
-def cs_demean_op(x):
-    df = pd.DataFrame(x)
-    return df.sub(df.mean(axis=1), axis=0).values
-
-
-def cs_scale_op(x):
-    r = cs_rank_op(x)
-    return (r - 0.5) * 2
-
-
-# ★★★ 2026-09-15（架构清扫 P0-1）：算子表改为从 `ops_registry` **派生**（单一事实源）。
-#
-#   【改造前】这里曾有 13 个 helper（`_m/_s/_r/_mx/_mn/_sm/_cr/_e/_sl/_rq/_rs/_sk/_ku`）
-#     + 约 90 行 `UNARY` 字面量 + `BINARY` 字面量 ⇒ **同一批算子名被抄在 4 处**
-#     （本文件 · `loop_critic.SLOW_OPS` · `loop_llm` 的 A角 prompt · `_test_ops_sync` 期望值）
-#     ⇒ 结果：**加 1 个算子要同步改 4 个代码文件，漏一处就漂移**
-#       （`loop_todo §1.25` 实名记录过：`loop_critic._ops_of` 硬编码 28 个 vs 引擎 45 个，
-#        **长窗口算子一直被 B角 忽视**）✗
-#   【改造后】算子只在 `engine/ops_registry.py` 声明一次，这里**只接线**
-#     ⇒ 结构上**无法漂移**（不是靠测试提醒，是根本没得抄）✓
-#
-#   ★ 为什么传 `fastops` + `vars()` 进去（依赖注入），而不是让 ops_registry 自己 import：
-#      `ops_registry` 若 `import loop_engine`，就与本文件 import 它构成**循环依赖** ✗
-#   ★ 为什么给 `vars()`：`cs_rank_op`/`cs_demean_op`/`cs_scale_op`/`ts_delay`/`ts_delta`
-#      是本文件的本地实现（pandas 口径），注册表按**名字**取用 ✓
-#   ⚠ `ts_mean`（本文件上方的 pandas 版）**必须保留** —— 它被下方去相关闸门的
-#      `amt_log` 基准使用（`KNOWN` 字典，L1900+），删掉会直接 `NameError` ✗
-#   ⚠ `ts_delay`/`ts_delta` 同理（`UNARY` 按名取用）✓
-import ops_registry as _OPS
-import fastops as _FO
-
-UNARY = _OPS.build_unary(_FO, vars())
-BINARY = _OPS.build_binary(_FO, vars())
 
 # ★LEAVES 完整叶子池已由顶部 `from loop_fields import LEAVES` 提供
 #   (基础7 + 派生12 + MF16资金流 + BARRA11风格 + FA8财报 = 54), 勿在此重复硬编码(防漂移)

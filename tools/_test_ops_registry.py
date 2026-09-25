@@ -163,8 +163,12 @@ def t_docs_consistency():
     import loop_critic as C
     import ops_registry as OPS
     src = io.open(os.path.join(ROOT, 'engine', 'loop_engine.py'), encoding='utf-8').read()
-    chk('UNARY = _OPS.build_unary' in src and 'BINARY = _OPS.build_binary' in src,
-        '`loop_engine` 的 `UNARY/BINARY` 是**派生**（不是手写字面量）')
+    ops_src = io.open(os.path.join(ROOT, 'engine', 'loop_ops.py'), encoding='utf-8').read()
+    # ★ L3 拆分后：派生接线移到 loop_ops.py；loop_engine 从 loop_ops 引入（仍非手写）
+    chk('UNARY = _OPS.build_unary' in ops_src and 'BINARY = _OPS.build_binary' in ops_src,
+        '`loop_ops` 的 `UNARY/BINARY` 是**派生**（不是手写字面量）')
+    chk('from loop_ops import' in src,
+        '`loop_engine` 从 `loop_ops` 引入派生表（不是本地手写）')
     chk(set(LE.UNARY) == set(OPS.unary_names()),
         '`LE.UNARY` == 注册表单目名（%d 个）' % len(OPS.unary_names()))
     chk(set(LE.BINARY) == set(OPS.binary_names()),
