@@ -94,8 +94,8 @@
   - [x] `combo_build.main` **304→40 行**：抽 `_parse_args`/`_load_bank`/`_load_base`/`_eval_factors`/
     `_build_weights`/`_synthesize`/`_emit_report` 7 个纯函数；守门 `tools/_test_combo_build.py` **15/15**；
     顺带删死 import `datetime`
-  - [~] `factor_curves.main` **370→~280 行**（第一步：抽 `_parse_args`/`_setup_output`/`_collect_items`/`_dedup`
-    4 个纯组装函数；核心门控闭包 + context 构建 + 主循环留第二步）
+  - [x] `factor_curves.main` **370→42 行**：抽 `_parse_args`/`_setup_output`/`_collect_items`/`_dedup`/
+    `_filter_needed`/`_build_context`/`_run_items` + 模块级 `_path`；顺带删死变量 `_pre`
   - [ ] `run_tracks.main`（447）· `parallel_runner.run`（390）· `combo_constrain.run`（369）·
     `loop_critic.suggest`（308）
 - 验收：每拆一个配守门 + 全量回归绿 + 行为逐字不变（必要时 diff 产物）

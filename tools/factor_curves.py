@@ -1056,23 +1056,12 @@ def _dedup(items, BF):
     return uniq, alias
 
 
-def main():
-    a = _parse_args()
-    _setup_output(a)
+def _path(nm):
+    return os.path.join(CURVE_DIR, '%s.json' % nm)
 
-    import build_facs as BF
-    LE = BF._prep_main()
-    LE.set_panel_cache(a.panel_cache)
-    os.makedirs(CURVE_DIR, exist_ok=True)
 
-    items, n_hist = _collect_items(a, BF)
-    if a.include_history:
-        print('  ★ --include_history：额外补 **%d 个已移出当前库的历史编号**' % n_hist)
-    uniq, alias = _dedup(items, BF)
-
-    def _path(nm):
-        return os.path.join(CURVE_DIR, '%s.json' % nm)
-
+def _filter_needed(uniq, alias, a):
+    """按 stage/only-new 过滤出真正要重算的因子（含各 stage 的门控口径判断）。"""
     def _need_one(p):
         if not os.path.exists(p):
             return True
@@ -1090,7 +1079,6 @@ def main():
               否则 `--only-new` 会误判"已算过"、**新口径永远不生效** ✗（实测教训 ✓）
             """
             return (dd.get('style') or {}).get('styCal') == ALLSTY_CAL
-
         if a.stage == 'core':
             return 'nav_e' not in d
         if a.stage == 'expo':
@@ -1125,11 +1113,9 @@ def main():
                 if not {'tAdj', 'tYr', 'winYr'} <= set(v):
                     return False        # 老格式 ⇒ 要重算 ✓
             return True
-
         def _need2(dd):
             return not all(k in ((dd.get('strip') or {}).get('navs') or {})
                            for k in ('floatcap', 'caplimit'))
-
         if a.stage == 'style':
             return (not _style_ok(d)) or (not _style_all_ok(d))
         if a.stage == 'strip2':
@@ -1151,15 +1137,11 @@ def main():
     print('  stage=%s · 待算 %d 个%s' % (a.stage, len(uniq),
                                         '  [增量 --only-new]' if a.only_new else ''))
     print('=' * 96)
-    if not uniq:
-        print('  ⇒ 无待算因子')
-        return 0
+    return uniq
 
-    t0 = time.time()
-    bf = LE.base_fields()
-    B, dates, cols, close = bf['B'], bf['dates'], bf['cols'], bf['close']
-    print('面板载入完成: %d 日 x %d 股 (%.0fs)' % (len(dates), len(cols), time.time() - t0))
 
+def _build_context(a, LE, B, dates, cols, close):
+    """构建各 stage 需要的上下文：STYLE / STYLE_PROF / ALLSTY / LIM。"""
     STYLE = None
     if a.stage in ('strip', 'all'):
         sf = LE.style_features(B)
@@ -1222,18 +1204,11 @@ def main():
         except Exception as e:
             print('[!] 流通市值不可用（%s: %s）⇒ 跳过 strip2' % (type(e).__name__, e))
             LIM = None
+    return STYLE, STYLE_PROF, ALLSTY, LIM
 
-    # ★★ 自检模式：只跑不变量检查，**不碰任何因子 JSON** ⇒ 立刻返回
-    if a.self_test:
-        return _self_test(B, dates, cols, close, STYLE_PROF)
 
-    # ★★★★★ 2026-09-21（待办 D）：**进入写盘阶段先拿锁** ✓
-    #   （放在 `--self-test` 之后 —— 那个模式**不写任何文件** ⇒ 不该占锁 ✓，
-    #     否则回归里的自检会被正在跑的 stage 卡住 ✗）
-    import atexit as _ae
-    _lk = _acquire_write_lock(a.stage)
-    _ae.register(_release_write_lock, _lk)     # 正常退出/抛异常都会释放 ✓
-
+def _run_items(uniq, alias, a, B, dates, cols, close, STYLE, STYLE_PROF, ALLSTY, LIM):
+    """主循环：逐因子算各 stage 段 + 别名副本原子写盘 -> (ok, bad)。"""
     ok, bad = 0, []
     for i, it in enumerate(uniq, 1):
         nm = it['_nm']
@@ -1253,7 +1228,6 @@ def main():
         #   ⇒ 别名文件里"只属于它自己"的段会被**覆盖掉**（实测：`--stage=strip` 跑完，
         #     `F01_1000.json` 原有的 `style` 段消失了 ✗；因为同公式的另两个编号没有 style）
         #   ⇒ 修法：只把**本次真正算过的键**（`touched`）合并进"**它自己那份**旧文件" ✓
-        _pre = dict(cur)
         _touched = set()                       # ★ 本次**真正算过**的键（显式记录，别靠对象身份推断 ✗）
         try:
             fac, rr, sign = _aligned(it, B, dates, cols, close, a.cost, a.window)
@@ -1304,7 +1278,7 @@ def main():
             # ★ 每个名字各写一份（别名副本把 `name` 改成**它自己的编号**，免得详情页显示别人的名字）✓
             # ★★ 2026-09-17 修（两处，都实测踩到）：
             #   ① 别名副本**只合并"本次算过的键"**，其余用"它自己那份"旧文件 ✓
-            #      （原实现整份照抄规范名那份 ⇒ 别名独有的段被覆盖掉 ✗，见上面 `_pre` 的说明）
+            #      （原实现整份照抄规范名那份 ⇒ 别名独有的段被覆盖掉 ✗，见上面"别名副本丢段"的说明）
             #   ② ⚠ **不能用"对象身份"推断 touched** ✗ —— `strip2` 那步是**原地修改**
             #      （`st = cur.get('strip')` 后 `st['navs'].update(...)`）⇒ 对象身份不变 ⇒ 会被漏掉 ✗
             #      （实测：`F01_1000`/`F01_500` 两个别名文件补完后仍缺 `strip2` ✗）⇒ 改为**显式记录** ✓
@@ -1338,6 +1312,46 @@ def main():
             bad.append(nm)
         print('    （%.0fs · 文件 %.1f KB）'
               % (time.time() - t1, os.path.getsize(p) / 1024.0 if os.path.exists(p) else 0))
+    return ok, bad
+
+
+def main():
+    a = _parse_args()
+    _setup_output(a)
+
+    import build_facs as BF
+    LE = BF._prep_main()
+    LE.set_panel_cache(a.panel_cache)
+    os.makedirs(CURVE_DIR, exist_ok=True)
+
+    items, n_hist = _collect_items(a, BF)
+    if a.include_history:
+        print('  ★ --include_history：额外补 **%d 个已移出当前库的历史编号**' % n_hist)
+    uniq, alias = _dedup(items, BF)
+
+    uniq = _filter_needed(uniq, alias, a)
+    if not uniq:
+        print('  ⇒ 无待算因子')
+        return 0
+    t0 = time.time()
+    bf = LE.base_fields()
+    B, dates, cols, close = bf['B'], bf['dates'], bf['cols'], bf['close']
+    print('面板载入完成: %d 日 x %d 股 (%.0fs)' % (len(dates), len(cols), time.time() - t0))
+
+    STYLE, STYLE_PROF, ALLSTY, LIM = _build_context(a, LE, B, dates, cols, close)
+
+    # ★★ 自检模式：只跑不变量检查，**不碰任何因子 JSON** ⇒ 立刻返回
+    if a.self_test:
+        return _self_test(B, dates, cols, close, STYLE_PROF)
+
+    # ★★★★★ 2026-09-21（待办 D）：**进入写盘阶段先拿锁** ✓
+    #   （放在 `--self-test` 之后 —— 那个模式**不写任何文件** ⇒ 不该占锁 ✓，
+    #     否则回归里的自检会被正在跑的 stage 卡住 ✗）
+    import atexit as _ae
+    _lk = _acquire_write_lock(a.stage)
+    _ae.register(_release_write_lock, _lk)     # 正常退出/抛异常都会释放 ✓
+
+    ok, bad = _run_items(uniq, alias, a, B, dates, cols, close, STYLE, STYLE_PROF, ALLSTY, LIM)
     print()
     print('完成 %d 个 · 失败 %d 个 · 用时 %.0fs' % (ok, len(bad), time.time() - t0))
     if bad:
