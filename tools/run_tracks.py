@@ -843,79 +843,8 @@ def _parse_args():
             panel_cache, gens_per_round, min_gens_per_round, pool_tail, extra)
 
 
-def main():
-    (pools, rounds, n, l2, dry, inject_spec, no_global, force_single,
-     exec_mode, max_parallel, auto_parallel, from_ctl, mem_per_engine,
-     panel_cache, gens_per_round, min_gens_per_round, pool_tail, extra) = _parse_args()
-    log('=' * 76)
-    log('多池轨道驱动: 池={}  每池 {} 轮  n={} l2={}  dry={}'.format(pools, rounds, n, l2, dry))
-    log('透传引擎参数: {}'.format(' '.join(extra)))
-    # ★★★★★ 2026-09-23：**单实例闸**（`--rounds>0` = 会 spawn 引擎的那种 ⇒ 必须拦 ✓）
-    #   ⚠⚠ 必须在**任何 `write_ctl` 之前**：否则第二个实例会先把控制文件冲掉再退出 ✗✗
-    #     （那会把第一个调度器的 enabled/stopped/rounds 改成自己的 ⇒ 更隐蔽的破坏 ✗）
-    if rounds > 0:
-        _ok, _why = acquire_single_instance()
-        if not _ok:
-            log('')
-            log('=' * 76)
-            log('[!] **已有一个调度器在跑** ⇒ 本进程**退出**（互斥量 {} ⇒ {}）✗'.format(
-                sched_mutex_name(), _why))
-            log('    为什么拦：两个调度器会抢同一个 `ai_test/_tracks/_control.json`、')
-            log('      并**互相杀掉对方刚起的引擎** —— 2026-09-23 10:16~10:19 实测：')
-            log('      `pool=300 gen=185` 与 `pool=500 gen=95` 各跑 2.8min 被杀 ⇒ **2 代作废**')
-            log('      （**无脏数据**：引擎代末原子写 ✓，代价只是白跑 ✓）')
-            log('    ⇒ 想跑第二条轨道：换**独立的 `_tracks` 目录**（控制文件隔离），')
-            log('      或先在看板「全部停止」停掉现有调度器；')
-            log('      `--force_single=1` 可强闯（⚠ 排障用，大概率两边互相杀）')
-            log('=' * 76)
-            return 3
-        log('  [闸] 单实例：已持有 `{}`（{}）⇒ 本机同时只会有 1 个调度器 ✓'.format(
-            sched_mutex_name(), _why))
-    plan = []
-    for p in pools:
-        g0, done = next_gen(p)
-        plan.append((p, g0, done))
-        _inj = inject_for(p, pools, inject_spec)
-        log('  [PLAN] pool={:<5s} 既有 {} 代 -> 从第 {} 代起跑 {} 轮{}'.format(
-            p, done, g0, rounds,
-            ('   [注入对照集] {}'.format(','.join(_inj)) if _inj else '')))
-    _n_all = sum(1 for p, _, _ in plan if inject_for(p, pools, inject_spec))
-    if _n_all:
-        log('  ★ 注入外部池库对照集（loop_todo §1.8）：为什么 —— `--decorr`/`--dup_ex_corr` '
-            '的对照集原本只是本轨道自己的 bank')
-        log('     ⇒ 跑全A 时**不知道池库挖到了什么** ⇒ 重挖。实测池因子 vs 全A 库 的收益流最大 |相关| '
-            '**中位 0.767**、>0.7 占 82%，而 --dup_ex_corr=0.90 只挡得住 18%')
-        log('     ⇒ 不注入 ≈ **把 82% 的算力花在重挖上**。语义：外部池库只作**对照**，'
-            '**不会**写回本轨道的 state/因子库。')
-        log('     ⚠ 只给 `all` 轨道注入（池轨道的价值是"给式子打池内标签"，注入全A 库会让它无产出）；'
-            '`--inject_pools=none` 可关。')
-    # ★★★★ 2026-09-17：命令行直跑 ⇒ **命令行即事实**（把 `enabled/stopped` 播种回控制文件）——
-    #   之后运行期的"动态加池/停池"**照样生效**（它们会覆盖这两个键）✓
-    #   ⚠ 必须放在"分叉"之前：并行分支是**每次迭代从 ctl 重读 `enabled/stopped`** 的 ✓
-    if not from_ctl:
-        write_ctl(enabled=list(pools), stopped=[])
-        log('[CTL] 命令行启动（无 `--from_ctl`）⇒ 以 `--pools={}` 为准：'
-            '已把它播种进控制文件、并清掉上次残留的 stopped ✓（看板启动会带 `--from_ctl=1`）'
-            .format(','.join(pools)))
-    log('=' * 76)
-    # ★★★ 2026-09-16：**调度模式分叉**（默认 rotate ⇒ 下面的轮转逻辑与改造前逐字一致）★
-    #   并行语义（队列/内存护栏/收尾）全部在 `tools/parallel_runner.py` 里，本文件不塞逻辑。
-    if exec_mode == 'parallel':
-        import parallel_runner as _PR
-        return _PR.run(pools=pools, rounds=rounds, n=n, l2=l2, extra=extra,
-                       inject_spec=inject_spec, no_global=no_global,
-                       max_parallel=max_parallel, mem_per_engine=mem_per_engine,
-                       panel_cache=panel_cache, dry=dry, auto_parallel=auto_parallel,
-                       gens_per_round=gens_per_round, pool_tail=pool_tail,
-                       min_gens_per_round=min_gens_per_round)
-    if dry:
-        log('（--dry：只列计划，不执行）')
-        return 0
-
-    # ★★★ v1.3.0：改为**池轮转**（外循环轮次、内循环池）。原来"每池连跑 N 代"会让
-    #   先跑的池吃掉全部时间（实测 9.3 小时里 300 独占、500/1000/50 一代没跑 ✗）。
-    #   ★ 代数**每代现取**（`next_gen(p)` 读 journal）—— journal 是**唯一事实源**，
-    #     比维护内存字典更健壮（进程重启/被杀后自动续上）✓
+def _rotate_schedule(plan, rounds, n, l2, extra, inject_spec, no_global, dry, pools):
+    """轮转主循环（rotate 模式）：逐轮遍历 plan、spawn 引擎、摘结果 + 守卫。"""
     write_ctl(running=True, round=0, rounds=rounds, phase='mine',
               enabled=[p for p, _, _ in plan] or pools, curPool=None, curGen=None)
     dirty = False                # ★ 有没有“未被收尾覆盖过的新进展”
@@ -1053,6 +982,11 @@ def main():
         if ran_round and not dry and not no_global:
             do_global_tail('第 {} / {} 轮结束'.format(rnd, rounds))
             dirty = False
+    return stopped_by_user, ran_round, dirty
+
+
+def _finalize_schedule(stopped_by_user, ran_round, dirty, rounds, no_global, dry):
+    """轮转结束后的收尾（全部停/跑满的自动收尾 + 复位控制文件）。"""
     log('===== 全部轨道结束 =====')
     # ★★ 因"全部停"退出、且还有未被收尾覆盖的进展 ⇒ **自动收尾**
     #    （用户要求 4：「一键全部停掉后，它就自动进入收尾阶段」）
@@ -1103,6 +1037,82 @@ def main():
         log('       ⇒ 用 `run_tracks.py --rounds=0` 单独收尾，或直接跑轮转调度器 ✓')
         log('=' * 76)
     return 0
+def main():
+    (pools, rounds, n, l2, dry, inject_spec, no_global, force_single,
+     exec_mode, max_parallel, auto_parallel, from_ctl, mem_per_engine,
+     panel_cache, gens_per_round, min_gens_per_round, pool_tail, extra) = _parse_args()
+    log('=' * 76)
+    log('多池轨道驱动: 池={}  每池 {} 轮  n={} l2={}  dry={}'.format(pools, rounds, n, l2, dry))
+    log('透传引擎参数: {}'.format(' '.join(extra)))
+    # ★★★★★ 2026-09-23：**单实例闸**（`--rounds>0` = 会 spawn 引擎的那种 ⇒ 必须拦 ✓）
+    #   ⚠⚠ 必须在**任何 `write_ctl` 之前**：否则第二个实例会先把控制文件冲掉再退出 ✗✗
+    #     （那会把第一个调度器的 enabled/stopped/rounds 改成自己的 ⇒ 更隐蔽的破坏 ✗）
+    if rounds > 0:
+        _ok, _why = acquire_single_instance()
+        if not _ok:
+            log('')
+            log('=' * 76)
+            log('[!] **已有一个调度器在跑** ⇒ 本进程**退出**（互斥量 {} ⇒ {}）✗'.format(
+                sched_mutex_name(), _why))
+            log('    为什么拦：两个调度器会抢同一个 `ai_test/_tracks/_control.json`、')
+            log('      并**互相杀掉对方刚起的引擎** —— 2026-09-23 10:16~10:19 实测：')
+            log('      `pool=300 gen=185` 与 `pool=500 gen=95` 各跑 2.8min 被杀 ⇒ **2 代作废**')
+            log('      （**无脏数据**：引擎代末原子写 ✓，代价只是白跑 ✓）')
+            log('    ⇒ 想跑第二条轨道：换**独立的 `_tracks` 目录**（控制文件隔离），')
+            log('      或先在看板「全部停止」停掉现有调度器；')
+            log('      `--force_single=1` 可强闯（⚠ 排障用，大概率两边互相杀）')
+            log('=' * 76)
+            return 3
+        log('  [闸] 单实例：已持有 `{}`（{}）⇒ 本机同时只会有 1 个调度器 ✓'.format(
+            sched_mutex_name(), _why))
+    plan = []
+    for p in pools:
+        g0, done = next_gen(p)
+        plan.append((p, g0, done))
+        _inj = inject_for(p, pools, inject_spec)
+        log('  [PLAN] pool={:<5s} 既有 {} 代 -> 从第 {} 代起跑 {} 轮{}'.format(
+            p, done, g0, rounds,
+            ('   [注入对照集] {}'.format(','.join(_inj)) if _inj else '')))
+    _n_all = sum(1 for p, _, _ in plan if inject_for(p, pools, inject_spec))
+    if _n_all:
+        log('  ★ 注入外部池库对照集（loop_todo §1.8）：为什么 —— `--decorr`/`--dup_ex_corr` '
+            '的对照集原本只是本轨道自己的 bank')
+        log('     ⇒ 跑全A 时**不知道池库挖到了什么** ⇒ 重挖。实测池因子 vs 全A 库 的收益流最大 |相关| '
+            '**中位 0.767**、>0.7 占 82%，而 --dup_ex_corr=0.90 只挡得住 18%')
+        log('     ⇒ 不注入 ≈ **把 82% 的算力花在重挖上**。语义：外部池库只作**对照**，'
+            '**不会**写回本轨道的 state/因子库。')
+        log('     ⚠ 只给 `all` 轨道注入（池轨道的价值是"给式子打池内标签"，注入全A 库会让它无产出）；'
+            '`--inject_pools=none` 可关。')
+    # ★★★★ 2026-09-17：命令行直跑 ⇒ **命令行即事实**（把 `enabled/stopped` 播种回控制文件）——
+    #   之后运行期的"动态加池/停池"**照样生效**（它们会覆盖这两个键）✓
+    #   ⚠ 必须放在"分叉"之前：并行分支是**每次迭代从 ctl 重读 `enabled/stopped`** 的 ✓
+    if not from_ctl:
+        write_ctl(enabled=list(pools), stopped=[])
+        log('[CTL] 命令行启动（无 `--from_ctl`）⇒ 以 `--pools={}` 为准：'
+            '已把它播种进控制文件、并清掉上次残留的 stopped ✓（看板启动会带 `--from_ctl=1`）'
+            .format(','.join(pools)))
+    log('=' * 76)
+    # ★★★ 2026-09-16：**调度模式分叉**（默认 rotate ⇒ 下面的轮转逻辑与改造前逐字一致）★
+    #   并行语义（队列/内存护栏/收尾）全部在 `tools/parallel_runner.py` 里，本文件不塞逻辑。
+    if exec_mode == 'parallel':
+        import parallel_runner as _PR
+        return _PR.run(pools=pools, rounds=rounds, n=n, l2=l2, extra=extra,
+                       inject_spec=inject_spec, no_global=no_global,
+                       max_parallel=max_parallel, mem_per_engine=mem_per_engine,
+                       panel_cache=panel_cache, dry=dry, auto_parallel=auto_parallel,
+                       gens_per_round=gens_per_round, pool_tail=pool_tail,
+                       min_gens_per_round=min_gens_per_round)
+    if dry:
+        log('（--dry：只列计划，不执行）')
+        return 0
+
+    # ★★★ v1.3.0：改为**池轮转**（外循环轮次、内循环池）。原来"每池连跑 N 代"会让
+    #   先跑的池吃掉全部时间（实测 9.3 小时里 300 独占、500/1000/50 一代没跑 ✗）。
+    #   ★ 代数**每代现取**（`next_gen(p)` 读 journal）—— journal 是**唯一事实源**，
+    #     比维护内存字典更健壮（进程重启/被杀后自动续上）✓
+    stopped_by_user, ran_round, dirty = _rotate_schedule(
+        plan, rounds, n, l2, extra, inject_spec, no_global, dry, pools)
+    return _finalize_schedule(stopped_by_user, ran_round, dirty, rounds, no_global, dry)
 
 
 if __name__ == '__main__':

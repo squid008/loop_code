@@ -477,7 +477,7 @@ md 总览 ✓ · md 明细 ✓ · **不在** JSONL ✓ · **不在** 登记表 �
   - ✅ `combo_build.main` **304→40 行**（抽 7 个纯函数 + 守门 15/15 + 全量回归 51/51）
   - ✅ `factor_curves.main` **370→42 行**（抽 7 个函数 + 模块级 `_path` + 删死变量 `_pre`）
   - ✅ `combo_constrain.run` **369→10 行**（抽 `_parse_args`/`_load_and_prep`/`_simulate`/`_report`）
-  - ⏳ `run_tracks.main` **433→242 行**（参数解析抽成 `_parse_args`；主循环留后续）
+  - ✅ `run_tracks.main` **433→76 行**（`_parse_args` + `_rotate_schedule` + `_finalize_schedule`）
   - ⬜ `parallel_runner.run`(390) · `loop_critic.suggest`(308，闭包网需 ctx 化)
   （`strategies/` 重复常量 → **你已拍板「冻结不动」** ✓）
 - ⬜ L3 `loop_engine` 模块化 + `run()` ctx 化（最后做，需与实盘对照）
