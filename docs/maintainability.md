@@ -77,9 +77,12 @@
   ★ 死/活判定以 `ops_registry.py` 唯一事实源为准：`ts_delay`/`ts_delta` 绑 `('le', ...)` → 走本文件
   pandas 版（**活，保留**）；`ts_mean` 被去相关闸门 L2819 直接调用（**活，保留**）；其余 6 个绑
   `('fo', ...)` → 走 fastops ⇒ pandas 版**零引用**（`ts_max/min` 只被死 `ts_rank` 调用）⇒ 删 ✓
-- [ ] `factor_miner.py` 其余「仅本文件引用」的疑似死链逐个 grep 甄别
-- [ ] `loop_pools.pool_masks` / `loop_watch.now_s` / `ml_common.cross_rank` 逐个甄别
-- 验收：`_audit_deadcode.py` 的「彻底无引用」清零（registry 例外除外）+ 全量回归绿
+- [x] **L1-③ 完成**：删 `engine/ml_common.py`（ML验证 & 双重同伴效应的共享数据层，live 代码无人 import）
+  + 2 个归档研究脚本（`peer_effect.py`/`verify_neutral.py`）。★ 背景：广发「双重同伴效应」是 2026-09-08
+  Round18 已**验证失败**（申万 31 互斥行业下 peer_avg 无 alpha）并放弃的方向，与 A/B 角挖因子无关 ✓
+- ⏸ **剩余极小死码（价值≈0，暂不删）**：`loop_pools.pool_masks`（1 行 wrapper）/ `loop_watch.now_s`（1 行）/
+  其余都随 ml_common 一起清了 —— 这些留着只占 `_audit_deadcode` 一行噪音，等随模块级改动顺手删
+- 验收：`_audit_deadcode.py` 的「彻底无引用」基本清零（registry 例外 + 上面 2 个极小 helper 除外）+ 全量回归绿
 
 > ⚠ **教训（写进 R4 的实例）**：删任何"疑似死码"前，`grep` 要**连 `history/` 归档一起搜** ——
 > `_audit_deadcode` 只扫 `engine/tools/standard`，漏掉 `history/research/` 的 import ✗

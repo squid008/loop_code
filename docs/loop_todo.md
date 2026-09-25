@@ -471,7 +471,8 @@ md 总览 ✓ · md 明细 ✓ · **不在** JSONL ✓ · **不在** 登记表 �
 - ✅ **L1-② 完成（拍板选 a）**：删 6 个死 pandas 老算子（`ts_std/ts_sum/ts_rank/ts_corr/ts_max/ts_min`）
   + 3 个已坏归档研究脚本（round1/round2/bench_ops）；保留 `ts_mean`/`ts_delay`/`ts_delta`
   （`ts_mean` 被闸门直接调用、`ts_delay`/`ts_delta` 绑 registry `('le',...)`，均为活）
-- ⬜ L1-③ 其余疑似死链逐个 grep 甄别（`pool_masks`/`now_s`/`cross_rank`/`industry_names`…）
+- ✅ **L1-③ 完成**：删 `engine/ml_common.py`（废弃的「双重同伴效应」研究数据层，live 无人 import）
+  + `peer_effect.py`/`verify_neutral.py` 两个归档研究脚本；剩余极小死码（`pool_masks`/`now_s`，各 1 行）价值≈0 暂不删
 - ⬜ L2 次级大函数（run_tracks.main / parallel_runner.run / factor_curves.main / combo_*）拆分
   （`strategies/` 重复常量 → **你已拍板「冻结不动」**，仅登记在 `maintainability.md` 台账，不抽 ✓）
 - ⬜ L3 `loop_engine` 模块化 + `run()` ctx 化（最后做，需与实盘对照）
