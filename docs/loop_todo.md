@@ -475,8 +475,9 @@ md 总览 ✓ · md 明细 ✓ · **不在** JSONL ✓ · **不在** 登记表 �
   + `peer_effect.py`/`verify_neutral.py` 两个归档研究脚本；剩余极小死码（`pool_masks`/`now_s`，各 1 行）价值≈0 暂不删
 - ⏳ L2 次级大函数拆分（进行中）：
   - ✅ `combo_build.main` **304→40 行**（抽 7 个纯函数 + 守门 15/15 + 全量回归 51/51）
-  - ⬜ `run_tracks.main`(447) · `parallel_runner.run`(390) · `factor_curves.main`(370) ·
-    `combo_constrain.run`(369) · `loop_critic.suggest`(308)
+  - ⏳ `factor_curves.main` **370→~280 行**（第一步：抽 4 个纯组装函数；核心循环留第二步）
+  - ⬜ `run_tracks.main`(447) · `parallel_runner.run`(390) · `combo_constrain.run`(369) ·
+    `loop_critic.suggest`(308)
   （`strategies/` 重复常量 → **你已拍板「冻结不动」** ✓）
 - ⬜ L3 `loop_engine` 模块化 + `run()` ctx 化（最后做，需与实盘对照）
 

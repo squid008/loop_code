@@ -94,8 +94,10 @@
   - [x] `combo_build.main` **304→40 行**：抽 `_parse_args`/`_load_bank`/`_load_base`/`_eval_factors`/
     `_build_weights`/`_synthesize`/`_emit_report` 7 个纯函数；守门 `tools/_test_combo_build.py` **15/15**；
     顺带删死 import `datetime`
-  - [ ] `run_tracks.main`（447）· `parallel_runner.run`（390）· `factor_curves.main`（370）·
-    `combo_constrain.run`（369）· `loop_critic.suggest`（308）
+  - [~] `factor_curves.main` **370→~280 行**（第一步：抽 `_parse_args`/`_setup_output`/`_collect_items`/`_dedup`
+    4 个纯组装函数；核心门控闭包 + context 构建 + 主循环留第二步）
+  - [ ] `run_tracks.main`（447）· `parallel_runner.run`（390）· `combo_constrain.run`（369）·
+    `loop_critic.suggest`（308）
 - 验收：每拆一个配守门 + 全量回归绿 + 行为逐字不变（必要时 diff 产物）
 
 ### L3 上帝模块拆分（高风险，最后做，分多步）

@@ -952,7 +952,8 @@ def _self_test(B, dates, cols, close, STYLE_PROF):
     return 0
 
 
-def main():
+def _parse_args():
+    """解析命令行参数。"""
     ap = argparse.ArgumentParser()
     # ★★ 2026-09-18：默认池从 `loop_pools.POOLS` **派生**（原来硬编码 ⇒ 漏了 50 池 ✗）
     import loop_pools as _LP
@@ -982,8 +983,11 @@ def main():
     ap.add_argument('--out_dir', default='',
                     help='输出目录（默认 docs/factor_curves）；换口径时给 e.g. factor_curves_fwd20 ✓')
     ap.add_argument('--panel_cache', default='off', choices=['off', 'use', 'build'])
-    a = ap.parse_args()
+    return ap.parse_args()
 
+
+def _setup_output(a):
+    """设定输出目录与调仓周期口径（顺序敏感：先改 CURVE_DIR 再改 FWD）。"""
     # ---- ★ 顺序很重要（2026-09-21）：先定**输出目录**，再定 **FWD** ----
     #   为什么：`_lock_path()` / `_path()` / `os.makedirs` **都读全局 `CURVE_DIR`** ✓
     #   ⇒ 换目录必须在**拿锁与任何写盘之前**做 ✓（否则锁和文件都落在 5 日目录里 ✗）
@@ -999,11 +1003,9 @@ def main():
               % (_FM.FWD, _old_fwd, max(1, int(418 * _old_fwd / float(max(_FM.FWD, 1))))))
     print('  ★ 输出目录 = %s' % os.path.relpath(CURVE_DIR, ROOT))
 
-    import build_facs as BF
-    LE = BF._prep_main()
-    LE.set_panel_cache(a.panel_cache)
-    os.makedirs(CURVE_DIR, exist_ok=True)
 
+def _collect_items(a, BF):
+    """枚举要出曲线的因子（当前库 bank + 可选的历史编号）-> (items, n_hist)"""
     items = []
     n_hist = 0
     for p in [x.strip() for x in a.pools.split(',') if x.strip()]:
@@ -1032,8 +1034,11 @@ def main():
                                       else r.get('ic')),
                               ae_lib=r.get('ann_ex'), _nm=None))
             n_hist += 1
-    if a.include_history:
-        print('  ★ --include_history：额外补 **%d 个已移出当前库的历史编号**' % n_hist)
+    return items, n_hist
+
+
+def _dedup(items, BF):
+    """同表达式可能挂多个名字：计算只做一次、每名字各落一份文件 -> (uniq, alias)"""
     # ★★ 2026-09-17（配合用户要的"历史编号也要有曲线"）：
     #   **同一表达式可能挂着多个名字** —— 历史编号与别的池的在库因子"同式不同名"（实测 9 个历史里有 2 个）
     #   ⇒ 计算只做一次（省时间），但**每个名字都要落一份文件**；否则按名字查会显示"暂无曲线数据"
@@ -1048,6 +1053,22 @@ def main():
             continue
         seen.add(it['expr'])
         uniq.append(it)
+    return uniq, alias
+
+
+def main():
+    a = _parse_args()
+    _setup_output(a)
+
+    import build_facs as BF
+    LE = BF._prep_main()
+    LE.set_panel_cache(a.panel_cache)
+    os.makedirs(CURVE_DIR, exist_ok=True)
+
+    items, n_hist = _collect_items(a, BF)
+    if a.include_history:
+        print('  ★ --include_history：额外补 **%d 个已移出当前库的历史编号**' % n_hist)
+    uniq, alias = _dedup(items, BF)
 
     def _path(nm):
         return os.path.join(CURVE_DIR, '%s.json' % nm)
