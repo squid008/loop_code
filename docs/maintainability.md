@@ -97,7 +97,8 @@
   - [x] `factor_curves.main` **370→42 行**：抽 `_parse_args`/`_setup_output`/`_collect_items`/`_dedup`/
     `_filter_needed`/`_build_context`/`_run_items` + 模块级 `_path`；顺带删死变量 `_pre`
   - [x] `combo_constrain.run` **369→10 行**：抽 `_parse_args`/`_load_and_prep`/`_simulate`/`_report`
-  - [ ] `run_tracks.main`（447）· `parallel_runner.run`（390）· `loop_critic.suggest`（308）
+  - [~] `run_tracks.main` **433→242 行**（参数解析 191 行抽成 `_parse_args`；单实例闸+轮转主循环留后续）
+  - [ ] `parallel_runner.run`（390）· `loop_critic.suggest`（308，闭包网，需 ctx 化）
 - 验收：每拆一个配守门 + 全量回归绿 + 行为逐字不变（必要时 diff 产物）
 
 ### L3 上帝模块拆分（高风险，最后做，分多步）

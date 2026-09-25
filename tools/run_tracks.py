@@ -646,7 +646,8 @@ def _global_tail_impl(tag=''):
     write_ctl(phase='idle', tailAt=None)
 
 
-def main():
+def _parse_args():
+    """解析命令行参数（手动解析，返回全部调度参数）。"""
     pools = ['300', '500', '1000']
     rounds = 3
     n, l2 = 800, 30
@@ -837,6 +838,15 @@ def main():
 
     if engine_args:                      # ★ 追加式（不受参数书写顺序影响）
         extra = extra + engine_args
+    return (pools, rounds, n, l2, dry, inject_spec, no_global, force_single,
+            exec_mode, max_parallel, auto_parallel, from_ctl, mem_per_engine,
+            panel_cache, gens_per_round, min_gens_per_round, pool_tail, extra)
+
+
+def main():
+    (pools, rounds, n, l2, dry, inject_spec, no_global, force_single,
+     exec_mode, max_parallel, auto_parallel, from_ctl, mem_per_engine,
+     panel_cache, gens_per_round, min_gens_per_round, pool_tail, extra) = _parse_args()
     log('=' * 76)
     log('多池轨道驱动: 池={}  每池 {} 轮  n={} l2={}  dry={}'.format(pools, rounds, n, l2, dry))
     log('透传引擎参数: {}'.format(' '.join(extra)))
