@@ -481,7 +481,9 @@ md 总览 ✓ · md 明细 ✓ · **不在** JSONL ✓ · **不在** 登记表 �
   - ⏳ `loop_critic.suggest` **308→207 行**（抽 `_init_sug`/`_apply_rules`/`_finalize_sug`；闭包网 ctx 化留第二步）
   - ✅ `parallel_runner.run` **390→~344 行**（抽 `_setup_parallel`/`_cleanup_parallel`；主循环调度状态机保留）
   （`strategies/` 重复常量 → **你已拍板「冻结不动」** ✓）
-- ⬜ L3 `loop_engine` 模块化 + `run()` ctx 化（最后做，需与实盘对照）
+- ⏳ L3 `loop_engine` 模块化 + `run()` ctx 化（进行中，需与实盘对照）：
+  - ✅ Step 1：抽 `Node`+`collect` 到 `loop_expr.py`（顺带根治「两份 Node」）
+  - ⬜ Step 2：抽失败库/跨量纲/亲本/LLM 引导等段落 · Step 3：`run()` ctx 化
 
 ---
 

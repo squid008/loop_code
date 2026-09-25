@@ -152,6 +152,7 @@ DEFAULT_CFG = dict(leaf_w={}, op_bias={}, depth=[2, 3, 4],
 # 资金流 moneyflow3 原始拆分16列: 金额(×1e4元,量纲A)+量(×100股,量纲V), 净额不预焊由GP自组合;
 # BARRA 连续风格11(barra.h5,行业哑不入叶) / 财报PIT as-of比率8(fa_pit.h5,按info_date无未来函数)
 from loop_fields import MF16, BARRA_LEAVES, FA_LEAVES, LEAVES, FIELDS
+from loop_expr import Node, collect            # ★ L3 拆分：表达式核心类型/遍历单一事实源
 
 # ★★★ 2026-09-16 新增「面板只读缓存」模式（`--panel_cache`，**默认 off ⇒ 与改造前逐位不变**）
 #   实测：面板 B = 4.42 GB 且**构造完成后只读**；而 Windows 是 spawn(无 fork) ⇒
@@ -558,29 +559,6 @@ BINARY = _OPS.build_binary(_FO, vars())
 #   (基础7 + 派生12 + MF16资金流 + BARRA11风格 + FA8财报 = 54), 勿在此重复硬编码(防漂移)
 
 # ===================== 3. 表达式 =====================
-class Node(object):
-    __slots__ = ('op', 'args')
-
-    def __init__(self, op, args):
-        self.op = op
-        self.args = args
-
-    def __str__(self):
-        if not self.args:
-            return self.op
-        return f"{self.op}({', '.join(str(a) for a in self.args)})"
-
-    def key(self):
-        """结构哈希(用于FSA), 忽略叶子名差异时可用 op-only"""
-        if not self.args:
-            return self.op
-        return (self.op, tuple(a.key() if isinstance(a, Node) else a
-                               for a in self.args))
-
-    def size(self):
-        return 1 + sum(a.size() for a in self.args if isinstance(a, Node))
-
-
 class _StateUnpickler(pickle.Unpickler):
     """★★★★★ 2026-09-25：读 state 时把**历史上误存的** `loop_engine.Node` 一并归一成本类 ✓
 
@@ -1303,15 +1281,6 @@ def mutate(node, rng):
         (rng.choice(list(BINARY.keys())) if len(tgt.args) == 2
          else rng.choice(LEAVES))
     return node
-
-
-def collect(node, out=None):
-    out = [] if out is None else out
-    out.append(node)
-    for a in node.args:
-        if isinstance(a, Node):
-            collect(a, out)
-    return out
 
 
 # ---- 叶子字段族(写档用: loop_archive.csv 的 cat/leaf 列, 保证人读可筛) ----
