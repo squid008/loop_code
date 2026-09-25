@@ -140,7 +140,10 @@ def t_wired():
     n_left = len(re.findall(r'rng\.choice\(seeds', masked))
     chk(n_left == 0, '★ `pick_parent` 之外**没有**遗留的 `rng.choice(seeds` 直抽（实得 {} 处）'
                      .format(n_left))
-    chk('PARENT_SEL_MODES' in src and 'def pick_parent' in src, '纯函数 + 模式表已定义')
+    gen_src = open(os.path.join(ENG, 'loop_gen.py'), encoding='utf-8').read()
+    chk('PARENT_SEL_MODES' in gen_src and 'def pick_parent' in gen_src,
+        '纯函数 + 模式表已定义（在 loop_gen.py）')
+    chk('from loop_gen import' in src, 'loop_engine 从 loop_gen 引入亲本选择')
 
 
 def main():
