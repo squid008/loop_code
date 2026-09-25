@@ -32,14 +32,14 @@ import time
 import numpy as np
 import pandas as pd
 
-sys.path.insert(0, r'd:\loop_code\engine')
-sys.path.insert(0, r'd:\loop_code\tools')
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'engine'))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools'))
 
 import loop_engine as LE            # noqa: E402
 import loop_pools as LP             # noqa: E402
 import factor_miner as FM           # noqa: E402
 
-OUT = os.path.join(r'd:\loop_code\ai_test', 'alpha143_true')
+OUT = os.path.join(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'ai_test'), 'alpha143_true')
 os.makedirs(OUT, exist_ok=True)
 POOLS = ['all', '1000', '500', '300']
 POOL_CN = {'all': '全A', '1000': '中证1000', '500': '中证500', '300': '沪深300'}

@@ -443,6 +443,16 @@ def do_pool_tail(pool, tag='', min_free_gb=TAIL_MIN_FREE_GB, force=False):
                            '--stage=strip', '--panel_cache=use', '--pools=%s' % pool]),
             ('⑥', '风格画像', [PY, '-u', 'tools/factor_curves.py', '--only-new',
                             '--stage=style+strip2', '--panel_cache=use', '--pools=%s' % pool]),
+            # ★★★★★ 2026-09-25（用户："动态风格曲线图有在画吗？"）：**5 日口径的 expo 一直没人算** ✗
+            #   真因：下面 ⑥b 虽是 `--stage=all`（含 expo ✓），但它带
+            #     `--fwd=20 --out_dir=factor_curves_fwd20` ⇒ 只写 **20 日那份** ✗
+            #     ⇒ 5 日目录 `docs/factor_curves/` 的 `expo` 段**没有任何步骤会生成** ✗
+            #   （实测新入库 F47：5 日 JSON 无 expo / 20 日 JSON 有 ✓；库里那 75 个有 5 日 expo
+            #     是当初引入该功能时**手动批量补过**一次，之后新因子都不补 ✗）
+            #   ⇒ 补 ⑥c（增量 `--only-new`：`_need_one` 按 expo 的 `styCal` 判 ✓；
+            #      expo 计算 <1 秒/因子 ⇒ 开销可忽略 ✓）
+            ('⑥c', '动态暴露', [PY, '-u', 'tools/factor_curves.py', '--only-new',
+                             '--stage=expo', '--panel_cache=use', '--pools=%s' % pool]),
             # ★ 2026-09-21：20 日口径的**曲线**（详情页口径开关切过去要有图 ✓）
             #   ⚠ 比 5 日那条贵（≈100 秒/个 ✗）⇒ 只在**真有新因子**时才花这个钱 ✓
             ('⑥b', '曲线 20 日', [PY, '-u', 'tools/factor_curves.py', '--only-new',
@@ -583,8 +593,12 @@ def _global_tail_impl(tag=''):
     #     （core 看 `nav_e` · strip 看 `strip` · style 看 `tAdj/tYr/winYr` 是否齐全）
     #     ⇒ `--only-new` **只算缺的那部分**，已有的一律跳过 ✓
     #   ⚠ 不带 `--include_history`：只保证"**在库**因子齐全" ✓
+    #   ★★★★★ 2026-09-25：**加 ⑥c（5 日 expo）** —— 与 `do_pool_tail` 同款缺口：
+    #     下面 ⑥b 的 `--stage=all` 虽含 expo，但带 `--fwd=20` ⇒ 只写 20 日目录 ✗
+    #     ⇒ 5 日目录的 `expo` 段没人生成 ⇒ 新入库因子详情页（默认 5 日）"动态风格暴露"图空着 ✗
     for _tag, _stage, _what in (('⑤', 'strip', '剥风格四条净值（详情页"剥风格"图）'),
-                                ('⑥', 'style+strip2', '风格相关性画像（详情页"风格相关性"表）')):
+                                ('⑥', 'style+strip2', '风格相关性画像（详情页"风格相关性"表）'),
+                                ('⑥c', 'expo', '动态风格暴露（详情页"动态风格暴露"图）')):
         log('  [收尾 {}] {}'.format(_tag, _what))
         try:
             r = subprocess.run([PY, '-u', 'tools/factor_curves.py', '--only-new',

@@ -31,7 +31,7 @@ import re
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-ROOT = r'D:\loop_code'
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MINE = io.open(os.path.join(ROOT, 'dashboard', 'api', 'app', 'mine.py'), encoding='utf-8').read()
 RT = io.open(os.path.join(ROOT, 'tools', 'run_tracks.py'), encoding='utf-8').read()
 PR = io.open(os.path.join(ROOT, 'tools', 'parallel_runner.py'), encoding='utf-8').read()

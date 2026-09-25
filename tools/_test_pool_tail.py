@@ -19,7 +19,7 @@ import os
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-ROOT = r'D:\loop_code'
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # ★ 2026-09-25 换机器：原写死 `D:\loop_code` ⇒ 改自身路径派生 ✓
 RT = io.open(os.path.join(ROOT, 'tools', 'run_tracks.py'), encoding='utf-8').read()
 PR = io.open(os.path.join(ROOT, 'tools', 'parallel_runner.py'), encoding='utf-8').read()
 

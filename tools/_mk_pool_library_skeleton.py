@@ -22,7 +22,7 @@ import re
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-R = r'D:\loop_code'
+R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ENGINE_SRC = os.path.join(R, 'engine', 'loop_engine.py')
 POOL = sys.argv[1] if len(sys.argv) > 1 else '50'
 TAG = POOL

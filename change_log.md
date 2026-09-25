@@ -15,6 +15,79 @@
 
 ---
 
+## [1.22.1] — 2026-09-25
+
+> 主题：**收尾补「5 日动态风格暴露（expo）」＋ 全仓硬编码路径改 `__file__` 派生**
+> （用户之问：_"刚入库的因子有自动做20日的审查吗？还有各种动态风格曲线图有在画吗？"_ →
+> _"统一改成 __file__ 派生，让公司、家里的目录都没问题"_）
+
+### 一、修「5 日动态风格暴露（`expo`）从来没人算」（收尾管线缺口 ✗）
+
+**症状**（用户之问）：看板详情页默认 5 日口径，新入库因子的「动态风格暴露」图**空着** ✗
+
+**真因**：`v1.21.20` 上线的 `expo` 只在 `--stage in ('expo','all')` 时才算 ✓，而收尾管线的
+5 日曲线步骤 ——
+
+| 步骤 | stage | 口径 | 含 `expo`？ |
+|---|---|---|---|
+| ④ | `core` | 5 日 | ✗ |
+| ⑤ | `strip` | 5 日 | ✗ |
+| ⑥ | `style+strip2` | 5 日 | ✗ |
+| ⑥b | `all` | **20 日**（`--fwd=20 --out_dir=factor_curves_fwd20`）| ✓ 但**只写 20 日目录** |
+
+⇒ **5 日目录 `docs/factor_curves/` 的 `expo` 段没有任何步骤会生成** ✗
+（库里那 75 个有 5 日 `expo` 的，是当初引入该功能时**手动批量补过**一次，此后新因子都不补 ✗）
+
+**实测证据**：刚入库的 `F47`（2026-09-25 13:17:57 · 全A gen78 · `ts_mean200(ts_std60(cs_demean(neg(low))))`）
+- 5 日 `docs/factor_curves/F47.json` 顶层键：`… strip, style, …` —— **无 `expo`** ✗
+- 20 日 `docs/factor_curves_fwd20/F47.json`：`… strip, style, expo, …` —— 有 ✓
+
+**改法**：池内收尾（`do_pool_tail`）+ 全局收尾（`_global_tail_impl`）**各加一步 `⑥c`**（5 日 expo，
+`--only-new` 增量 ⇒ `_need_one` 按 `expo.styCal` 判，已算过的跳过 ✓）：
+
+```python
+('⑥c', '动态暴露', [PY, '-u', 'tools/factor_curves.py', '--only-new',
+                 '--stage=expo', '--panel_cache=use', '--pools=%s' % pool])   # 池内带 --pools
+```
+
+`expo` 计算 **<1 秒/因子** ⇒ 开销可忽略 ✓
+
+**验证**：
+- 补算现有（`--only-new --stage=expo`）：`完成 1 个 · 失败 0 个 · 用时 66s` ⇒ 5 日目录 `expo` 覆盖 **75 → 76** ✓
+- 增量幂等（再跑 `待算 0 个` ✓）· `--pools=all`（池内形式）✓
+- 剩余 2 个无 `expo` 属正常：`F42`（已移出的外部基准 Alpha143）· `Xe308ae`（当年 Alpha143
+  **错误公式**的探索文件，不在库）
+- 守门 `_test_sched_kgen.py`（收尾 pool-local / 全局界线）· `_test_pool_tail.py`（池内收尾护栏）全过 ✓
+
+### 二、全仓硬编码路径改 `__file__` 派生（公司 / 家里的目录都通用）
+
+**背景**（用户：_"这是我公司的项目，我给拷贝过来了…统一改成 __file__ 派生，让公司、家里的
+目录都没问题"_）：公司机在 `D:\loop_code`、家里在 `E:\quant\loop_code` ⇒ **写死盘符的脚本在
+另一台跑不了** ✗（实测：`tools/` 下多数 `_test_*.py` 在本机直接 `FileNotFoundError`）
+
+**改法**：`tools/` + `ai_test/` 下**所有**硬编码 `D:\loop_code` 统一改为
+
+```python
+os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # = 项目根（上一层是 tools/ 或 ai_test/）
+```
+
+- 共 **48 个文件 · 68 处** ✓
+- **只改代码、跳过注释**：`strategies/`、`standard/`、`calib_dedup_leaf.py`、`l1_shape_calib.py`
+  里的 `D:\loop_code` 是**说明文字**（如「原为硬编码 ⇒ 已改派生」）⇒ **有意保留** ✓
+- 顺带补 `tools/_verify_extra_args.py` 缺的 `import os` ✓
+- `tools/run_tracks.py`、`engine/`、`dashboard/` **本就无硬编码**（更早的 `v0.20.1` 已清理）✓
+
+**验证**：全量回归 **48/48 通过** ✓（`python ai_test/_run_all_tests.py`）
+—— 这批测试在本机**首次全部跑通**（此前因路径硬编码**全数报错** ✗）
+
+### 三、影响面 / 回退
+
+- **引擎的因子求值逻辑未改** ✓（只动收尾管线的**调度步骤** ＋ 脚本的**路径定位方式**）
+- 回退：`git checkout v1.22.0`（代码回退；已补的 5 日 `expo` 数据是产物，留着无害 ✓）
+- ⚠ 本次发版后须**重启调度器**，池内 / 全局收尾的 `⑥c` 才生效 ✓
+
+---
+
 ## [1.22.0] — 2026-09-23
 
 > 主题：**版本号收口**（用户：_"把版本升到1.22.0然后push吧"_）

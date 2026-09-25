@@ -12,7 +12,7 @@ import sys
 import urllib.request
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-R = r'D:\loop_code'
+R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFG = json.load(io.open(os.path.join(R, 'dashboard', 'config.json'), encoding='utf-8'))
 BH, BP = CFG['backend']['host'], CFG['backend']['port']
 FH, FP = CFG['frontend']['host'], CFG['frontend']['port']

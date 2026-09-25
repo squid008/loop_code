@@ -18,8 +18,8 @@ import re
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-APP = r'D:\loop_code\dashboard\web\src\App.tsx'
-API = r'D:\loop_code\dashboard\web\src\api.ts'
+APP = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dashboard', 'web', 'src', 'App.tsx')
+API = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dashboard', 'web', 'src', 'api.ts')
 
 src = io.open(APP, encoding='utf-8').read()
 FAIL = []
@@ -116,7 +116,7 @@ chk('★ 指标表/曲线的取数口径写明是 **当前有效库（state.bank
 print()
 print('【7】★ 顶栏控件栏：**永远保持一行**（2026-09-17 用户："红框这行就干脆一直放在这一行吧，'
       '不然它会随着内存变动一会儿跳到第一行一会儿跳到第二行"）')
-css = io.open(r'D:\loop_code\dashboard\web\src\styles.css', encoding='utf-8').read()
+css = io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dashboard', 'web', 'src', 'styles.css'), encoding='utf-8').read()
 chk('控件栏内部**不换行**且**不被压缩**（整条整体换行交给 `.top`）',
     re.search(r'\.ctrls \{[^}]*flex-wrap: nowrap', css) is not None
     and re.search(r'\.ctrls \{[^}]*flex: 0 0 auto', css) is not None,
@@ -213,7 +213,7 @@ print()
 print('【6】★ 风格相关性画像：横向条形图 + 图例显隐 + 数据来源（2026-09-16 用户要求）')
 chk('风格画像走**同一个 /curves 接口**的 style 字段（不另开接口），且**口径串过出口清洗**',
     'StyleProfileDto' in api and "'style': _plain_style(d.get('style'))" in io.open(
-        r'D:\loop_code\dashboard\api\app\sources\factors.py', encoding='utf-8').read(),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dashboard', 'api', 'app', 'sources', 'factors.py'), encoding='utf-8').read(),
     '另开接口要多一次请求、多一份缓存 ✗；口径串必须 `_plain` 过一遍 ✗')
 chk('横向条形图组件已实现', 'function BarChart' in src)
 # ⚠ 文案断言别绑**具体措辞里的引号**：用户 2026-09-16 要求"文案去掉引号" ⇒ 原来断言
@@ -265,7 +265,7 @@ chk('★★ 老曲线文件兼容：没有 `v3` 时**自动退回两根**（不�
 
 print()
 print('【7】★ 调度模式 / 面板共享：UI 控件必须接到位（2026-09-16 用户之问「前端还没把并行切换加上」）')
-MINE = r'D:\loop_code\dashboard\api\app\mine.py'
+MINE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dashboard', 'api', 'app', 'mine.py')
 minepy = io.open(MINE, encoding='utf-8').read()
 # ★ 2026-09-16（用户："把轮转/并行按钮都隐藏了，先直接默认并行吧"）⇒ 按钮撤掉、固定并行 ✓
 chk('★ 模式分段控件**已撤**（固定并行），启动固定传 execMode=parallel',
@@ -277,9 +277,9 @@ chk('★「预算」输入框已撤（实测它是"排队闸门"不是"内存上
     '每个引擎的内存预算' not in src and 'setMemPerEngine' not in src)
 chk('★ 面板共享**勾选框已撤**（改为默认常开），启动固定传 panelCache=use',
     'setPanelCache' not in src and "panelCache: 'use'" in src)
-MINE = r'D:\loop_code\dashboard\api\app\mine.py'
+MINE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dashboard', 'api', 'app', 'mine.py')
 minepy = io.open(MINE, encoding='utf-8').read()
-PARR = r'D:\loop_code\tools\parallel_runner.py'
+PARR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools', 'parallel_runner.py')
 prpy = io.open(PARR, encoding='utf-8').read()
 chk('★ mine.py：并行数**自动算**（★ 2026-09-23 起走**单一事实源** `slot_cap`：夹到启用池数、至少 1 ✓）',
     'max_parallel = _PR().slot_cap(' in minepy,
@@ -296,7 +296,7 @@ chk('★ 池卡片文案**跟实际模式一致**（并行下不写"轮转中"�
     "qword = mine?.execMode === 'parallel'" in src and '已参与${qword}' in src)
 # ★★ 用户实测"停完再启动变成了轮转"⇒ 根因是 UI 控件与后端"上次设置"脱钩（页面刷新回默认）
 #   ⇒ 现在**模式固定并行**，这个坑从结构上消失了（不必再同步；状态区仍以真实命令行为准）✓
-CSS = io.open(r'D:\loop_code\dashboard\web\src\styles.css', encoding='utf-8').read()
+CSS = io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dashboard', 'web', 'src', 'styles.css'), encoding='utf-8').read()
 chk('★ 状态区仍以**真实进程命令行**为准显示模式（UI 固定并行 ≠ 实际在跑什么）',
     'mine.execMode === ' in src)
 # ⚠ 必须**先剔注释**再断言 —— 注释里就写着 `overflow-x: auto` 这几个字（解释它为何被去掉）✗
@@ -320,7 +320,7 @@ chk('状态区显示**实际**在跑的模式（不是 UI 上选的那个）',
 chk('mine.py：**非默认才追加开关**（默认命令行逐字不变）',
     "if exec_mode != 'rotate':" in minepy and "if panel_cache != 'off':" in minepy)
 chk('mine.py：启动参数不可热改 ⇒ 409 拒绝（不静默 no-op）',
-    '不能热改' in minepy and 'e.code == 409' in open(r'D:\loop_code\tools\_test_mine_launch.py',
+    '不能热改' in minepy and 'e.code == 409' in open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools', '_test_mine_launch.py'),
                                                   encoding='utf-8').read())
 chk('mine.py：内存护栏与「启动上限」「运行期闸门」**同一个口径**（2026-09-23 统一 ✓）',
     '_PR().per_engine_gb(' in minepy and '_PR().slot_cap(' in minepy,
@@ -328,16 +328,16 @@ chk('mine.py：内存护栏与「启动上限」「运行期闸门」**同一个
     '同一台机器三套答案、界面显示命令行天花板 ⇒ 用户被"才 2 个槽位？"绊住 ✗ '
     '（改由 tools/parallel_runner.py 的 per_engine_gb / slot_cap 单一事实源 ✓，守门见 _test_slot_caliber.py）')
 chk('启动参数回归测试在册（假 Popen + 快照还原 ctl）',
-    os.path.isfile(r'D:\loop_code\tools\_test_mine_launch.py')
-    and '_control.json' in open(r'D:\loop_code\tools\_test_mine_launch.py', encoding='utf-8').read())
+    os.path.isfile(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools', '_test_mine_launch.py'))
+    and '_control.json' in open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools', '_test_mine_launch.py'), encoding='utf-8').read())
 
 print()
 print('【9】★★★★★ 「轮数上限」的接线（2026-09-23 用户实测："我单池点启动，面板上轮数我填了 50，'
       '怎么轮数上限还是 1 呢？"）')
 # 真因（两处叠加 ✗）：① 前端/接口根本不传 rounds ② 调度器把上限**启动时拍死**（写 ctl 也不生效 ✗）
 #   ⇒ 本节的断言正好各钉一处，防止再回退 ✓
-mainpy = io.open(r'D:\loop_code\dashboard\api\app\main.py', encoding='utf-8').read()
-rtpy = io.open(r'D:\loop_code\tools\run_tracks.py', encoding='utf-8').read()
+mainpy = io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dashboard', 'api', 'app', 'main.py'), encoding='utf-8').read()
+rtpy = io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools', 'run_tracks.py'), encoding='utf-8').read()
 chk('api.ts：`mineStartPool` 接受并**真的发送** `rounds`（原来只发 `{pool}` ✗）',
     re.search(r'mineStartPool: \(pool: string, rounds\?: number\)', api) is not None
     and re.search(r'rounds == null \? \{ pool \} : \{ pool, rounds \}', api) is not None)

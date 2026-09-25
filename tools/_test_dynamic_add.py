@@ -26,7 +26,7 @@ import sys
 import time
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-ROOT = r'D:\loop_code'
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
 import run_tracks as RT          # noqa: E402
 

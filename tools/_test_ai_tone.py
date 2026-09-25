@@ -14,7 +14,7 @@ import re
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-P = r'D:\loop_code\dashboard\web\src\App.tsx'
+P = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'dashboard', 'web', 'src', 'App.tsx')
 # ★★ 2026-09-17：**先剥注释再看**（用状态机，不用正则）——
 #   本检查原来是**逐行**判注释的，于是"多行块注释的第二行"会被当成可见文本 ⇒ **误报** ✗
 #   （实测踩到：我写的一条 `{/* ... 会被读成"还在库里" ✗ ... */}` 注释就被判成残留）

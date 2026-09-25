@@ -18,7 +18,7 @@ import os
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-ROOT = r'd:\loop_code'
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, 'tools', 'cross_pool_review.py')
 FAIL = []
 

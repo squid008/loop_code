@@ -32,7 +32,7 @@ import io
 import os
 import sys
 
-ROOT = r'D:\loop_code'
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES = [a for a in sys.argv[1:] if not a.startswith('--')] or [
     'engine/loop_engine.py', 'engine/loop_critic.py', 'engine/factor_miner.py']
 COMPOUND = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith, ast.Match)

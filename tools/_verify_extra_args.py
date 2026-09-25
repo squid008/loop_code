@@ -2,10 +2,11 @@
 """【只读】静态解析 `run_tracks.py` 的 `extra` 参数列表（**不执行**，避免误触发挖掘）。"""
 import ast
 import io
+import os
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-P = r'D:\loop_code\tools\run_tracks.py'
+P = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'tools', 'run_tracks.py')
 tree = ast.parse(io.open(P, encoding='utf-8').read())
 found = None
 for node in ast.walk(tree):

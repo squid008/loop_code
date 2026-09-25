@@ -19,7 +19,7 @@ import re
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-ROOT = r'D:\loop_code'
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FAIL = []
 
 

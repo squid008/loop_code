@@ -16,7 +16,7 @@ import urllib.error
 import urllib.request
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-R = r'D:\loop_code'
+R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CFG = os.path.join(R, 'dashboard', 'config.json')
 PY = sys.executable
 TMP = os.environ.get('TEMP', r'C:\Windows\Temp')

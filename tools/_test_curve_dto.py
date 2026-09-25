@@ -23,7 +23,7 @@ import re
 import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
-ROOT = r'D:\loop_code'
+ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CURVE_DIR = os.path.join(ROOT, 'docs', 'factor_curves')
 APP_TSX = os.path.join(ROOT, 'dashboard', 'web', 'src', 'App.tsx')
 FAIL = []
