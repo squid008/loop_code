@@ -109,7 +109,10 @@
   —— 顺带根治「两份 Node」问题（Node 独立后天然单类）；82 个 `import loop_engine as LE` 全部透明 ✓
 - [~] Step 2：抽失败模式库 / 跨量纲 / 亲本选择 / LLM 引导 等段落（进行中）：
   - [x] **Step 2a：抽跨量纲审查 `dim_of`/`review_expr`/`_FIELD_DIM` 到 `engine/loop_dims.py`**（只依赖 loop_expr + loop_fields）
-  - [ ] Step 2b：抽失败模式库 / 亲本选择 / LLM 引导（它们还依赖 skeleton/LEAVES/UNARY/BINARY，需先抽「表达式核心常量/函数」）
+  - [~] Step 2b：抽失败模式库 / 亲本选择 / LLM 引导（进行中）：
+    - [x] **Step 2b-1**：抽骨架/结构族（`norm_op`/`skeleton`/`root_fam`/`sole_leaf`/`leaf_proxy_key` + FSA/FAM 常量）到 `loop_expr.py`
+    - [ ] Step 2b-2：抽失败模式库（`flib_mark`/`fail_lib_cleanup`/`bad_skels`，依赖 skeleton，已可抽）
+    - [ ] Step 2b-3：抽亲本选择 / LLM 引导（还依赖 `LEAVES`/`UNARY`/`BINARY` 算子表，需依赖注入）
 - [ ] Step 3：`run()` ctx 化，拆子步骤
 - 验收：每步守门 + 全量回归 + **与实盘挖掘结果对照**（同一代 seed 复跑，产出必须一致）
 

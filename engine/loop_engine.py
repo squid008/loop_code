@@ -154,6 +154,10 @@ DEFAULT_CFG = dict(leaf_w={}, op_bias={}, depth=[2, 3, 4],
 from loop_fields import MF16, BARRA_LEAVES, FA_LEAVES, LEAVES, FIELDS
 from loop_expr import Node, collect            # ★ L3 拆分：表达式核心类型/遍历单一事实源
 from loop_dims import review_expr, dim_of      # ★ L3 拆分：跨量纲审查单一事实源
+from loop_expr import (norm_op, skeleton, skeleton_freq, subtree_skels,
+                        has_frozen_skel, fsa_period, sole_leaf,
+                        leaf_proxy_key, root_fam, FSA_FREEZE_SEQ,
+                        FSA_COOL_GENS, FAM_CUT, FAM_QUOTA, FAM_BLOCK_THR)
 
 # ★★★ 2026-09-16 新增「面板只读缓存」模式（`--panel_cache`，**默认 off ⇒ 与改造前逐位不变**）
 #   实测：面板 B = 4.42 GB 且**构造完成后只读**；而 Windows 是 spawn(无 fork) ⇒
@@ -611,127 +615,6 @@ def node_from_dict(d):
                           for a in (d.get('args') or [])])
 
 
-def norm_op(op):
-    """算子族归一化: ts_mean20 -> ts_mean / corr60 -> corr (剥窗口数字, 保留算子族)"""
-    for p in ('ts_mean', 'ts_std', 'ts_sum', 'ts_max', 'ts_min',
-              'ts_rank', 'ts_delay', 'ts_delta', 'corr'):
-        if op.startswith(p):
-            return p
-    return op
-
-
-def skeleton(node):
-    """骨架键 = 算子族名 + 树结构 + 叶子身份(保留叶子名), 完全剥离窗口数字。
-    对齐中金 FSA 的'抽象因子结构': ts_std60/ts_std100/ts_std150 视为同一骨架,
-    只换窗口的同族候选会被识别为重复骨架, 由冻结/入库上限机制拦下。"""
-    if not node.args:
-        return node.op
-    return norm_op(node.op) + '(' + ','.join(
-        skeleton(a) if isinstance(a, Node) else str(a)
-        for a in node.args) + ')'
-
-
-def skeleton_freq(nodes):
-    """统计一组表达式的完整骨架频次(用于FSA冻结与库内骨架去重)"""
-    c = {}
-    for nd in nodes:
-        s = skeleton(nd)
-        c[s] = c.get(s, 0) + 1
-    return c
-
-
-def subtree_skels(node):
-    """候选的全部【非叶子】子树骨架集合(叶子/字段名不算结构, 防'某字段出现>15%'误冻结)"""
-    out = set()
-    for x in collect(node):
-        if x.args:
-            out.add(skeleton(x))
-    return out
-
-
-def has_frozen_skel(node, frozen):
-    """候选是否含任一已冻结的结构骨架(中金: 冻结骨架禁止复用 -> 生成端丢弃/入库端审查)"""
-    return bool(frozen and (subtree_skels(node) & set(frozen)))
-
-
-# ---- ★★★ 2026-09-17 FSA 冻结**期数化 + 冷却期**（用户拍板："先按 2→4→8 代封顶 + 日志留痕，时间先暂时不管"）----
-#  为什么改（旧规则的问题，实测）：
-#    · 旧规则 = 「本代超阈值 ⇒ 冻结；**上代冻结的骨架本代不再出现 ⇒ 立刻解冻**」
-#      ⇒ 冻结的"记忆"**只活一代** ✗ ⇒ 隔几代复发的结构**完全拦不住** ✗
-#    · 实测（2026-09-17，全部池日志的 `冻结骨架:` 行）：被冻结过的 **120** 个骨架里 **7 个（6%）**复发过，
-#      复发间隔 最小 1 · **中位 2** · 最大 **10 代** ⇒ 确实存在"隔几代再来"的结构 ✓
-#  新规则（逐次翻倍、8 代封顶）：
-#    · 首次超阈值 ⇒ 冻结 **2** 代；解冻后若在冷却期 `FSA_COOL_GENS` 内**再犯** ⇒ **4** 代；再犯 ⇒ **8** 代（封顶）
-#    · 冻结期内**每代递减**；**即使本代不再出现也保持冻结**（这就是"记忆"✓ —— 也是与旧规则的关键差别）
-#    · 冻结期内又超阈值 ⇒ **续期**（refresh 回本期数，**不叠加** ✗）
-#    · 解冻后连续 `FSA_COOL_GENS` 代都未超阈值 ⇒ **遗忘**（次数归零，下次回到 2 代 ✓）⇒ 防永久拉黑 ✓
-#  ⚠ 判据只用**代数**（时间维度暂不做）：实测各池"一代"的物理时长差 **~20 倍**
-#    （300 池 21 分/代 vs 500 池 7.5 h/代 ✗）⇒ 将来若要严格一致，应改成"代数 + 时间"双条件 ✓
-#  ⚠ 为什么上限不设 16 代：复发间隔最大 10 代、8 代已能挡住 **86%** 的复发（见上），
-#    而 16 代在 500 池 ≈ 5 天 ⇒ 边益极小而**锁死风险**（冻结是"含该子树就全拦"的连坐惩罚 ✗）大 ✓
-FSA_FREEZE_SEQ = (2, 4, 8)    # 冻结期序列（逐次翻倍；末项 = 封顶）
-FSA_COOL_GENS = 4             # 解冻后的冷却期：连续这么多代未再超阈值 ⇒ 忘掉它（次数归零）
-
-
-def fsa_period(cnt):
-    """第 `cnt` 次冻结该冻几代（`cnt` 从 1 起算；超出序列 ⇒ 取封顶值）✓"""
-    return FSA_FREEZE_SEQ[min(max(int(cnt), 1), len(FSA_FREEZE_SEQ)) - 1]
-
-
-# ---- 结构族聚类(QuantaAlpha 冗余检测移植): 拦"外层模板固定、内层微调"的同构霸榜族 ----
-FAM_CUT = 3          # 模板指纹展开算子层数(cut 层以下折叠)
-FAM_QUOTA = 2        # L1 同模板族候选进 L2/种子池上限
-FAM_BLOCK_THR = 0.5  # 上代 L1 同模板族占比 >= 该值 -> 本代生成端禁产该模板族
-
-
-def sole_leaf(node):
-    """若 node 经"纯单目算子链"化简后恰为单一叶子, 返回该叶名; 否则 None。
-    ts_min20(cs_rank(barra_leverage)) -> 'barra_leverage'; div(leverage, gm) -> None。"""
-    cur = node
-    while isinstance(cur, Node) and cur.args:
-        if len(cur.args) != 1:
-            return None
-        cur = cur.args[0]
-    return cur.op if isinstance(cur, Node) else None
-
-
-def leaf_proxy_key(node):
-    """gen51 叶子代理族键: 顶层 max/min 若有一支经"纯单目算子链"化简后恰为单一叶子,
-    则该候选信息量≈该叶(numerically 也确如此: ts_min20(cs_rank(barra_leverage)) 与
-    barra_leverage 相关 0.997), 只是"某叶套壳+地板" -> 返回族键, 把"同叶不同壳"的候选
-    合并为一族, 由 fam_quota 拦重复(防不同外壳反复重发现同一叶、制造虚假多样性)。
-    键含另一支(地板)若为裸叶则一并纳入, 避免把不同地板结构误并。
-    返回 None 表示非叶子代理, 回落常规 root_fam 指纹。"""
-    if not isinstance(node, Node) or node.op not in ('max', 'min') or len(node.args) != 2:
-        return None
-    a, b = node.args
-    for inner, other in ((a, b), (b, a)):
-        if isinstance(inner, Node) and inner.args:
-            sl = sole_leaf(inner)
-            if sl is not None:
-                ol = other.op if (isinstance(other, Node) and not other.args) else ''
-                return '~' + sl + ('|' + ol if ol else '')
-    return None
-
-
-def root_fam(node, cut=FAM_CUT, use_sole=True):
-    """模板族指纹: 叶子统一'X'(身份无关) + 窗口剥除 + 距根cut层以下折叠'#'。
-    mul(turnover,ts_min100(corr100(overnight, <任意深>))) 成员 -> 同一指纹, 判同族。
-    gen51 起增补"单叶变换"维度: 顶层 max/min 的内层若只是某叶的单目变换(=叶子代理),
-    直接返回 '~<叶名>[|<地板叶>]' 作为族键 -> 同叶不同壳的代理候选合并同族。"""
-    if use_sole:
-        pk = leaf_proxy_key(node)
-        if pk is not None:
-            return pk
-
-    def rec(nd, d):
-        if not nd.args:
-            return 'X'
-        if d >= cut:
-            return '#'
-        return norm_op(nd.op) + '(' + ','.join(
-            rec(a, d + 1) if isinstance(a, Node) else 'X' for a in nd.args) + ')'
-    return rec(node, 0)
 
 
 def fam_quota_rows(rows, quota=FAM_QUOTA, use_sole=True):
