@@ -57,7 +57,7 @@
 | F31 | gen71 | 风格、风格、风格 | mul(max(barra_residual_volatility, ts_ran… | 已入库(auto) |
 | F32 | gen71 | 风格、风格、风格、风格 | add(barra_residual_volatility, div(sub(ba… | 已入库(auto) |
 | F33 | gen72 | 风格、风格、资金流 | ts_delta120(add(ts_max20(ts_max100(barra_… | 已入库(auto) |
-| F34 | gen72 | 未分类 | div(max(barra_residual_volatility, ts_ran… | 已入库(auto) |
+| F34 | gen72 | 风格、风格、风格 | div(max(barra_residual_volatility, ts_ran… | 已入库(auto) |
 | F35 | gen74 | 振幅、资金流 | mul(ts_max20(max(max(barra_residual_volat… | 已入库(auto) |
 | F36 | gen75 | 振幅、资金流 | ts_mean120(corr100(true_range, ts_delta20… | 已入库(auto) |
 | F37 | gen75 | 资金流、振幅、资金流 | mul(ts_max20(ts_std200(mf_x_sqty)), corr1… | 已入库(auto) |
@@ -70,7 +70,7 @@
 | F44 | gen68 | 风格、风格 | max(max(barra_residual_volatility, div(ba… | 已入库(auto) |
 | F45 | gen71 | 风格、风格、财报 | max(max(barra_residual_volatility, div(ba… | 已入库(auto) |
 | F46 | gen74 | 风格、风格 | add(max(barra_residual_volatility, div(ba… | 已入库(auto) |
-| F47 | gen78 | 未分类 | ts_mean200(ts_std60(cs_demean(neg(low)))) | 已入库(auto) |
+| F47 | gen78 | 价格 | ts_mean200(ts_std60(cs_demean(neg(low)))) | 已入库(auto) |
 
 > 标记 `⚠️冗余①~⑤` = 库内近重复组成员（口径与明细见下方「库内冗余对清单」）；**每组按 1 个独立因子计**。
 
@@ -528,8 +528,8 @@ ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_be
 div(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(barra_non_linear_size)))), max(barra_residual_volatility, div(min(barra_non_linear_size, barra_liquidity), barra_liquidity)))
 ```
 - **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
-- 家族：未分类（auto）
-- 叶子：
+- 家族：风格、风格、风格（auto）
+- 叶子：barra_residual_volatility、barra_non_linear_size、barra_liquidity
 - 骨架：`div(max(barra_residual_volatility, ts_rank60(ts_std200(cs_rank(barra_non_linear_size)))),max(barra_residual_volatility, div(min(barra_non_linear_size, barra_liquidity), barra_liquidity)))`
 - 池标签：**`csi1000_all`** —— 全A + **1000** 池通过
   （全A 超额 +6.93% / Calmar +0.453；300 -8.33%；500 -2.67%；1000 +1.52%）
@@ -697,8 +697,8 @@ add(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidit
 ts_mean200(ts_std60(cs_demean(neg(low))))
 ```
 - 符号 `sign`：**未记录**（缺失时不臆造，见 roadmap §8.45 铁律）
-- 家族：未分类（auto）
-- 叶子：
+- 家族：价格（auto）
+- 叶子：low
 - 骨架：`ts_mean(ts_std60(cs_demean(neg(low))))`
 - 池标签：**`csi500_1000_all`** —— 全A + **500/1000** 池通过
 - 剥风格：**`B`** 弱独立（剥风格后日频 Calmar 在 0~0.30，或回撤劣于 -0.20）（原 Calmar 1.119 → 剥后 0.256；超额 +8.6% → +2.6%；**日频** 剥后 Calmar 0.219，日频回撤 -12.0%）

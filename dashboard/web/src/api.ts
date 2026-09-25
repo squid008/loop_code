@@ -164,6 +164,14 @@ export interface LibraryEntryDto {
   inLibrary?: boolean
   detail?: LibraryFactor['detail']
   metrics?: Record<string, number | null>
+  /** ★★★★★ 2026-09-25（用户："这 F47 为啥…20 日的那个按钮我点不了，提示还未生成"）——
+   *  **口径强项标签 + 20 日那一套指标**（与「因子库」表 / 精选池 **同源** ✓）：
+   *  后端 `/api/library/entries` 从 `_lib(pool)` 照抄这五项（`detail/metrics/metrics20/status/hzn` ✓）
+   *  ⚠ **原来这里漏了 `hzn` / `metrics20`** ✗ ⇒ 从「新入库日志」卡点开的详情弹层拿不到
+   *     `metrics20` ⇒ 详情页 `has20` 恒为假 ⇒ **20 日口径按钮被误置灰**（提示"还未生成" ✗，
+   *     而数据其实早就算好了 ✓）—— 三条入口里**只有这条**漏了（因子库 / 精选池两条都传了 ✓）*/
+  hzn?: string | null
+  metrics20?: Record<string, number | null>
   status?: string
 }
 

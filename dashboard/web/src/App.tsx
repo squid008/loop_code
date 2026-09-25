@@ -542,12 +542,18 @@ export default function App() {
         </section>
       )}
       {/* 详情弹窗与「因子库」页签**同一个组件**（`FactorDetail`）⇒ 口径、字段、布局全一致 ✓ */}
+      {/* ★★★★★ 2026-09-25 修（用户："这 F47 为啥…20 日的那个按钮我点不了，提示还未生成"）：
+          **必须把 `metrics20` 也传进去** ✗ —— 原来只传了 `metrics` ⇒ 详情弹层的 `has20`
+          （= `(…) && Object.keys(f.metrics20 ?? {}).length > 0`）**恒为假** ⇒ 20 日按钮被**误置灰** ✗
+          （提示"还未生成"，而数据其实早就算好了 ✓）
+          ⚠ 三条入口必须**同源**：因子库（传 `metrics20Info` + 行自带 `metrics20`）· 精选池
+            （传 `metrics20: sel.metrics20`）· **本卡**（后端本就给了，此前漏传 ✗ ⇒ 本次补上 ✓）*/}
       {entrySel && (
         <FactorDetail f={{ code: entrySel.code ?? '(无编号)', expr: entrySel.expr,
                            pool: entrySel.pool, summary: entrySel.summary,
                            family: entrySel.family ?? '', status: entrySel.status ?? '',
                            inBank: entrySel.inBank, detail: entrySel.detail,
-                           metrics: entrySel.metrics } as LibraryFactor}
+                           metrics: entrySel.metrics, metrics20: entrySel.metrics20 } as LibraryFactor}
                       onClose={() => setEntrySel(null)} />
       )}
 

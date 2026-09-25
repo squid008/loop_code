@@ -374,6 +374,29 @@ chk('注释也同步更正（不再写"「全部停止」后也会自动收尾" 
     '一代都没跑完时**会跳过收尾**' in src)
 
 print()
+print('【11】★★★★★ 详情弹层的**三条入口**都必须能切 20 日口径'
+      '（2026-09-25 用户实测："这 F47 为啥…20 日的那个按钮我点不了，提示还未生成"）')
+# 真因：详情页判 `has20 = (metrics20Info ? … : true) && Object.keys(f.metrics20 ?? {}).length > 0`
+#   ⇒ 哪个入口**没把 `metrics20` 传给 `FactorDetail`**，那一路的 20 日按钮就**恒置灰** ✗
+#   —— 而数据其实早就算好了（后端 `/api/library/entries` 从 `_lib(pool)` 照抄了 `metrics20` ✓）
+# ⇒ 三条入口各钉一处，防再漏 ✓
+chk('入口①「因子库」表：传 `metrics20Info` ＋ 行自带 `metrics20` ✓',
+    'metrics20Info={lib.metrics20Info}' in src
+    and re.search(r'metrics20\?: Record<string, number \| null>', api) is not None)
+chk('入口②「精选池」：`metrics20: sel.metrics20` ✓',
+    re.search(r'metrics20: sel\.metrics20', src) is not None)
+chk('入口③「新入库日志」卡：`metrics20: entrySel.metrics20` ✓（2026-09-25 修；原来只传 metrics ✗）',
+    re.search(r'metrics20: entrySel\.metrics20', src) is not None,
+    '漏传 ⇒ 从这张卡点开的详情里 20 日按钮被误置灰、提示"还未生成"（而数据早就有了）✗')
+chk('★ `LibraryEntryDto`（api.ts）**有** `metrics20` / `hzn`（否则 TS 层就传不进去 ✗）',
+    re.search(r'export interface LibraryEntryDto \{(?:[^}]*?)metrics20\?', api, re.S) is not None
+    and re.search(r'export interface LibraryEntryDto \{(?:[^}]*?)hzn\?', api, re.S) is not None)
+facpy = io.open(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                             'dashboard', 'api', 'app', 'sources', 'factors.py'), encoding='utf-8').read()
+chk('★ 后端 `/api/library/entries` **照抄** `metrics20`（口径仍只有一处 ✓ 前端不自己算）',
+    "'detail', 'metrics', 'metrics20', 'status', 'hzn'" in facpy)
+
+print()
 if FAIL:
     print('★★ 接线检查失败 %d 项：' % len(FAIL))
     for f in FAIL:

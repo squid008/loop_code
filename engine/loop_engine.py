@@ -33,6 +33,11 @@ import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
+# ★★★★★ 2026-09-25（用户实测："这 F47 为啥会显示未分类"）：**「两份 `Node` 类」的修复**
+#   在**文件末尾**的 `if __name__ == '__main__':` 块里（那里有完整说明 ✓）
+#   ⚠ 为什么**不**放这里：`tools/_test_fwd_wiring.py` 用 AST 取**第一个** `__main__` 块，
+#     并在其中断言 `set_panel_cache` / `set_mem_budget` / `run(_args)` 是**直接语句** ✗
+#     ⇒ 在顶部另起一个 `__main__` 块会把它的"目标块"抢走（实测该守门当场失败 ✗）
 import factor_miner as _FM          # ★ 口径**单一事实源**（FWD 走运行期取值 ✗ 见下）
 from factor_miner import (load_panel, prepare, get_universe, cs_rank,
                           evaluate_real, START, COST_PRESETS, pass_filter)
@@ -602,6 +607,28 @@ class Node(object):
 
     def size(self):
         return 1 + sum(a.size() for a in self.args if isinstance(a, Node))
+
+
+class _StateUnpickler(pickle.Unpickler):
+    """★★★★★ 2026-09-25：读 state 时把**历史上误存的** `loop_engine.Node` 一并归一成本类 ✓
+
+    背景（完整说明见**文件末尾** `__main__` 块里那行注册）：引擎直跑时曾并存**两个 `Node` 类**
+    （`__main__.Node` 与 `loop_engine.Node`）⇒ 旧 state 的 `bank` / `seeds` / `last_l1`
+    里混着两份类 ✗
+
+    ⚠ 为什么必须归一：`isinstance(x, Node)` 是**类身份**判定 ⇒ 对第二份实例恒为 False ✗
+      ⇒ `collect` / `leaf_parts` / **`skeleton`（骨架去重 / FSA 冻结）** / `key` / `size` /
+      `crossover` / `mutate` / `dim_of` **全部对那批因子失效** ✗✗
+      （实测：`bank` 439 个 Node 里 **438 个**是第二份 ⇒ 去重与 FSA 一直没对它们生效 ✗）
+
+    修法：**只认类名** —— 不管 pickle 里记的是 `__main__.Node` 还是 `loop_engine.Node`，
+      一律还原成**本模块**的 `Node` ✓（结构逐字一致，差的只是类身份 ✓）
+    """
+
+    def find_class(self, module, name):
+        if name == 'Node':
+            return Node
+        return super().find_class(module, name)
 
 
 def _jscalar(v):
@@ -2290,7 +2317,11 @@ def run(args):
     _prev_pool_map = None
     if os.path.exists(STATE):
         with open(STATE, 'rb') as f:
-            st = pickle.load(f)
+            # ★★★★★ 2026-09-25：走**归一** Unpickler —— 把历史上误存的 `loop_engine.Node`
+            #   也还原成本模块的 `Node`（详见**文件末尾** `__main__` 块的注册处 / `_StateUnpickler`）✓
+            #   ⚠ 不加这一句：`bank`/`seeds`/`last_l1` 里的那批"第二份"Node 会让
+            #     `skeleton`/`collect`/`key` 全部失效（骨架去重与 FSA 对它们形同虚设）✗
+            st = _StateUnpickler(f).load()
         n_tested_prev = st.get('n_tested', 0)
         seeds = st.get('seeds', [])
         fsa = st.get('fsa', {})
@@ -2329,7 +2360,8 @@ def run(args):
                     continue
                 try:
                     with open(_sp, 'rb') as _f:
-                        _stp = pickle.load(_f)
+                        # ★ 2026-09-25：同样走归一 Unpickler（别的池 state 里也可能有"第二份" Node）✓
+                        _stp = _StateUnpickler(_f).load()
                 except Exception as _e:
                     print(f"  [外部库] [!] 池 {_tp} state 读取失败（不影响主流程）: "
                           f"{type(_e).__name__}: {_e}")
@@ -3586,6 +3618,28 @@ def llm_journal_block(gen, calls, parsed, used, hyp, path):
 
 
 if __name__ == '__main__':
+    # ★★★★★ 2026-09-25 修（用户实测："这 F47 为啥会显示未分类"）—— **一份代码里出现了两个 `Node` 类** ✗✗
+    #   病根：引擎直跑时模块名是 `__main__`（类全名 `__main__.Node`），而 `loop_critic` 的
+    #     惰性 `import loop_engine as LE` 会把 `loop_engine.py` **再执行一遍**（这次叫 `loop_engine`
+    #     模块）⇒ 同一个进程里有**两个** `Node` 类 ✗
+    #   实测（读 `loop_state.pkl` 按 pickle 记录的类路径统计）：`bank` 里 439 个 Node 中
+    #     **438 个是第二份** ✗；`seeds` / `last_l1` 也各混着 24 个 ✗
+    #   ⇒ 后果：所有 `isinstance(x, Node)` 对"第二份"实例**恒为 False** —— 牵连：
+    #     · `collect()` → `leaf_parts()` ⇒ 因子库"家族"全落 **「未分类」** ✗
+    #       （`docs/loop_archive*.csv` 的 `cat`/`leaf` 列空，全库 392 行）
+    #     · **`skeleton()` ⇒ 骨架去重 / FSA 冻结失效** ✗（同族重复因子拦不住）
+    #     · `key()`/`size()`（FSA 结构哈希）· `crossover`/`mutate`（子树操作退化成只动顶层）
+    #       · `dim_of()`（跨量纲审查）· `clone`
+    #   ⇒ 修法（**一行**）：把"自己"注册成 `loop_engine` 模块 ⇒ 之后任何 `import loop_engine`
+    #     都拿到**本模块** ⇒ 结构上不可能再出现第二份 ✓
+    #   ⚠ 为什么放在**这里**（块内第一条）而不是文件顶部 ✗：
+    #     · `tools/_test_fwd_wiring.py` 用 AST 取**第一个** `__main__` 块，并在其中断言
+    #       `set_panel_cache` / `set_mem_budget` / `run(_args)` 是**直接语句** ✗
+    #       ⇒ 在顶部另起一个 `__main__` 块会把它的"目标块"抢走（实测该守门当场失败 ✗）
+    #     · 放在这里也**足够早** ✓：`loop_critic` 是**惰性** import（只在 `run()` 内被调），
+    #       而 `run(_args)` 是本块**最后一句** ⇒ 注册必然发生在它之前 ✓
+    #   （旧 state 里已混入的 486 个异类，由 `_StateUnpickler` 在读盘时归一 ✓ 见其 docstring）
+    sys.modules.setdefault('loop_engine', sys.modules['__main__'])
     ap = argparse.ArgumentParser()
     ap.add_argument('--gen', type=int, default=1)
     ap.add_argument('--n', type=int, default=600)

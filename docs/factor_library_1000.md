@@ -27,7 +27,7 @@
 | F07 | gen5 | 跳空、风格、风格、风格 | ts_mean200(mul(add(sub(overnight, barra_b… | 已入库(auto) |
 | F08 | gen5 | 换手率、资金流 | ts_mean60(corr60(turn_ratio, ts_delta5(ts… | 已入库(auto) |
 | F09 | gen6 | 资金流、振幅 | ts_mean60(corr60(ts_delta5(ts_mean100(mf_… | 已入库(auto) |
-| F10 | gen7 | 未分类 | cs_demean(mul(add(turn_ratio, ts_mean60(b… | 已入库(auto) |
+| F10 | gen7 | 换手率、风格、风格 | cs_demean(mul(add(turn_ratio, ts_mean60(b… | 已入库(auto) |
 | F11 | gen1 | 跳空、日内收益 | sub(ts_mean120(overnight), ts_mean120(int… | 已入库(auto) |
 | F12 | gen2 | 跳空、日内收益 | sub(ts_mean100(overnight), ts_mean120(int… | 已入库(auto) |
 ## 因子明细
@@ -154,8 +154,8 @@ ts_mean60(corr60(ts_delta5(ts_mean100(mf_x_bqty)), true_range))
 cs_demean(mul(add(turn_ratio, ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))
 ```
 - **符号 `sign`：`1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
-- 家族：未分类（auto）
-- 叶子：
+- 家族：换手率、风格、风格（auto）
+- 叶子：turn_ratio、barra_residual_volatility、barra_size
 - 骨架：`cs_demean(mul(add(turn_ratio, ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))`
 - 池标签：**`all3`** —— 全A **且所有池都通过**（真 alpha）
 - 剥风格：**`A`** 独立有效（剥风格后 Calmar 仍 >= 0.30）（原 Calmar 0.891 → 剥后 0.587；超额 +6.9% → +5.6%）

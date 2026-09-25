@@ -15,6 +15,127 @@
 
 ---
 
+## [1.22.2] — 2026-09-25
+
+> 主题：**修「一份代码里并存两个 `Node` 类」**（因子库家族全落「未分类」＋ 骨架去重 / FSA 冻结失效 ✗✗）
+> **＋ 修「新入库日志卡点开的详情页，20 日口径按钮被误置灰」**
+> （用户实测：_"这 F47 为啥会显示未分类"_ · _"20 日的那个按钮我点不了，提示还未生成"_）
+
+### 一、修「一份代码里并存**两个 `Node` 类**」⇒ 家族全落「未分类」＋ 骨架去重 / FSA 冻结失效 ✗✗
+
+**症状**（用户之问）：新入库的 `F47` 在因子库里显示 **「未分类」** ✗
+
+**真因**：引擎**直跑**时模块名是 `__main__`（`Node` 的类全名 = `__main__.Node` ✗），而
+`loop_critic` 的**惰性** `import loop_engine as LE` 会把 `loop_engine.py` **再执行一遍**
+（这次模块名是 `loop_engine` ✗）⇒ 同一个进程里出现**两个 `Node` 类** ✗
+
+**实测规模**（读 `loop_state.pkl`，按 pickle 记录的类路径统计）：
+
+- `bank` 里 **439** 个 Node 中 **438 个**是"第二份" ✗
+- `seeds` / `last_l1` 也各混着 **24** 个 ✗（合计 **486** 个异类）
+
+**后果**（`isinstance(x, Node)` 对"第二份"实例**恒为 False** ✗）：
+
+| 牵连 | 后果 |
+|---|---|
+| `collect()` → `leaf_parts()` | 因子库"家族"全落 **「未分类」** ✗（`docs/loop_archive*.csv` 的 `cat`/`leaf` 列空，全库 **392 行**）|
+| **`skeleton()`** | **骨架去重 / FSA 冻结失效** ✗（同族重复因子拦不住）|
+| `key()` / `size()` | FSA 结构哈希对那批因子失真 ✗ |
+| `crossover` / `mutate` | 子树操作退化成"只能动顶层" ✗ |
+| `dim_of()` / `clone` | 跨量纲审查、克隆同样失效 ✗ |
+
+**改法（两处）**：
+
+1. **治本（一行）** —— 引擎末尾的 `__main__` 块**第一条**注册自己：
+
+```python
+sys.modules.setdefault('loop_engine', sys.modules['__main__'])
+```
+
+   ⇒ 之后任何 `import loop_engine` 都拿到**本模块** ⇒ **结构上不可能再有第二份** ✓
+
+   ⚠ **位置有讲究：不能放文件顶部** —— `tools/_test_fwd_wiring.py` 用 AST 取**第一个**
+   `__main__` 块，并在其中断言 `set_panel_cache` / `set_mem_budget` / `run(_args)` 是**直接语句**；
+   顶部另起一块会抢走它的"目标块"（实测该守门**当场失败** ✗）。放末尾也**足够早** ✓
+   （`loop_critic` 是惰性 import，而 `run(_args)` 是该块**最后一句** ⇒ 注册必在它之前 ✓）
+
+2. **治旧（读盘归一）** —— 新增 `_StateUnpickler(pickle.Unpickler)`：`find_class` 把类名 `Node`
+   **一律**映射回本模块的类；**主 state** 与**外部池注入**两处读取都改走它 ✓
+   ⇒ 旧 state 里已混入的 **486 个异类**在读盘时**自动归一**（无需重算、无需手改 state ✓）
+
+**数据回填**：`docs/loop_archive*.csv` 的 `cat`/`leaf` 补齐 ⇒ 空 `cat` 行 **392 → 0** ✓
+
+| 文件 | 空 `cat`（回填前 → 后）|
+|---|---|
+| `loop_archive.csv`（全A）| 39 → 0 |
+| `loop_archive_1000.csv` | 178 → 0 |
+| `loop_archive_300.csv` | 160 → 0 |
+| `loop_archive_500.csv` | 15 → 0 |
+| `loop_archive_50.csv` | 0（本就齐 ✓）|
+
+⚠ 回填**只补 `cat` / `leaf` 两列**，**指标数值逐字未动** ✓（备份在 `ai_test/_backups_20260925/` ✓）
+⚠ `docs/loop_archive*.csv` 在 `.gitignore` 里 ⇒ 回填**不入库**（属产物 ✓）
+
+**文档同步**：`docs/factor_library.md`（**6 处**）＋ `docs/factor_library_1000.md`（**3 处**）
+的「未分类」修正为真实家族 / 叶子 ✓（合计 **9 处**）
+
+- `F47`（全A gen78 · `ts_mean200(ts_std60(cs_demean(neg(low))))`）：`未分类` → **`价格` / `low`** ✓
+- `F34`（全A）：`未分类` → **`风格`×3**（`barra_residual_volatility` / `barra_non_linear_size` / `barra_liquidity`）✓
+- `F10`（1000 池）：`未分类` → **`换手率`、`风格`×2** ✓
+
+（`docs/factor_registry.json` 一并重导 ⇒ 与回填后数据一致，**内容无变化** ✓）
+
+**新守门** `tools/_test_node_single.py`（4 组）：
+
+1. **静态**：注册在位 ✓ · 在**末尾**块里 ✓ · 引擎**只许 1 个** `__main__` 块 ✓ · 注册在 `run(_args)` 之前 ✓
+2. **静态**：`_StateUnpickler` 已定义 ✓ · state 的**两处**读取都走它 ✓ · 无残留裸 `pickle.load` ✓
+3. **功能**：`bank`＋`seeds` 共 **516** 个 Node **全部**是本模块类（异类 **0**）✓ ·
+   `last_l1` 里"取不到叶子"（会落「未分类」）的候选 = **0** ✓
+4. **数据**：各池 `loop_archive*.csv` 的 `cat` 空行 = **0**（防再次出现 ✓）
+
+### 二、修「新入库日志卡点开的详情页，20 日按钮被误置灰」
+
+**症状**（用户之问）：_"20 日的那个按钮我点不了，提示还未生成"_ ✗ —— 而数据其实**早就算好了** ✓
+
+**真因**：详情页判 `has20 = (metrics20Info ? … : true) && Object.keys(f.metrics20 ?? {}).length > 0`
+⇒ **哪个入口没把 `metrics20` 传给 `FactorDetail`，那一路的 20 日按钮就恒置灰** ✗
+实测**三条入口里只有「新入库日志」卡漏了** ✗（「因子库」表 /「精选池」两条都传了 ✓）
+—— 后端 `/api/library/entries` 本就照抄了 `metrics20` ✓，是**前端漏传** ＋
+`LibraryEntryDto` 类型里也缺字段 ✗
+
+**改法**：
+
+- `dashboard/web/src/api.ts`：`LibraryEntryDto` 补 `hzn?` / `metrics20?` ✓
+- `dashboard/web/src/App.tsx`：详情弹层传 `metrics20: entrySel.metrics20` ✓
+- 口径仍**只有一处**（后端照抄 `_lib(pool)`）✓ 前端不自己算 ✓
+
+**守门**：`tools/_test_frontend_wiring.py` 新增【11】—— **三条入口**各钉一处 ＋
+`LibraryEntryDto` 必须有这两个字段 ＋ 后端 `factors.py` 必须照抄
+`'detail', 'metrics', 'metrics20', 'status', 'hzn'` ✓
+
+### 三、工程杂项
+
+- `.gitignore`：加 `*.bak_before_*`（批量改数据时的临时备份**不入库** ✓；备份本身保留、可回滚 ✓）
+
+### 四、验证
+
+| 项 | 结果 |
+|---|---|
+| `tsc --noEmit`（前端改动）| ✓ 0 错 |
+| `_test_node_single.py`（新守门）| ✓ 全过 |
+| `_test_fwd_wiring.py`（注册挪位后）| ✓ 全过 |
+| 真机冒烟 `ai_test/smoke_gen_only.py` | ✓ **4/4**（`loop_state*.pkl` SHA256 **未变** ✓）|
+| **全量回归** `ai_test/_run_all_tests.py` | ✓ **49/49 通过** |
+
+### 五、影响面 / 回退
+
+- **引擎的因子求值逻辑未改** ✓（只加一行注册 ＋ 读 state 走归一 Unpickler ✓）
+- ⚠ 本次发版后须**重启调度器**，注册与归一才在新进程生效 ✓
+  （旧 state **无需手工处理**：新进程读盘时自动归一 ✓）
+- 回退：`git checkout v1.22.1`（数据回填属产物，留着无害 ✓）
+
+---
+
 ## [1.22.1] — 2026-09-25
 
 > 主题：**收尾补「5 日动态风格暴露（expo）」＋ 全仓硬编码路径改 `__file__` 派生**
