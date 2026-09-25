@@ -1571,6 +1571,7 @@ function FactorCharts({ name, pool, fwd = 5 }:
           <div className="ch-note">
             以 RankIC 为准（两侧都取截面秩，与引擎入库判据同口径）
             —— IC（Pearson）那一侧的收益用的是原始值，会被涨跌停或重组这类肥尾拉偏，仅作参考。
+            本图两条都是换仓日采样；上面那块指标表里的 ic 是全日频的 Spearman 均值，两者数值不同属正常。
           </div>
           <div className="ch-t">十分位分组累计净值（费前；第 10 档 = 因子值最高）</div>
           <Chart dates={pd.dates} yFmt={v => v.toFixed(2)}
@@ -1900,6 +1901,19 @@ function FactorDetail({ f, metricsInfo, metricsMtime, metrics20Info, onClose }:
             日频打点 = 同一策略在持有期内<b>逐日</b>记净值（所以回撤不会被低估，只会更深）。
             同口径内可比（超额日频 vs 超额期频、组合日频 vs 组合期频）；
             <b>超额口径与组合自身口径不能互相比较</b>（前者要减掉基准腿）。
+          </div>
+          {/* ★★★★★ 2026-09-25（用户："详情页加 IC 口径注"）—— 三个 IC 数字各有定义，不是出错 ✓
+              真因（2026-09-25 逐行读代码 + 当场复算）：这块指标的 ic 来自 evaluate_real 的
+              `ic_mean` = **逐日 2090 天**截面 Spearman 均值（窗口重叠）；图里的 ic = **换仓日 418 期**
+              Pearson、RankIC = 换仓日 418 期 Spearman ⇒ 三个数都对、只是定义/采样不同 ✗
+              （原先被误读成"库里指标按池、曲线全A" ✗ —— 两边其实同一个全市场掩码 ✓）
+              ⚠ 用户可见文案不许带引号 / Markdown 标记（`_test_ui_quotes` + `_test_ai_tone` 会判 ✗） */}
+          <div className="dt-note">
+            IC 口径：这块指标里的 ic 是全日频的 Spearman 均值（每个交易日算一次，持有窗口重叠）；
+            下面 IC 图里的 ic 是换仓日的 Pearson，RankIC 是换仓日的 Spearman
+            —— 三处数字不同是正常的，不是出错。
+            另外，全A 之外的池（300 / 500 / 1000）的指标与曲线，投资域都是全市场可交易股票，
+            不是该池成分股；池内口径见上面池标签那一行。
           </div>
           {METRIC_GROUPS.map(([title, defs]) => (
             <div key={title} className="dt-grp">

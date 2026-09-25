@@ -23,8 +23,8 @@
 | 编号 | 入库代数 | 家族 | 一句话 | 状态 |
 |---|---|---|---|---|
 
-| F01 | gen1 | 资金流、资金流 | corr100(cs_scale(mf_x_sell), mf_l_sell) | 已入库(auto) |
-| F02 | gen3 | 风格、振幅 | ts_mean150(mul(barra_residual_volatility,… | 已入库(auto) |
+| F01 | gen1 | 资金流、资金流 | corr100(cs_scale(mf_x_sell), mf_l_sell) | 已移出(同式子在 1000 池在库，本池编号作别名) |
+| F02 | gen3 | 风格、振幅 | ts_mean150(mul(barra_residual_volatility,… | 已移出(原因待查：剥风格卡玛 0.171 仍过门槛) |
 | F03 | gen9 | 财报、风格、量 | ts_mean200(mul(ts_max20(max(fa_np_margin,… | 已入库(auto) |
 | F04 | gen10 | 财报、风格 | max(fa_np_margin, ts_max100(barra_residua… | 已入库(auto) |
 | F05 | gen10 | 资金流、资金流 | corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)… | 已入库(auto) |
@@ -39,6 +39,7 @@
 ## 因子明细
 
 ### F01 · gen1 入库（引擎自动同步，家族命名待人工精炼）
+> 状态：已移出(同式子在 1000 池在库，本池编号作别名)（2026-09-25 复核；判据与名单见 `docs/loop_todo.md §1.31`）
 ```
 corr100(cs_scale(mf_x_sell), mf_l_sell)
 ```
@@ -53,6 +54,7 @@ corr100(cs_scale(mf_x_sell), mf_l_sell)
 
 
 ### F02 · gen3 入库（引擎自动同步，家族命名待人工精炼）
+> 状态：已移出(原因待查：剥风格卡玛 0.171 仍过门槛)（2026-09-25 复核；判据与名单见 `docs/loop_todo.md §1.31`）
 ```
 ts_mean150(mul(barra_residual_volatility, amplitude))
 ```

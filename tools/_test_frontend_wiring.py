@@ -397,6 +397,20 @@ chk('★ 后端 `/api/library/entries` **照抄** `metrics20`（口径仍只有�
     "'detail', 'metrics', 'metrics20', 'status', 'hzn'" in facpy)
 
 print()
+print('【12】★★ 详情页 IC 口径注（2026-09-25 用户："详情页加 IC 口径注"）')
+# 真因（2026-09-25 逐行读代码 + 当场复算，见 `docs/loop_todo.md §1.30`）：
+#   指标表/库文档的 ic = evaluate_real 的 `ic_mean` = **逐日 2090 天**截面 Spearman 均值（窗口重叠）；
+#   曲线 JSON 的 ic = **换仓日 418 期** Pearson；rank_ic = 同一条引擎序列的换仓日采样 ✓
+#   ⇒ 三个数都对、只是定义/采样不同 ✗（原先被误读成"指标按池 vs 曲线全A" ✗ —— 两边同一个全市场掩码）
+chk('口径注在详情页出现，且点明 全日频 Spearman 均值 与 换仓日 Pearson / RankIC',
+    '全日频' in src and '换仓日' in src and 'Spearman' in src and 'Pearson' in src,
+    '少了它 ⇒ 用户会把三个 IC 数字的差异当 bug ✗')
+chk('口径注写明：非全A池的指标与曲线投资域是全市场（不是该池成分股）',
+    '投资域' in src and '不是该池成分股' in src)
+chk('IC 图下的说明也点明 换仓日采样（图与表按不同采样给出，属正常）',
+    '本图两条都是换仓日采样' in src)
+
+print()
 if FAIL:
     print('★★ 接线检查失败 %d 项：' % len(FAIL))
     for f in FAIL:

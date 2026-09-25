@@ -19,14 +19,14 @@
 |---|---|---|---|---|
 
 | F01 | gen1 | 资金流、资金流 | corr100(cs_scale(mf_x_sell), mf_l_sell) | 已入库(auto) |
-| F02 | gen1 | 跳空、风格 | sub(ts_mean60(overnight), ts_mean60(barra… | 已入库(auto) |
+| F02 | gen1 | 跳空、风格 | sub(ts_mean60(overnight), ts_mean60(barra… | 已移出(剥风格后为纯风格) |
 | F03 | gen2 | 风格、风格 | sub(ts_min20(barra_beta), ts_mean60(barra… | 已入库(auto) |
-| F04 | gen3 | 市值、振幅 | ts_sum100(corr20(mktcap, true_range)) | 已入库(auto) |
-| F05 | gen3 | 资金流、资金流 | corr100(mf_s_bqty, mf_x_sell) | 已入库(auto) |
-| F06 | gen3 | 市值、财报、振幅 | ts_sum100(corr20(mul(mktcap, fa_gm), true… | 已入库(auto) |
+| F04 | gen3 | 市值、振幅 | ts_sum100(corr20(mktcap, true_range)) | 已移出(剥风格后为纯风格) |
+| F05 | gen3 | 资金流、资金流 | corr100(mf_s_bqty, mf_x_sell) | 已移出(剥风格后为纯风格) |
+| F06 | gen3 | 市值、财报、振幅 | ts_sum100(corr20(mul(mktcap, fa_gm), true… | 已移出(剥风格后为纯风格) |
 | F07 | gen5 | 跳空、风格、风格、风格 | ts_mean200(mul(add(sub(overnight, barra_b… | 已入库(auto) |
-| F08 | gen5 | 换手率、资金流 | ts_mean60(corr60(turn_ratio, ts_delta5(ts… | 已入库(auto) |
-| F09 | gen6 | 资金流、振幅 | ts_mean60(corr60(ts_delta5(ts_mean100(mf_… | 已入库(auto) |
+| F08 | gen5 | 换手率、资金流 | ts_mean60(corr60(turn_ratio, ts_delta5(ts… | 已移出(剥风格后为纯风格) |
+| F09 | gen6 | 资金流、振幅 | ts_mean60(corr60(ts_delta5(ts_mean100(mf_… | 已移出(剥风格后为纯风格) |
 | F10 | gen7 | 换手率、风格、风格 | cs_demean(mul(add(turn_ratio, ts_mean60(b… | 已入库(auto) |
 | F11 | gen1 | 跳空、日内收益 | sub(ts_mean120(overnight), ts_mean120(int… | 已入库(auto) |
 | F12 | gen2 | 跳空、日内收益 | sub(ts_mean100(overnight), ts_mean120(int… | 已入库(auto) |
@@ -44,6 +44,7 @@ corr100(cs_scale(mf_x_sell), mf_l_sell)
 - 费后指标（full，成本 0.004往返(主用档)）：IC 0.0455 / IC_IR 0.410 / 年化超额 +7.7% / 回撤 -11.7% / Calmar 0.661 / Sharpe 1.066 / 最近年 +0.0% / 单期换手 15.2% / 负年 0
 
 ### F02 · gen1 入库（引擎自动同步，家族命名待人工精炼）
+> 状态：已移出(剥风格后为纯风格)（2026-09-25 复核；判据与名单见 `docs/loop_todo.md §1.31`）
 ```
 sub(ts_mean60(overnight), ts_mean60(barra_non_linear_size))
 ```
@@ -72,6 +73,7 @@ sub(ts_min20(barra_beta), ts_mean60(barra_non_linear_size))
 
 
 ### F04 · gen3 入库（引擎自动同步，家族命名待人工精炼）
+> 状态：已移出(剥风格后为纯风格)（2026-09-25 复核；判据与名单见 `docs/loop_todo.md §1.31`）
 ```
 ts_sum100(corr20(mktcap, true_range))
 ```
@@ -83,6 +85,7 @@ ts_sum100(corr20(mktcap, true_range))
 - 费后指标（full，成本 0.004往返(主用档)）：IC 0.0394 / IC_IR 0.410 / 年化超额 +5.4% / 回撤 -10.3% / Calmar 0.520 / Sharpe 0.800 / 最近年 +0.5% / 单期换手 12.0% / 负年 0
 
 ### F05 · gen3 入库（引擎自动同步，家族命名待人工精炼）
+> 状态：已移出(剥风格后为纯风格)（2026-09-25 复核；判据与名单见 `docs/loop_todo.md §1.31`）
 ```
 corr100(mf_s_bqty, mf_x_sell)
 ```
@@ -94,6 +97,7 @@ corr100(mf_s_bqty, mf_x_sell)
 - 费后指标（full，成本 0.004往返(主用档)）：IC 0.0346 / IC_IR 0.414 / 年化超额 +6.5% / 回撤 -5.5% / Calmar 1.193 / Sharpe 1.231 / 最近年 +7.4% / 单期换手 15.4% / 负年 0
 
 ### F06 · gen3 入库（引擎自动同步，家族命名待人工精炼）
+> 状态：已移出(剥风格后为纯风格)（2026-09-25 复核；判据与名单见 `docs/loop_todo.md §1.31`）
 ```
 ts_sum100(corr20(mul(mktcap, fa_gm), true_range))
 ```
@@ -120,6 +124,7 @@ ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatili
 - 费后指标（full，成本 0.004往返(主用档)）：IC 0.0170 / IC_IR 0.159 / 年化超额 +7.0% / 回撤 -13.9% / Calmar 0.506 / Sharpe 0.781 / 最近年 +11.0% / 单期换手 4.9% / 负年 2
 
 ### F08 · gen5 入库（引擎自动同步，家族命名待人工精炼）
+> 状态：已移出(剥风格后为纯风格)（2026-09-25 复核；判据与名单见 `docs/loop_todo.md §1.31`）
 ```
 ts_mean60(corr60(turn_ratio, ts_delta5(ts_mean100(mf_l_sqty))))
 ```
@@ -135,6 +140,7 @@ ts_mean60(corr60(turn_ratio, ts_delta5(ts_mean100(mf_l_sqty))))
 
 
 ### F09 · gen6 入库（引擎自动同步，家族命名待人工精炼）
+> 状态：已移出(剥风格后为纯风格)（2026-09-25 复核；判据与名单见 `docs/loop_todo.md §1.31`）
 ```
 ts_mean60(corr60(ts_delta5(ts_mean100(mf_x_bqty)), true_range))
 ```

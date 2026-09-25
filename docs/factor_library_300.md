@@ -24,7 +24,7 @@
 |---|---|---|---|---|
 
 | F01 | gen4 | 资金流、资金流、跳空、振幅 | sub(corr100(mf_x_sell, mf_s_bqty), min(ov… | 已入库(auto) |
-| F02 | gen1 | 资金流、资金流 | corr100(cs_scale(mf_x_sell), mf_l_sell) | 已入库(auto) |
+| F02 | gen1 | 资金流、资金流 | corr100(cs_scale(mf_x_sell), mf_l_sell) | 已移出(同式子在 1000 池在库，本池编号作别名) |
 | F03 | gen10 | 资金流、资金流 | cs_scale(corr60(mf_l_sell, mf_m_bqty)) | 已入库(auto) |
 | F04 | gen129 | 财报、市值 | ts_mean10(ema60(corr200(fa_sell_exp, cs_r… | 已入库(auto) |
 | F05 | gen157 | 财报、风格 | corr200(fa_sell_exp, ema60(barra_size)) | 已入库(auto) |
@@ -45,6 +45,7 @@ sub(corr100(mf_x_sell, mf_s_bqty), min(overnight, hl_ratio))
 
 
 ### F02 · gen1 入库（引擎自动同步，家族命名待人工精炼）
+> 状态：已移出(同式子在 1000 池在库，本池编号作别名)（2026-09-25 复核；判据与名单见 `docs/loop_todo.md §1.31`）
 ```
 corr100(cs_scale(mf_x_sell), mf_l_sell)
 ```
