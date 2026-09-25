@@ -70,11 +70,18 @@
 - 本文 + `docs/loop_todo.md §1.33` 台账 + `§2.4` 指针 ✓
 
 ### L1 死代码清理（低风险，机械可验证）
-- [x] `factor_miner.py` 删 6 个零引用旧实现（`ts_decay`/`evaluate_dual`/`fmt_dual`/`run_round_real`/`load_lib`/`save_lib`）
-- [ ] `loop_engine.py` 删 pandas 老算子（`ts_std/ts_sum/ts_rank/ts_corr/ts_delay/ts_delta` 等）—— 先 grep 确认无字符串按名引用（fastops 兜底？）
+- [x] `factor_miner.py` 删 6 个零引用旧实现（`ts_decay`/`evaluate_dual`/`fmt_dual`/`run_round_real`/`load_lib`/`save_lib`）—— 全量回归 50/50 ✓
+- ⚠ **L1-② 复查降级为中风险**：`loop_engine.py` 的 pandas 老算子（`ts_std/ts_sum/ts_rank/ts_corr/ts_delay/ts_delta`）
+  **并非死码** —— 被 `history/research/round1.py`/`round2.py`/`bench_ops.py`（git 追踪的**归档研究脚本**）
+  `from factor_miner import ...` 引用 ✗（且 `round1.py` 早已坏：它还 import 早就不存在的 `factor_miner.ts_mean`）
+  ⇒ 属「移除仍被归档脚本引用的旧 API」，**需你拍板**：一并归档/删这些研究脚本，还是把老算子冻结为「研究遗留」保留
 - [ ] `factor_miner.py` 其余「仅本文件引用」的疑似死链逐个 grep 甄别
 - [ ] `loop_pools.pool_masks` / `loop_watch.now_s` / `ml_common.cross_rank` 逐个甄别
 - 验收：`_audit_deadcode.py` 的「彻底无引用」清零（registry 例外除外）+ 全量回归绿
+
+> ⚠ **教训（写进 R4 的实例）**：删任何"疑似死码"前，`grep` 要**连 `history/` 归档一起搜** ——
+> `_audit_deadcode` 只扫 `engine/tools/standard`，漏掉 `history/research/` 的 import ✗
+> （本轮 `LIB` 常量被 `round1.py` import，就是漏搜导致的；好在该脚本本就已坏，不影响生产 ✓）
 
 ### L2 重复常量抽取 / 次级大函数拆分（中风险，行为不变）
 - [ ] `strategies/` 重复常量 → 抽 `strategies/common.py`（或标注「研究留档冻结」由你定）

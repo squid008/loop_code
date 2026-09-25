@@ -468,7 +468,8 @@ md 总览 ✓ · md 明细 ✓ · **不在** JSONL ✓ · **不在** 登记表 �
 - ✅ **L1-① 死代码清理第一刀**：`factor_miner.py` 删 6 个零引用旧实现
   （`ts_decay` / `evaluate_dual` / `fmt_dual` / `run_round_real` / `load_lib` / `save_lib`）——
   ⚠ 保留 `cs_zscore`（注释写明"保留仅作反面示例"，是**教学例外** ✓）
-- ⬜ L1-② `loop_engine.py` 删 pandas 老算子（`ts_std/ts_sum/ts_rank/ts_corr/ts_delay/ts_delta`）
+- ⚠ **L1-② 复查改判中风险**：`loop_engine.py` 的 pandas 老算子被 `history/research/`（round1/round2/bench_ops）
+  归档脚本 import ⇒ **非死码**；删它需连带处理这些归档脚本（**待你拍板**）
 - ⬜ L1-③ 其余疑似死链逐个 grep 甄别（`pool_masks`/`now_s`/`cross_rank`/`industry_names`…）
 - ⬜ L2 重复常量抽取 + 次级大函数（run_tracks.main / parallel_runner.run / factor_curves.main…）拆分
 - ⬜ L3 `loop_engine` 模块化 + `run()` ctx 化（最后做，需与实盘对照）
