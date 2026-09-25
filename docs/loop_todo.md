@@ -483,7 +483,9 @@ md 总览 ✓ · md 明细 ✓ · **不在** JSONL ✓ · **不在** 登记表 �
   （`strategies/` 重复常量 → **你已拍板「冻结不动」** ✓）
 - ⏳ L3 `loop_engine` 模块化 + `run()` ctx 化（进行中，需与实盘对照）：
   - ✅ Step 1：抽 `Node`+`collect` 到 `loop_expr.py`（顺带根治「两份 Node」）
-  - ⬜ Step 2：抽失败库/跨量纲/亲本/LLM 引导等段落 · Step 3：`run()` ctx 化
+  - ✅ Step 2：抽跨量纲 `loop_dims` / 骨架族 `loop_expr` / 失败库 `loop_faillib` /
+    算子表 `loop_ops` / 亲本选择 `loop_gen` / LLM 引导 `loop_llm_guide`（**全部完成，loop_engine 3917→3314**）
+  - ⏸ Step 3：`run()` ctx 化 **暂缓**（变量重命名级重构 + L1/L2/写盘段无测试覆盖，留待你在场配实盘对照）
 
 ---
 

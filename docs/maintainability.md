@@ -107,14 +107,22 @@
 ### L3 上帝模块拆分（高风险，分多步，进行中）
 - [x] **Step 1：抽 `Node` + `collect` 到 `engine/loop_expr.py`**（表达式核心类型/遍历单一事实源）
   —— 顺带根治「两份 Node」问题（Node 独立后天然单类）；82 个 `import loop_engine as LE` 全部透明 ✓
-- [~] Step 2：抽失败模式库 / 跨量纲 / 亲本选择 / LLM 引导 等段落（进行中）：
-  - [x] **Step 2a：抽跨量纲审查 `dim_of`/`review_expr`/`_FIELD_DIM` 到 `engine/loop_dims.py`**（只依赖 loop_expr + loop_fields）
-  - [~] Step 2b：抽失败模式库 / 亲本选择 / LLM 引导（进行中）：
-    - [x] **Step 2b-1**：抽骨架/结构族（`norm_op`/`skeleton`/`root_fam`/`sole_leaf`/`leaf_proxy_key` + FSA/FAM 常量）到 `loop_expr.py`
-    - [x] **Step 2b-2**：抽失败模式库（`flib_mark`/`fail_lib_cleanup`/`bad_skels`）到 `loop_faillib.py`
-    - [ ] Step 2b-3：抽亲本选择 / LLM 引导（还依赖 `LEAVES`/`UNARY`/`BINARY` 算子表，需依赖注入）
-- [ ] Step 3：`run()` ctx 化，拆子步骤
+- [x] Step 2：抽失败模式库 / 跨量纲 / 亲本选择 / LLM 引导 等段落（**全部完成**）：
+  - [x] **Step 2a**：抽跨量纲审查 `dim_of`/`review_expr`/`_FIELD_DIM` 到 `engine/loop_dims.py`
+  - [x] **Step 2b-1**：抽骨架/结构族（`norm_op`/`skeleton`/`root_fam`/`sole_leaf`/`leaf_proxy_key` + FSA/FAM 常量）到 `loop_expr.py`
+  - [x] **Step 2b-2**：抽失败模式库（`flib_mark`/`fail_lib_cleanup`/`bad_skels`）到 `loop_faillib.py`
+  - [x] **Step 2b-3a**：抽 le 算子 + 算子表接线（`UNARY`/`BINARY` 派生）到 `loop_ops.py`（打破「要用算子表就得 import 整个 engine」的环）
+  - [x] **Step 2b-3b**：抽亲本选择 + `DEFAULT_CFG`（`pick_leaf`/`rand_expr`/`mutate`/`pick_parent`…）到 `loop_gen.py`
+  - [x] **Step 2b-3c**：抽 LLM 引导（`tokenize_expr`/`parse_expr`/`llm_fetch`）到 `loop_llm_guide.py`
+    ★ `LLM_MAX_SIZE` 留 loop_engine（运行期可改，避免「值拷贝」漏掉 tools 的临时放开）
+- ⏸ **Step 3：`run()` ctx 化，拆子步骤 —— 暂缓**（见下）
 - 验收：每步守门 + 全量回归 + **与实盘挖掘结果对照**（同一代 seed 复跑，产出必须一致）
+
+> ⚠ **Step 3 暂缓的诚实原因（2026-09-26）**：`run()` 仍是 ~1134 行的主循环状态机。
+>  ctx 化 = 把几十个状态变量（含 `r`/`node` 等**同名不同义**的）收进 ctx dict，是「变量重命名」级重构，
+>  风险显著高于前面的「段落搬移」；且 `run()` 的 **L1/L2/写盘段无任何测试覆盖**（`--gen_only` 跳过它们），
+>  无人值守做 = 既无测试网、又无法与实盘 seed 复跑对照 ⇒ 风险不可控。
+>  ⇒ 留待**用户在场**时做：配「同 seed 复跑产出逐位一致」的对照 + 生成段用 `smoke_gen_only.py` 冒烟。
 
 ---
 
