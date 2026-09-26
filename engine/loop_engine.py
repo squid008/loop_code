@@ -2581,6 +2581,98 @@ def _run_l1_phase(ctx, args):
     return False
 
 
+def _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style, rr):
+    """单候选剥风格 + 副口径评估 -> (strip_rec, rr2, strip2, ok2)"""
+    strip_rec = None
+    rr2, strip2, ok2 = None, None, False
+    # ---- 剥风格(2026-09-12, --strip_style; 见 docs/log/2026-09.md §8.13) ----
+    #  口径与 standard_test.py【6】逐位一致: rank(因子) 对 rank(lncap)+rank(lnamt)
+    #  逐日截面 OLS 取残差 -> **再 rank** -> 重跑同一套费后回测。
+    #  为什么: 30 个入库因子剥成交额后**仅 3 个**超额仍为正、沪深300 内**仅 3/30** 有效
+    #  ⇒ "全A 超额"主要来自小市值+低成交额暴露, 不是独立 alpha。
+    #  口径微差(已知): 时间轴是**全样本**(L2 用 full panel), 与 standard_test 同;
+    #  但成本/窗口取 args 的设置, 故绝对数值与报告不一定逐位相同, 判"衰减"看相对。
+    if _strip_style and rr is not None:
+        try:
+            _fn = neutral_rank(f.values.astype('float64'),
+                               [STYLE_FULL['lncap'], STYLE_FULL['lnamt']])
+            rr_s = evaluate_real(pd.DataFrame(_fn, index=dates, columns=cols),
+                                 close, str(nd) + '#strip',
+                                 cost=args.cost, window=args.window, with_daily=True)
+            if rr_s is not None:
+                strip_rec = dict(
+                    gen=args.gen, expr=str(nd),
+                    ic=rr['ic'], calmar=rr['calmar'], ann_ex=rr['ann_ex'],
+                    dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'),
+                    strip_ic=rr_s['ic'], strip_calmar=rr_s['calmar'],
+                    strip_ann_ex=rr_s['ann_ex'], strip_sharpe=rr_s['sharpe'],
+                    # ★ 剥风格后的**日频**口径（§1.19）—— 档位阈值现在就吃这几个
+                    strip_dd_d=rr_s.get('dd_d'),
+                    strip_calmar_d=rr_s.get('calmar_d'),
+                    strip_sharpe_d=rr_s.get('sharpe_d'))
+        except Exception as e_s:
+            # 无人值守铁律: 剥风格失败**不得**影响主流程, 也不得据此拦候选
+            print(f"  [{j}] 剥风格失败(不影响主流程): {type(e_s).__name__}: {e_s}")
+    # =============== ★★★★★ 2026-09-22（v1.21.29 · 用户拍板 (乙)）：**副口径评估** ===============
+    #  为什么放这里：正好在「主口径 + 主口径剥风格」之后、「池内」之前 ✓
+    #    · 副口径**只做** 主评 + 剥风格 + 分段（不做池内 ✗）——
+    #      池内门槛是"池轨道"的概念 ✓，而副口径的价值在**全A 口径下**捞真信号 ✓；
+    #      判定上它走 `_ok_q2`（全A 量化口径 ✓），与 `combine_ok` 的 OR 语义天然相容 ✓
+    #    · ⚠⚠ **`FWD` 必须在 finally 里复原** ✗✗ —— 它是模块全局，
+    #      `evaluate_real` 在**调用时**读它（实测确认 ✓：`fwd_ret=(close.shift(-(1+FWD))…)` 在函数体内 ✓）
+    #      ⇒ 一旦中途异常而不复原，**后面所有候选都会按副口径评估** ✗ 且**不报错** ✓
+    if args.dual_fwd and rr is not None:
+        try:
+            # ⚠⚠ **只切 `factor_miner.FWD`，不碰本模块的 `FWD`** ✗ ——
+            #   本模块的 `FWD` 只在**候选循环之前**的预计算里用（`[::FWD]` 切片 ✓），
+            #   而求值读的是 `factor_miner` 自己的全局 ✓ ⇒ 不需要动它 ✓
+            #   ★ 而且**不能**在函数里裸写 `FWD = …` ✗：没有 `global` 声明 ⇒
+            #     Python 会当**局部变量** ⇒ 既改不到全局、又会 `UnboundLocalError` ✗✗
+            #     （我第一版就是这么写的 ✓ 自查拦下 ✓）
+            _FM.set_fwd(int(args.dual_fwd))
+            rr2 = evaluate_real(f, close, f"{nd}#h{int(args.dual_fwd)}",
+                                cost=args.cost, window=args.window,
+                                with_ex=True, with_daily=True)
+            if _strip_style and rr2 is not None:
+                _fn2 = neutral_rank(f.values.astype('float64'),
+                                    [STYLE_FULL['lncap'], STYLE_FULL['lnamt']])
+                rr_s2 = evaluate_real(pd.DataFrame(_fn2, index=dates, columns=cols),
+                                      close, f"{nd}#h{int(args.dual_fwd)}#strip",
+                                      cost=args.cost, window=args.window, with_daily=True)
+                if rr_s2 is not None:
+                    strip2 = dict(
+                        gen=args.gen, expr=str(nd),
+                        ic=rr2['ic'], calmar=rr2['calmar'], ann_ex=rr2['ann_ex'],
+                        strip_ic=rr_s2['ic'], strip_calmar=rr_s2['calmar'],
+                        strip_ann_ex=rr_s2['ann_ex'], strip_sharpe=rr_s2['sharpe'],
+                        strip_dd_d=rr_s2.get('dd_d'),
+                        strip_calmar_d=rr_s2.get('calmar_d'),
+                        strip_sharpe_d=rr_s2.get('sharpe_d'))
+        except Exception as e2:
+            print(f"  [{j}] 副口径({int(args.dual_fwd)})评估失败(不影响主流程): "
+                  f"{type(e2).__name__}: {e2}")
+        finally:
+            # ★★ 复原主口径：`FWD` 是本轮主口径（5 日 ✓ 由 `--fwd` 同步块设定 ✓）
+            #   必须在 finally ⇒ 中途异常也要复原 ✗（否则后续候选全按副口径 ✓ 且静默 ✓）
+            _FM.set_fwd(int(FWD))
+        # 副口径的判定（**与主口径同一套闸** ✓，但走"全A 量化口径"这条 OR 支路 ✓）
+        if rr2 is not None:
+            try:
+                ok2, _ = pass_filter(rr2, args.min_ic2)
+                ok2 = bool(ok2 and rr2['calmar'] > args.min_calmar2
+                           and rr2['sharpe'] > args.min_sharpe2)
+                if args.seg_n > 1:
+                    ok2 = bool(ok2 and seg_verify(rr2.get('ex'),
+                                                  args.seg_n, args.seg_need)[0])
+                if _strip_style and args.min_strip_calmar > 0 and strip2 is not None:
+                    ok2 = bool(ok2 and strip2['strip_calmar'] > args.min_strip_calmar)
+            except Exception as e3:
+                ok2 = False
+                print(f"  [{j}] 副口径判定失败(按未过处理): {type(e3).__name__}: {e3}")
+
+    return strip_rec, rr2, strip2, ok2
+
+
 def _run_l2_phase(ctx, args):
     """L2 费后精筛 + 剥风格/池指标/收益流去重 + 落盘 -> 写回 ctx"""
     _min_pool_calmar = ctx['_min_pool_calmar']
@@ -2647,90 +2739,7 @@ def _run_l2_phase(ctx, args):
             #   成本：只多算一条净值序列（不重新选股），每候选 +~4s。
             rr = evaluate_real(f, close, str(nd), cost=args.cost,
                                window=args.window, with_ex=True, with_daily=True)
-            # ---- 剥风格(2026-09-12, --strip_style; 见 docs/log/2026-09.md §8.13) ----
-            #  口径与 standard_test.py【6】逐位一致: rank(因子) 对 rank(lncap)+rank(lnamt)
-            #  逐日截面 OLS 取残差 -> **再 rank** -> 重跑同一套费后回测。
-            #  为什么: 30 个入库因子剥成交额后**仅 3 个**超额仍为正、沪深300 内**仅 3/30** 有效
-            #  ⇒ "全A 超额"主要来自小市值+低成交额暴露, 不是独立 alpha。
-            #  口径微差(已知): 时间轴是**全样本**(L2 用 full panel), 与 standard_test 同;
-            #  但成本/窗口取 args 的设置, 故绝对数值与报告不一定逐位相同, 判"衰减"看相对。
-            if _strip_style and rr is not None:
-                try:
-                    _fn = neutral_rank(f.values.astype('float64'),
-                                       [STYLE_FULL['lncap'], STYLE_FULL['lnamt']])
-                    rr_s = evaluate_real(pd.DataFrame(_fn, index=dates, columns=cols),
-                                         close, str(nd) + '#strip',
-                                         cost=args.cost, window=args.window, with_daily=True)
-                    if rr_s is not None:
-                        strip_rec = dict(
-                            gen=args.gen, expr=str(nd),
-                            ic=rr['ic'], calmar=rr['calmar'], ann_ex=rr['ann_ex'],
-                            dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'),
-                            strip_ic=rr_s['ic'], strip_calmar=rr_s['calmar'],
-                            strip_ann_ex=rr_s['ann_ex'], strip_sharpe=rr_s['sharpe'],
-                            # ★ 剥风格后的**日频**口径（§1.19）—— 档位阈值现在就吃这几个
-                            strip_dd_d=rr_s.get('dd_d'),
-                            strip_calmar_d=rr_s.get('calmar_d'),
-                            strip_sharpe_d=rr_s.get('sharpe_d'))
-                except Exception as e_s:
-                    # 无人值守铁律: 剥风格失败**不得**影响主流程, 也不得据此拦候选
-                    print(f"  [{j}] 剥风格失败(不影响主流程): {type(e_s).__name__}: {e_s}")
-            # =============== ★★★★★ 2026-09-22（v1.21.29 · 用户拍板 (乙)）：**副口径评估** ===============
-            #  为什么放这里：正好在「主口径 + 主口径剥风格」之后、「池内」之前 ✓
-            #    · 副口径**只做** 主评 + 剥风格 + 分段（不做池内 ✗）——
-            #      池内门槛是"池轨道"的概念 ✓，而副口径的价值在**全A 口径下**捞真信号 ✓；
-            #      判定上它走 `_ok_q2`（全A 量化口径 ✓），与 `combine_ok` 的 OR 语义天然相容 ✓
-            #    · ⚠⚠ **`FWD` 必须在 finally 里复原** ✗✗ —— 它是模块全局，
-            #      `evaluate_real` 在**调用时**读它（实测确认 ✓：`fwd_ret=(close.shift(-(1+FWD))…)` 在函数体内 ✓）
-            #      ⇒ 一旦中途异常而不复原，**后面所有候选都会按副口径评估** ✗ 且**不报错** ✓
-            if args.dual_fwd and rr is not None:
-                try:
-                    # ⚠⚠ **只切 `factor_miner.FWD`，不碰本模块的 `FWD`** ✗ ——
-                    #   本模块的 `FWD` 只在**候选循环之前**的预计算里用（`[::FWD]` 切片 ✓），
-                    #   而求值读的是 `factor_miner` 自己的全局 ✓ ⇒ 不需要动它 ✓
-                    #   ★ 而且**不能**在函数里裸写 `FWD = …` ✗：没有 `global` 声明 ⇒
-                    #     Python 会当**局部变量** ⇒ 既改不到全局、又会 `UnboundLocalError` ✗✗
-                    #     （我第一版就是这么写的 ✓ 自查拦下 ✓）
-                    _FM.set_fwd(int(args.dual_fwd))
-                    rr2 = evaluate_real(f, close, f"{nd}#h{int(args.dual_fwd)}",
-                                        cost=args.cost, window=args.window,
-                                        with_ex=True, with_daily=True)
-                    if _strip_style and rr2 is not None:
-                        _fn2 = neutral_rank(f.values.astype('float64'),
-                                            [STYLE_FULL['lncap'], STYLE_FULL['lnamt']])
-                        rr_s2 = evaluate_real(pd.DataFrame(_fn2, index=dates, columns=cols),
-                                              close, f"{nd}#h{int(args.dual_fwd)}#strip",
-                                              cost=args.cost, window=args.window, with_daily=True)
-                        if rr_s2 is not None:
-                            strip2 = dict(
-                                gen=args.gen, expr=str(nd),
-                                ic=rr2['ic'], calmar=rr2['calmar'], ann_ex=rr2['ann_ex'],
-                                strip_ic=rr_s2['ic'], strip_calmar=rr_s2['calmar'],
-                                strip_ann_ex=rr_s2['ann_ex'], strip_sharpe=rr_s2['sharpe'],
-                                strip_dd_d=rr_s2.get('dd_d'),
-                                strip_calmar_d=rr_s2.get('calmar_d'),
-                                strip_sharpe_d=rr_s2.get('sharpe_d'))
-                except Exception as e2:
-                    print(f"  [{j}] 副口径({int(args.dual_fwd)})评估失败(不影响主流程): "
-                          f"{type(e2).__name__}: {e2}")
-                finally:
-                    # ★★ 复原主口径：`FWD` 是本轮主口径（5 日 ✓ 由 `--fwd` 同步块设定 ✓）
-                    #   必须在 finally ⇒ 中途异常也要复原 ✗（否则后续候选全按副口径 ✓ 且静默 ✓）
-                    _FM.set_fwd(int(FWD))
-                # 副口径的判定（**与主口径同一套闸** ✓，但走"全A 量化口径"这条 OR 支路 ✓）
-                if rr2 is not None:
-                    try:
-                        ok2, _ = pass_filter(rr2, args.min_ic2)
-                        ok2 = bool(ok2 and rr2['calmar'] > args.min_calmar2
-                                   and rr2['sharpe'] > args.min_sharpe2)
-                        if args.seg_n > 1:
-                            ok2 = bool(ok2 and seg_verify(rr2.get('ex'),
-                                                          args.seg_n, args.seg_need)[0])
-                        if _strip_style and args.min_strip_calmar > 0 and strip2 is not None:
-                            ok2 = bool(ok2 and strip2['strip_calmar'] > args.min_strip_calmar)
-                    except Exception as e3:
-                        ok2 = False
-                        print(f"  [{j}] 副口径判定失败(按未过处理): {type(e3).__name__}: {e3}")
+            strip_rec, rr2, strip2, ok2 = _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style, rr)
             # ---- 池内指标(2026-09-12, --pool_obs; 见 roadmap §8.9 B+B′) ----
             #  口径 = **池内排名**(对齐 standard_test 默认的 --pool_mode=A):
             #    因子池外置 NaN -> cs_rank(逐行只在池内有效值上排名) -> 同一套费后回测。
