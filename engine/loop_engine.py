@@ -2069,20 +2069,24 @@ def _run_gen(ctx, args):
     return False
 
 
-def run(args):
-    ctx = _run_prepare(args)
-    (t0, rng, base, B, dates, cols, close, T, S, U, fwd_ret,
-     seeds, fsa, prev_l1, prev_l2, bank, bank_ex, bank_ext, bank_ex_ext, frozen, fsa_frz, fail_lib, cfg, _prev_pool_map, n_tested_prev, critic, diag, r, reasons, block_fams, f, fam_black_txt, nd, bad, cfg_r, loop_llm) = (
-        ctx['t0'], ctx['rng'], ctx['base'], ctx['B'], ctx['dates'], ctx['cols'], ctx['close'], ctx['T'], ctx['S'], ctx['U'], ctx['fwd_ret'],
-        ctx['seeds'], ctx['fsa'], ctx['prev_l1'], ctx['prev_l2'], ctx['bank'], ctx['bank_ex'], ctx['bank_ext'], ctx['bank_ex_ext'], ctx['frozen'], ctx['fsa_frz'], ctx['fail_lib'], ctx['cfg'], ctx['_prev_pool_map'], ctx['n_tested_prev'], ctx['critic'], ctx['diag'], ctx['r'], ctx['reasons'], ctx['block_fams'], ctx['f'], ctx['fam_black_txt'], ctx['nd'], ctx['bad'], ctx['cfg_r'], ctx['loop_llm'])
-
-    if _run_gen(ctx, args):
-        return
+def _run_l1_phase(ctx, args):
+    """L1 批量 IC + 过滤（形状/去相关/去重/族配额/FSA/jury）-> 写回 ctx；早退返回 True"""
+    U = ctx['U']
+    base = ctx['base']
+    fwd_ret = ctx['fwd_ret']
+    B = ctx['B']
     cands = ctx['cands']
-    llm_on, llm_pool, llm_hyp = ctx['llm_on'], ctx['llm_pool'], ctx['llm_hyp']
-    n_llm_call, n_llm_parse, n_llm_hit = ctx['n_llm_call'], ctx['n_llm_parse'], ctx['n_llm_hit']
+    fail_lib = ctx['fail_lib']
+    frozen = ctx['frozen']
+    fsa = ctx['fsa']
+    rng = ctx['rng']
+    loop_llm = ctx['loop_llm']
+    bank = ctx['bank']
+    bank_ext = ctx['bank_ext']
+    nd = ctx['nd']
+    r = ctx['r']
+    fsa_frz = ctx['fsa_frz']
 
-    # ---- L1 批量 IC(★分批处理 + 子面板 + 跨批LRU) ----
     Bsub, Rsub, Usub = _run_l1(U, base, fwd_ret)
     # ---- 形状量(十档单调性)所需的调仓日抽样视图: 只算一次 ----
     # rank_rows 逐行独立 => rank_rows(F)[::FWD] ≡ rank_rows(F[::FWD])，抽样与不抽样等价(更快)
@@ -2116,8 +2120,8 @@ def run(args):
     # ★ 剥风格档（2026-09-14, §1.9）：{表达式: (档位, 说明, 剥后calmar, 剥后超额)}
     #   与 `_tag_by_expr` **并列**（不替代）—— 入库文档里两者都写。
     _strip_by_expr = {}
-# ★ 2026-09-22（v1.21.29 · (乙)）：**副口径**的剥风格记录（按口径分别落文档 ✓
-#   否则 20 日入选的因子会在文档里写上 5 日的剥风格数字 ✗ —— 那是另一个口径的结论 ✓）
+    # ★ 2026-09-22（v1.21.29 · (乙)）：**副口径**的剥风格记录（按口径分别落文档 ✓
+    #   否则 20 日入选的因子会在文档里写上 5 日的剥风格数字 ✗ —— 那是另一个口径的结论 ✓）
     _strip2_by_expr = {}
     # ★ 副口径入选者（`{expr: 副口径值}`）—— 供 `_save_state` 分口径写文档 ✓
     _hzn2_by_expr = {}
@@ -2366,7 +2370,7 @@ def run(args):
     cache2 = {}
     if not len(l1):
         print("L1 无候选通过, 退出")
-        return
+        return True
     l1 = l1[(l1['ic'] > args.min_ic) & (l1['stab'] > args.min_stab)]
     # ---- 形状门槛(gen52+, 批1 P0; --min_mono 默认 0=关闭 -> 默认零行为变化) ----
     # 标定(1150 条历史 L2 候选): L2 通过者 mono 中位 0.964 / 最小 0.770; 判死者中位 0.867。
@@ -2378,7 +2382,7 @@ def run(args):
               f"(原 {n_pre_mono}, 拦 {n_pre_mono - len(l1)})")
         if not len(l1):
             print("L1 形状门槛后无候选, 退出")
-            return
+            return True
     # ★去相关: 与【已入库已知因子】相关性过高的丢弃, 强迫引擎探索新方向
     #   (中金的"IC相关性<0.70"; 否则引擎会反复重新发现 ln_mktcap / amt_log)
     if args.decorr > 0:
@@ -2524,6 +2528,78 @@ def run(args):
     # 由审查侧 Sub-agent LLM(loop_llm.jury_verdict)判经济含义/过拟合边界/已知族嫌疑,
     # verdict=KILL 者剔除出 L2 费后回测; 无 key/调用失败一律放行不误杀(无人值守铁律)。
     jury_lines, l1, n_jury_kill, n_jury_rev = _jury_deep_review(args, l1, loop_llm, rng)
+
+
+    ctx['Bsub'] = Bsub
+    ctx['Rsub'] = Rsub
+    ctx['Usub'] = Usub
+    ctx['STYLE_FULL'] = STYLE_FULL
+    ctx['l1'] = l1
+    ctx['obs_df'] = obs_df
+    ctx['fam_blocked'] = fam_blocked
+    ctx['jury_lines'] = jury_lines
+    ctx['n_jury_kill'] = n_jury_kill
+    ctx['n_jury_rev'] = n_jury_rev
+    ctx['_min_pool_calmar'] = _min_pool_calmar
+    ctx['_min_sharpe'] = _min_sharpe
+    ctx['_pool_gate_mode'] = _pool_gate_mode
+    ctx['_pool_gate_on'] = _pool_gate_on
+    ctx['_pool_gate_or_all'] = _pool_gate_or_all
+    ctx['_pool_obs'] = _pool_obs
+    ctx['_pools'] = _pools
+    ctx['_strip_style'] = _strip_style
+    ctx['_dup_ex_corr'] = _dup_ex_corr
+    ctx['_ex_by_expr'] = _ex_by_expr
+    ctx['_n_dup_ex'] = _n_dup_ex
+    ctx['_tag_by_expr'] = _tag_by_expr
+    ctx['_strip_by_expr'] = _strip_by_expr
+    ctx['_strip2_by_expr'] = _strip2_by_expr
+    ctx['_hzn2_by_expr'] = _hzn2_by_expr
+    ctx['frozen'] = frozen
+    ctx['nd'] = nd
+    ctx['r'] = r
+    ctx['s'] = s
+    return False
+
+
+def run(args):
+    ctx = _run_prepare(args)
+    (t0, rng, base, B, dates, cols, close, T, S, U, fwd_ret,
+     seeds, fsa, prev_l1, prev_l2, bank, bank_ex, bank_ext, bank_ex_ext, frozen, fsa_frz, fail_lib, cfg, _prev_pool_map, n_tested_prev, critic, diag, r, reasons, block_fams, f, fam_black_txt, nd, bad, cfg_r, loop_llm) = (
+        ctx['t0'], ctx['rng'], ctx['base'], ctx['B'], ctx['dates'], ctx['cols'], ctx['close'], ctx['T'], ctx['S'], ctx['U'], ctx['fwd_ret'],
+        ctx['seeds'], ctx['fsa'], ctx['prev_l1'], ctx['prev_l2'], ctx['bank'], ctx['bank_ex'], ctx['bank_ext'], ctx['bank_ex_ext'], ctx['frozen'], ctx['fsa_frz'], ctx['fail_lib'], ctx['cfg'], ctx['_prev_pool_map'], ctx['n_tested_prev'], ctx['critic'], ctx['diag'], ctx['r'], ctx['reasons'], ctx['block_fams'], ctx['f'], ctx['fam_black_txt'], ctx['nd'], ctx['bad'], ctx['cfg_r'], ctx['loop_llm'])
+
+    if _run_gen(ctx, args):
+        return
+    cands = ctx['cands']
+    llm_on, llm_pool, llm_hyp = ctx['llm_on'], ctx['llm_pool'], ctx['llm_hyp']
+    n_llm_call, n_llm_parse, n_llm_hit = ctx['n_llm_call'], ctx['n_llm_parse'], ctx['n_llm_hit']
+
+    # ---- L1 批量 IC(★分批处理 + 子面板 + 跨批LRU) ----
+    if _run_l1_phase(ctx, args):
+        return
+    Bsub, Rsub, Usub = ctx['Bsub'], ctx['Rsub'], ctx['Usub']
+    STYLE_FULL = ctx['STYLE_FULL']
+    l1 = ctx['l1']
+    obs_df = ctx['obs_df']
+    fam_blocked = ctx['fam_blocked']
+    jury_lines, n_jury_kill, n_jury_rev = ctx['jury_lines'], ctx['n_jury_kill'], ctx['n_jury_rev']
+    _min_pool_calmar = ctx['_min_pool_calmar']
+    _min_sharpe = ctx['_min_sharpe']
+    _pool_gate_mode = ctx['_pool_gate_mode']
+    _pool_gate_on = ctx['_pool_gate_on']
+    _pool_gate_or_all = ctx['_pool_gate_or_all']
+    _pool_obs = ctx['_pool_obs']
+    _pools = ctx['_pools']
+    _dup_ex_corr = ctx['_dup_ex_corr']
+    _ex_by_expr = ctx['_ex_by_expr']
+    _n_dup_ex = ctx['_n_dup_ex']
+    _tag_by_expr = ctx['_tag_by_expr']
+    _strip_by_expr = ctx['_strip_by_expr']
+    _strip2_by_expr = ctx['_strip2_by_expr']
+    _hzn2_by_expr = ctx['_hzn2_by_expr']
+    _strip_style = ctx['_strip_style']
+    frozen, nd, r, s = ctx['frozen'], ctx['nd'], ctx['r'], ctx['s']
 
     # ---- L2 费后精筛 ----
     POOL_M, _lp, _t_l2, top = _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool_gate_or_all, _pool_obs, _pools, args, cols, dates, l1)
@@ -2909,6 +2985,7 @@ def run(args):
     _log_llm_hint(args, jury_lines, llm_hyp, llm_on, n_jury_kill, n_jury_rev, n_llm_call, n_llm_hit, n_llm_parse)
 
     # ---- B角 LLM 审查(DeepSeek, --ai_critic auto/on/off, 默认auto=有key即启用) ----
+    _v = None  # ★ 死透传（_critic_llm_review 内覆盖参数）；L1 循环 `for _d_,_v in zip` 的兜底赋值已移走
     _v = _critic_llm_review(_v, args, critic, diag, l1, next_cfg, reasons, res_c)
 
     # ---- 保存状态 ----
