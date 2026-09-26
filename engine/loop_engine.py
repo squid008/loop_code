@@ -2070,6 +2070,142 @@ def _run_gen(ctx, args):
     return False
 
 
+def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mode):
+    """L1 过滤：ic/stab 门槛 + 形状门槛 + 去相关 + 评分 + 近重复去重 -> 返回 l1（空则 None）"""
+    cache2 = {}
+    if not len(l1):
+        print("L1 无候选通过, 退出")
+        return None
+    l1 = l1[(l1['ic'] > args.min_ic) & (l1['stab'] > args.min_stab)]
+    # ---- 形状门槛(gen52+, 批1 P0; --min_mono 默认 0=关闭 -> 默认零行为变化) ----
+    # 标定(1150 条历史 L2 候选): L2 通过者 mono 中位 0.964 / 最小 0.770; 判死者中位 0.867。
+    # 故 `mono >= 0.75` 可拦下 ~27% 判死候选且对 19 个入库因子**零误杀**。
+    if _min_mono > 0 and 'mono' in l1.columns:
+        n_pre_mono = len(l1)
+        l1 = l1[np.isfinite(l1['mono']) & (l1['mono'] >= _min_mono)]
+        print(f"  [形状门槛] 十档单调性 mono>={_min_mono:g} 后剩 {len(l1)} 个 "
+              f"(原 {n_pre_mono}, 拦 {n_pre_mono - len(l1)})")
+        if not len(l1):
+            print("L1 形状门槛后无候选, 退出")
+            return None
+    # ★去相关: 与【已入库已知因子】相关性过高的丢弃, 强迫引擎探索新方向
+    #   (中金的"IC相关性<0.70"; 否则引擎会反复重新发现 ln_mktcap / amt_log)
+    if args.decorr > 0:
+        _t_dec = time.time()
+        # 对比对象 = 人工基准 + 【历代入库因子(state.bank)】 —— 对齐中金
+        # "与已入库因子IC相关<0.70"的结果闸门: 不是固定两个基准, 库扩大后
+        # 与新入库因子相似的候选会被拦在L2外(不靠禁叶子字段)
+        KNOWN = {
+            'ln_mktcap': np.log(np.maximum(B['mktcap'], 1e-9)),
+            'amt_log': -np.log(ts_mean(B['turnover'], 20) + 1.0),
+        }
+        # 用子面板算相关性(快); 已知因子也取对应子面板
+        Kr = {}
+        for k, v in KNOWN.items():
+            vs = v[np.ix_(L1_ROWS, L1_COLS)]
+            Kr[k] = rank_rows(vs[::FWD])
+        # ★ 2026-09-14（§1.8）：对照集 = 自己的 bank **+ 外部池库**（`bank_ext`，只读注入）
+        #   不注入的话，跑全A 时这一层"看不见池库" ⇒ 重挖。
+        for bi, bnd in enumerate(bank + bank_ext):
+            try:
+                vb = eval_expr(bnd, Bsub, cache2)
+                Kr[f'bank{bi}'] = rank_rows(vb[::FWD])
+                del vb
+            except Exception:
+                pass
+        keep_rows = []
+        n_hit = 0
+        for _, r in l1.iterrows():
+            # ★复用 L1 已算的 [::FWD] 值视图(命中则完全跳过 eval_expr, 结果逐位不变)
+            v0 = VCACHE.get(r['expr']) if _reuse_v else None
+            if v0 is not None:
+                n_hit += 1
+            else:
+                v0 = eval_expr(r['node'], Bsub, cache2)
+                if r['sign'] < 0:
+                    v0 = -v0
+                v0 = v0[::FWD]
+            v = rank_rows(v0)
+            del v0
+            mx = 0.0
+            fv = np.isfinite(v)          # ★ 提到循环外: 与 w 无关, 此前每个已知因子都重算一次
+            for w in Kr.values():
+                m = fv & np.isfinite(w)
+                if m.sum() < 100:
+                    continue
+                c = abs(np.corrcoef(v[m], w[m])[0, 1])
+                mx = max(mx, c if np.isfinite(c) else 0.0)
+            if mx <= args.decorr:
+                keep_rows.append(r)
+            trim_cache(cache2, CACHE2_MAX)             # 去相关缓存容量控制(防OOM)
+            trim_cache_mb(cache2, CACHE2_MB)           # ★ 治本: 字节上限 ✓
+        print(f"去相关(|corr|<={args.decorr} vs {len(Kr)}个已知因子) 后剩 "
+              f"{len(keep_rows)} 个 (原 {len(l1)})")
+        print(f"  [计时] 去相关 用时 {time.time() - _t_dec:.0f}s "
+              f"(复用 L1 值 {n_hit}/{len(l1)} 个, 缓存 {_VREUSE_MB[0]:.0f}MB)", flush=True)
+        if keep_rows:
+            l1 = pd.DataFrame(keep_rows)
+    # 关键: 不能只按 |IC_IR| 排! 低稳定性(高换手)因子费后必亏
+    # L1评分 = |IC_IR| x 稳定性权重; 换手代理 turn_est = 1 - stab
+    l1['turn_est'] = 1.0 - l1['stab']
+    if _score_mode == 'new':
+        # 批1 P0(gen52+): score = stab × (0.5 + 0.5·shape_pos)，**去掉 |ic_ir|**
+        # 依据: 标定 1150 条历史 L2 候选, 与 L2 Calmar 的相关性 old +0.167 -> new +0.668;
+        #       ic_ir 本身与 L2 负相关(-0.317), 乘进去在稀释 stab 的正信号(stab 单独 +0.546)。
+        #       IC 仍由 `ic > min_ic` 当准入门槛, 只是不再当排序驱动。
+        l1['score'] = l1_score(l1['stab'], l1['ic_ir'],
+                               l1['shape_pos'] if 'shape_pos' in l1.columns else None, 'new')
+    else:
+        l1['score'] = l1['ic_ir'].abs() * (0.25 + 0.75 * l1['stab'].clip(0, 1))
+    l1 = l1.sort_values('score', ascending=False)
+    # 数值近重复去重(只对 TopN 做, 用采样指纹加速, 否则 O(n^2) 跑不动)
+    # gen51: 阈值 0.99 -> args.dedup_corr(默认0.85)。0.99 过松: 实测同代 F20~F23 两两
+    # |corr| 0.93/0.88 全数放行(4 个近重复因子同代入库)。标定: 全库 23 因子在此口径下
+    # 仅这两对>0.85(其余<=0.744) -> 0.85 既能拦下两对、又不误杀历史入库因子。
+    _t_dd = time.time()
+    TOPN = min(len(l1), args.dedup_n)
+    dedup, seen_v = [], []
+    n_dup = 0
+    samp = slice(None, None, max(1, 418 // args.dedup_days))   # 抽样调仓日
+    cache2 = {}
+    n_hit2 = 0
+    for _, r in l1.head(TOPN).iterrows():
+        vc = VCACHE.get(r['expr']) if _reuse_v else None
+        if vc is not None:                              # 复用 L1 值, 免二次 eval
+            v = rank_rows(vc)[samp]
+            n_hit2 += 1
+        else:
+            v = eval_expr(r['node'], Bsub, cache2)
+            if r['sign'] < 0:
+                v = -v
+            v = rank_rows(v[::FWD])[samp]
+        dup = False
+        for w in seen_v:
+            m = np.isfinite(v) & np.isfinite(w)
+            if m.sum() < 100:
+                continue
+            if abs(np.corrcoef(v[m], w[m])[0, 1]) > args.dedup_corr:
+                dup = True
+                break
+        if not dup:
+            seen_v.append(v)
+            dedup.append(r)
+        else:
+            n_dup += 1
+        trim_cache(cache2, CACHE2_MAX)                 # 去重缓存容量控制(防OOM)
+        trim_cache_mb(cache2, CACHE2_MB)               # ★ 治本: 字节上限 ✓
+    print(f"\nL1 通过 {len(l1)} 个, 取Top{TOPN}近重复去重(|corr|>{args.dedup_corr:g})"
+          f"拦 {n_dup} -> 剩 {len(dedup)} 个")
+    print(f"  [计时] 近重复去重 用时 {time.time() - _t_dd:.0f}s "
+          f"(复用 L1 值 {n_hit2}/{TOPN} 个)", flush=True)
+    VCACHE.clear()                                      # 去相关/去重用完即释放(防与 L2 叠加占内存)
+    _VREUSE_MB[0] = 0.0
+    l1 = pd.DataFrame(dedup) if dedup else l1.head(TOPN)
+    print(l1[['expr', 'ic', 'ic_ir', 'stab']].head(15).round(4).to_string(index=False))
+    return l1
+
+
+
 def _run_l1_phase(ctx, args):
     """L1 批量 IC + 过滤（形状/去相关/去重/族配额/FSA/jury）-> 写回 ctx；早退返回 True"""
     U = ctx['U']
@@ -2368,136 +2504,9 @@ def _run_l1_phase(ctx, args):
             flib_mark(fail_lib, nd, args.gen, False, 'ic')
         elif r_['stab'] <= args.min_stab:
             flib_mark(fail_lib, nd, args.gen, False, 'stab')
-    cache2 = {}
-    if not len(l1):
-        print("L1 无候选通过, 退出")
+    l1 = _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mode)
+    if l1 is None:
         return True
-    l1 = l1[(l1['ic'] > args.min_ic) & (l1['stab'] > args.min_stab)]
-    # ---- 形状门槛(gen52+, 批1 P0; --min_mono 默认 0=关闭 -> 默认零行为变化) ----
-    # 标定(1150 条历史 L2 候选): L2 通过者 mono 中位 0.964 / 最小 0.770; 判死者中位 0.867。
-    # 故 `mono >= 0.75` 可拦下 ~27% 判死候选且对 19 个入库因子**零误杀**。
-    if _min_mono > 0 and 'mono' in l1.columns:
-        n_pre_mono = len(l1)
-        l1 = l1[np.isfinite(l1['mono']) & (l1['mono'] >= _min_mono)]
-        print(f"  [形状门槛] 十档单调性 mono>={_min_mono:g} 后剩 {len(l1)} 个 "
-              f"(原 {n_pre_mono}, 拦 {n_pre_mono - len(l1)})")
-        if not len(l1):
-            print("L1 形状门槛后无候选, 退出")
-            return True
-    # ★去相关: 与【已入库已知因子】相关性过高的丢弃, 强迫引擎探索新方向
-    #   (中金的"IC相关性<0.70"; 否则引擎会反复重新发现 ln_mktcap / amt_log)
-    if args.decorr > 0:
-        _t_dec = time.time()
-        # 对比对象 = 人工基准 + 【历代入库因子(state.bank)】 —— 对齐中金
-        # "与已入库因子IC相关<0.70"的结果闸门: 不是固定两个基准, 库扩大后
-        # 与新入库因子相似的候选会被拦在L2外(不靠禁叶子字段)
-        KNOWN = {
-            'ln_mktcap': np.log(np.maximum(B['mktcap'], 1e-9)),
-            'amt_log': -np.log(ts_mean(B['turnover'], 20) + 1.0),
-        }
-        # 用子面板算相关性(快); 已知因子也取对应子面板
-        Kr = {}
-        for k, v in KNOWN.items():
-            vs = v[np.ix_(L1_ROWS, L1_COLS)]
-            Kr[k] = rank_rows(vs[::FWD])
-        # ★ 2026-09-14（§1.8）：对照集 = 自己的 bank **+ 外部池库**（`bank_ext`，只读注入）
-        #   不注入的话，跑全A 时这一层"看不见池库" ⇒ 重挖。
-        for bi, bnd in enumerate(bank + bank_ext):
-            try:
-                vb = eval_expr(bnd, Bsub, cache2)
-                Kr[f'bank{bi}'] = rank_rows(vb[::FWD])
-                del vb
-            except Exception:
-                pass
-        keep_rows = []
-        n_hit = 0
-        for _, r in l1.iterrows():
-            # ★复用 L1 已算的 [::FWD] 值视图(命中则完全跳过 eval_expr, 结果逐位不变)
-            v0 = VCACHE.get(r['expr']) if _reuse_v else None
-            if v0 is not None:
-                n_hit += 1
-            else:
-                v0 = eval_expr(r['node'], Bsub, cache2)
-                if r['sign'] < 0:
-                    v0 = -v0
-                v0 = v0[::FWD]
-            v = rank_rows(v0)
-            del v0
-            mx = 0.0
-            fv = np.isfinite(v)          # ★ 提到循环外: 与 w 无关, 此前每个已知因子都重算一次
-            for w in Kr.values():
-                m = fv & np.isfinite(w)
-                if m.sum() < 100:
-                    continue
-                c = abs(np.corrcoef(v[m], w[m])[0, 1])
-                mx = max(mx, c if np.isfinite(c) else 0.0)
-            if mx <= args.decorr:
-                keep_rows.append(r)
-            trim_cache(cache2, CACHE2_MAX)             # 去相关缓存容量控制(防OOM)
-            trim_cache_mb(cache2, CACHE2_MB)           # ★ 治本: 字节上限 ✓
-        print(f"去相关(|corr|<={args.decorr} vs {len(Kr)}个已知因子) 后剩 "
-              f"{len(keep_rows)} 个 (原 {len(l1)})")
-        print(f"  [计时] 去相关 用时 {time.time() - _t_dec:.0f}s "
-              f"(复用 L1 值 {n_hit}/{len(l1)} 个, 缓存 {_VREUSE_MB[0]:.0f}MB)", flush=True)
-        if keep_rows:
-            l1 = pd.DataFrame(keep_rows)
-    # 关键: 不能只按 |IC_IR| 排! 低稳定性(高换手)因子费后必亏
-    # L1评分 = |IC_IR| x 稳定性权重; 换手代理 turn_est = 1 - stab
-    l1['turn_est'] = 1.0 - l1['stab']
-    if _score_mode == 'new':
-        # 批1 P0(gen52+): score = stab × (0.5 + 0.5·shape_pos)，**去掉 |ic_ir|**
-        # 依据: 标定 1150 条历史 L2 候选, 与 L2 Calmar 的相关性 old +0.167 -> new +0.668;
-        #       ic_ir 本身与 L2 负相关(-0.317), 乘进去在稀释 stab 的正信号(stab 单独 +0.546)。
-        #       IC 仍由 `ic > min_ic` 当准入门槛, 只是不再当排序驱动。
-        l1['score'] = l1_score(l1['stab'], l1['ic_ir'],
-                               l1['shape_pos'] if 'shape_pos' in l1.columns else None, 'new')
-    else:
-        l1['score'] = l1['ic_ir'].abs() * (0.25 + 0.75 * l1['stab'].clip(0, 1))
-    l1 = l1.sort_values('score', ascending=False)
-    # 数值近重复去重(只对 TopN 做, 用采样指纹加速, 否则 O(n^2) 跑不动)
-    # gen51: 阈值 0.99 -> args.dedup_corr(默认0.85)。0.99 过松: 实测同代 F20~F23 两两
-    # |corr| 0.93/0.88 全数放行(4 个近重复因子同代入库)。标定: 全库 23 因子在此口径下
-    # 仅这两对>0.85(其余<=0.744) -> 0.85 既能拦下两对、又不误杀历史入库因子。
-    _t_dd = time.time()
-    TOPN = min(len(l1), args.dedup_n)
-    dedup, seen_v = [], []
-    n_dup = 0
-    samp = slice(None, None, max(1, 418 // args.dedup_days))   # 抽样调仓日
-    cache2 = {}
-    n_hit2 = 0
-    for _, r in l1.head(TOPN).iterrows():
-        vc = VCACHE.get(r['expr']) if _reuse_v else None
-        if vc is not None:                              # 复用 L1 值, 免二次 eval
-            v = rank_rows(vc)[samp]
-            n_hit2 += 1
-        else:
-            v = eval_expr(r['node'], Bsub, cache2)
-            if r['sign'] < 0:
-                v = -v
-            v = rank_rows(v[::FWD])[samp]
-        dup = False
-        for w in seen_v:
-            m = np.isfinite(v) & np.isfinite(w)
-            if m.sum() < 100:
-                continue
-            if abs(np.corrcoef(v[m], w[m])[0, 1]) > args.dedup_corr:
-                dup = True
-                break
-        if not dup:
-            seen_v.append(v)
-            dedup.append(r)
-        else:
-            n_dup += 1
-        trim_cache(cache2, CACHE2_MAX)                 # 去重缓存容量控制(防OOM)
-        trim_cache_mb(cache2, CACHE2_MB)               # ★ 治本: 字节上限 ✓
-    print(f"\nL1 通过 {len(l1)} 个, 取Top{TOPN}近重复去重(|corr|>{args.dedup_corr:g})"
-          f"拦 {n_dup} -> 剩 {len(dedup)} 个")
-    print(f"  [计时] 近重复去重 用时 {time.time() - _t_dd:.0f}s "
-          f"(复用 L1 值 {n_hit2}/{TOPN} 个)", flush=True)
-    VCACHE.clear()                                      # 去相关/去重用完即释放(防与 L2 叠加占内存)
-    _VREUSE_MB[0] = 0.0
-    l1 = pd.DataFrame(dedup) if dedup else l1.head(TOPN)
-    print(l1[['expr', 'ic', 'ic_ir', 'stab']].head(15).round(4).to_string(index=False))
     # ---- 结构族配额(QuantaAlpha 冗余检测移植, gen31) ----
     # 数值去重(|corr|>dedup_corr) 只拦"数值近重复"; FSA 冻结只拦"完整串复用"。同族"外层模板
     # 固定、内层微调"的候选(score 各异、公共结构巨大)会继续挤满 L2 名额与下代种子池, 费后全灭 ->
