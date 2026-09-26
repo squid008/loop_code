@@ -2980,56 +2980,42 @@ def _run_l2_phase(ctx, args):
     ctx['_hzn2_by_expr'] = _hzn2_by_expr
 
 
-def run(args):
-    ctx = _run_prepare(args)
-    (t0, rng, base, B, dates, cols, close, T, S, U, fwd_ret,
-     seeds, fsa, prev_l1, prev_l2, bank, bank_ex, bank_ext, bank_ex_ext, frozen, fsa_frz, fail_lib, cfg, _prev_pool_map, n_tested_prev, critic, diag, r, reasons, block_fams, f, fam_black_txt, nd, bad, cfg_r, loop_llm) = (
-        ctx['t0'], ctx['rng'], ctx['base'], ctx['B'], ctx['dates'], ctx['cols'], ctx['close'], ctx['T'], ctx['S'], ctx['U'], ctx['fwd_ret'],
-        ctx['seeds'], ctx['fsa'], ctx['prev_l1'], ctx['prev_l2'], ctx['bank'], ctx['bank_ex'], ctx['bank_ext'], ctx['bank_ex_ext'], ctx['frozen'], ctx['fsa_frz'], ctx['fail_lib'], ctx['cfg'], ctx['_prev_pool_map'], ctx['n_tested_prev'], ctx['critic'], ctx['diag'], ctx['r'], ctx['reasons'], ctx['block_fams'], ctx['f'], ctx['fam_black_txt'], ctx['nd'], ctx['bad'], ctx['cfg_r'], ctx['loop_llm'])
-
-    if _run_gen(ctx, args):
-        return
-    cands = ctx['cands']
-    llm_on, llm_pool, llm_hyp = ctx['llm_on'], ctx['llm_pool'], ctx['llm_hyp']
-    n_llm_call, n_llm_parse, n_llm_hit = ctx['n_llm_call'], ctx['n_llm_parse'], ctx['n_llm_hit']
-
-    # ---- L1 批量 IC(★分批处理 + 子面板 + 跨批LRU) ----
-    if _run_l1_phase(ctx, args):
-        return
-    Bsub, Rsub, Usub = ctx['Bsub'], ctx['Rsub'], ctx['Usub']
-    STYLE_FULL = ctx['STYLE_FULL']
-    l1 = ctx['l1']
-    obs_df = ctx['obs_df']
+def _run_finalize(ctx, args):
+    """诊断本代 + B角 LLM 审查 + 保存状态（最后一段，只读 ctx）"""
     fam_blocked = ctx['fam_blocked']
-    jury_lines, n_jury_kill, n_jury_rev = ctx['jury_lines'], ctx['n_jury_kill'], ctx['n_jury_rev']
-    _min_pool_calmar = ctx['_min_pool_calmar']
-    _min_sharpe = ctx['_min_sharpe']
-    _pool_gate_mode = ctx['_pool_gate_mode']
-    _pool_gate_on = ctx['_pool_gate_on']
-    _pool_gate_or_all = ctx['_pool_gate_or_all']
-    _pool_obs = ctx['_pool_obs']
-    _pools = ctx['_pools']
+    l1 = ctx['l1']
+    pool_rows = ctx['pool_rows']
+    res = ctx['res']
+    seg_ok_list = ctx['seg_ok_list']
+    cfg = ctx['cfg']
+    obs_df = ctx['obs_df']
+    r = ctx['r']
+    jury_lines = ctx['jury_lines']
+    llm_hyp = ctx['llm_hyp']
+    llm_on = ctx['llm_on']
+    n_jury_kill = ctx['n_jury_kill']
+    n_jury_rev = ctx['n_jury_rev']
+    n_llm_call = ctx['n_llm_call']
+    n_llm_hit = ctx['n_llm_hit']
+    n_llm_parse = ctx['n_llm_parse']
     _dup_ex_corr = ctx['_dup_ex_corr']
     _ex_by_expr = ctx['_ex_by_expr']
     _n_dup_ex = ctx['_n_dup_ex']
-    _tag_by_expr = ctx['_tag_by_expr']
     _strip_by_expr = ctx['_strip_by_expr']
-    _strip2_by_expr = ctx['_strip2_by_expr']
-    _hzn2_by_expr = ctx['_hzn2_by_expr']
-    _strip_style = ctx['_strip_style']
-    frozen, nd, r, s = ctx['frozen'], ctx['nd'], ctx['r'], ctx['s']
-
-    # ---- L2 费后精筛 ----
-    _run_l2_phase(ctx, args)
-    res = ctx['res']
+    _tag_by_expr = ctx['_tag_by_expr']
+    bank = ctx['bank']
+    bank_ex = ctx['bank_ex']
+    bank_ex_ext = ctx['bank_ex_ext']
+    cands = ctx['cands']
+    fail_lib = ctx['fail_lib']
+    frozen = ctx['frozen']
+    fsa = ctx['fsa']
+    n_tested_prev = ctx['n_tested_prev']
     nd = ctx['nd']
-    pool_rows = ctx['pool_rows']
+    s = ctx['s']
+    t0 = ctx['t0']
     top = ctx['top']
-    seg_ok_list = ctx['seg_ok_list']
-    _ex_by_expr = ctx['_ex_by_expr']
-    _n_dup_ex = ctx['_n_dup_ex']
-    _tag_by_expr = ctx['_tag_by_expr']
-    _strip_by_expr = ctx['_strip_by_expr']
+    fsa_frz = ctx['fsa_frz']
     _strip2_by_expr = ctx['_strip2_by_expr']
     _hzn2_by_expr = ctx['_hzn2_by_expr']
 
@@ -3051,6 +3037,20 @@ def run(args):
     v = None  # ★ 死透传（_save_state 不读 v）；L2 循环 `v=eval_expr` 的兜底赋值已随 _run_l2_phase 移走
     _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v, fsa_frz,
                 _strip2_by_expr, _hzn2_by_expr)
+
+
+
+def run(args):
+    ctx = _run_prepare(args)
+    if _run_gen(ctx, args):
+        return
+    if _run_l1_phase(ctx, args):
+        return
+    _run_l2_phase(ctx, args)
+    _run_finalize(ctx, args)
+    return 0
+
+
 
 
 def clone(n):
