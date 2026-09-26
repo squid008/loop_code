@@ -262,3 +262,51 @@ def _build_fam_blacklist(args, cfg, critic, f, frozen, prev_l1, seeds):
     if frozen:
         print(f"  [FSA] 本代生效冻结骨架 {len(frozen)} 个(生成时禁止复用)")
     return (block_fams, f, fam_black_txt, nd)
+
+
+def guided_expr(rng, cfg=None):
+    """语义引导: 按【机制族】生成。中金 LLM 机制引导位定义 13 个机制族,
+    核心为跳空溢价/振幅/影线/价格结构(实证 overnight 85% / amplitude 63%)。
+    13族 = gap / gap_trend / gap_decay / amp / amp_vol / shadow / price_struct /
+           mom / rev / vol / liq / turn_anom / vpin
+    (此函数仅在引导位 LLM 候选不足时回退使用, 与 A角 Skill 的族口径同源。)
+    """
+    cfg = cfg or DEFAULT_CFG
+    kind = rng.choice(['gap', 'gap_trend', 'gap_decay', 'amp', 'amp_vol',
+                       'shadow', 'price_struct', 'mom', 'rev', 'vol', 'liq',
+                       'turn_anom', 'vpin'])
+    N = rng.choice([60, 100, 120, 150, 200])   # 长窗口(与中金 51~200 对齐)
+    M = rng.choice([5, 20, 60])                # 短窗口
+    VW = rng.choice([60, 100, 150, 200])       # ts_std 无120窗口
+    leaf = lambda: pick_leaf(rng, cfg)
+    if kind == 'gap':                          # 跳空溢价(中金第一大族)
+        return Node('ts_mean%d' % N, [Node('overnight', [])])
+    if kind == 'gap_trend':                    # 跳空趋势背离: sub(ma(overnight,N), 别字段)
+        return Node('sub', [Node('ts_mean%d' % N, [Node('overnight', [])]),
+                            Node('ts_mean%d' % N, [Node(leaf(), [])])])
+    if kind == 'gap_decay':                    # 隔夜溢价衰减: 短-长均值差
+        return Node('sub', [Node('ts_mean%d' % M, [Node('overnight', [])]),
+                            Node('ts_mean%d' % N, [Node('overnight', [])])])
+    if kind == 'amp':                          # 振幅(中金实证 63%)
+        return Node(rng.choice(['ts_mean%d' % N, 'neg']), [Node('amplitude', [])])
+    if kind == 'amp_vol':                      # 振幅波动聚集(波动率聚族变体)
+        return Node('ts_std%d' % VW, [Node('amplitude', [])])
+    if kind == 'shadow':                       # 影线支撑(中金 FSA 后被迫转向的方向)
+        return Node(rng.choice(['ts_mean%d' % N, 'neg']),
+                    [Node(rng.choice(['down_shadow', 'up_shadow']), [])])
+    if kind == 'price_struct':                 # 价格结构 hl_ratio / true_range
+        return Node('ts_mean%d' % N,
+                    [Node(rng.choice(['hl_ratio', 'true_range', 'intraday']), [])])
+    if kind == 'mom':                          # 动量
+        return Node('ts_delta%d' % M, [Node(rng.choice(['close', 'vwap']), [])])
+    if kind == 'rev':                          # 反转
+        return Node('neg', [Node('ts_delta%d' % M,
+                                 [Node(rng.choice(['close', 'vwap']), [])])])
+    if kind == 'vol':                          # 波动率风险溢价
+        return Node('neg', [Node('ts_std%d' % VW, [Node('ret', [])])])
+    if kind == 'liq':                          # 流动性
+        return Node('neg', [Node('log', [Node('ts_mean%d' % N, [Node(leaf(), [])])])])
+    if kind == 'turn_anom':                    # 量能/换手异动: 短-长换手偏离
+        return Node('sub', [Node('ts_mean%d' % M, [Node('turn_ratio', [])]),
+                            Node('ts_mean%d' % N, [Node('turn_ratio', [])])])
+    return Node('corr%d' % min(N, 100), [Node('volume', []), Node('ret', [])])  # vpin

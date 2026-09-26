@@ -110,7 +110,7 @@ print('\n【3】启动参数与预算落地')
 for a in ('--lru_mb', '--cache2_mb', '--batch_mb'):
     chk('%s 存在' % a, a in src)
 chk('set_mem_budget 接收三个 MB 参数',
-    re.search(r'def set_mem_budget\([^)]*lru_mb[^)]*cache2_mb[^)]*batch_mb', src, re.S) is not None)
+    re.search(r'def set_mem_budget\([^)]*lru_mb[^)]*cache2_mb[^)]*batch_mb', cache_src, re.S) is not None)
 chk('main 里把三个 MB 参数传进了 set_mem_budget',
     re.search(r'set_mem_budget\(_args\.lru_max, _args\.cache2_max, _args\.vreuse_cap_mb,\s*\n?\s*'
               r'_args\.lru_mb, _args\.cache2_mb, _args\.batch_mb\)', src) is not None)

@@ -36,3 +36,24 @@ def apply_suffix(sfx):
     for k in _PATH_KEYS:
         r, e = os.path.splitext(_ORIG_PATHS[k])
         globals()[k] = r + sfx + e
+
+
+def set_mine_pool(tag):
+    """把引擎切到指定池的**独立轨迹**。
+
+    ① 状态 / 输出文件全部加池后缀 -> 三条轨迹互不读写对方的 bank/archive/journal/library;
+    ② L1 子面板列 = 该池**并集**(历史上出现过的全部成分, 保证任一时点的成分都在面板里);
+    ③ L1 的 IC 按 **PIT 池掩码**算 -> 目标函数从"全A IC"变成"**池内 IC**"。
+
+    tag='all' 时**完全不动**(向后兼容)。幂等(可从原始路径重复派生)。返回实际生效的 tag。
+    """
+    if not tag or tag == 'all':
+        MINE_POOL = 'all'
+        apply_suffix('')
+        return 'all'
+    import loop_pools as _LP
+    if tag not in _LP.POOLS:
+        raise SystemExit(f"[--mine_pool] 未知池 '{tag}'; 可选: all / {sorted(_LP.POOLS)}")
+    MINE_POOL = tag
+    apply_suffix('_' + tag)
+    return tag

@@ -92,25 +92,6 @@ except Exception:
 #       '300'/'500' = 全新独立轨迹(文件加 _300/_500 后缀)。可选池见 engine/loop_pools.py 的 POOLS。
 
 
-def set_mine_pool(tag):
-    """把引擎切到指定池的**独立轨迹**。
-
-    ① 状态 / 输出文件全部加池后缀 -> 三条轨迹互不读写对方的 bank/archive/journal/library;
-    ② L1 子面板列 = 该池**并集**(历史上出现过的全部成分, 保证任一时点的成分都在面板里);
-    ③ L1 的 IC 按 **PIT 池掩码**算 -> 目标函数从"全A IC"变成"**池内 IC**"。
-
-    tag='all' 时**完全不动**(向后兼容)。幂等(可从原始路径重复派生)。返回实际生效的 tag。
-    """
-    if not tag or tag == 'all':
-        _P.MINE_POOL = 'all'
-        _P.apply_suffix('')
-        return 'all'
-    import loop_pools as _LP
-    if tag not in _LP.POOLS:
-        raise SystemExit(f"[--mine_pool] 未知池 '{tag}'; 可选: all / {sorted(_LP.POOLS)}")
-    _P.MINE_POOL = tag
-    _P.apply_suffix('_' + tag)
-    return tag
 
 
 # 默认搜索策略(B角可动态调整)
@@ -120,13 +101,16 @@ def set_mine_pool(tag):
 # 资金流 moneyflow3 原始拆分16列: 金额(×1e4元,量纲A)+量(×100股,量纲V), 净额不预焊由GP自组合;
 # BARRA 连续风格11(barra.h5,行业哑不入叶) / 财报PIT as-of比率8(fa_pit.h5,按info_date无未来函数)
 from loop_fields import MF16, BARRA_LEAVES, FA_LEAVES, LEAVES, FIELDS
-from loop_expr import Node, collect            # ★ L3 拆分：表达式核心类型/遍历单一事实源
+from loop_expr import Node, collect, clone     # ★ L3 拆分：表达式核心类型/遍历单一事实源
 from loop_dims import review_expr, dim_of      # ★ L3 拆分：跨量纲审查单一事实源
 from loop_expr import _fsa_stats  # ★ 文件级拆分：FSA 骨架统计
 from loop_gen import _build_fam_blacklist  # ★ 文件级拆分：结构族黑名单
 from loop_data import _build_panel_fresh, _panel_sha1  # ★ 文件级拆分：面板构造
 import loop_paths as _P
+from loop_paths import set_mine_pool  # ★ 文件级拆分
 import loop_cache as _C  # ★ 文件级拆分：路径常量单一事实源（用 _P.STATE 运行时取，勿值拷贝）
+from loop_cache import (set_panel_cache, set_mem_budget, trim_cache,
+                        trim_cache_mb)  # ★ 文件级拆分：缓存工具 re-export
 from loop_eval import (style_features, _jscalar, node_to_dict, node_from_dict,
                       fam_quota_rows, factor_stability, seg_verify, batch_ic,
                       _critic_review_prev, _load_fail_lib, _rand_explore,
@@ -146,9 +130,10 @@ LLM_MAX_SIZE = 15         # 解析上限: 超过该节点总数的巨型表达�
 #   `LE.LLM_MAX_SIZE=10**9`，若抽到 loop_llm_guide 则「值拷贝」改不到 parse_expr 读的那份 ✗
 from loop_gen import (DEFAULT_CFG, _wt, _clean_cfg, pick_leaf, pick_op,
                      rand_expr, eval_expr, mutate, LEAF_CAT, leaf_parts,
-                     crossover, PARENT_SEL_MODES, pick_parent, perturb)
+                     crossover, PARENT_SEL_MODES, pick_parent, perturb,
+                     guided_expr)  # ★ 文件级拆分：guided_expr 已迁 loop_gen
 from loop_ops import (UNARY, BINARY, ts_delay, ts_delta, cs_rank_op,
-                     cs_demean_op, cs_scale_op)  # ★ L3 拆分：算子表+le算子
+                     cs_demean_op, cs_scale_op, ts_mean)  # ★ L3 拆分：算子表+le算子
 from loop_faillib import flib_mark, fail_lib_cleanup, bad_skels  # ★ L3 拆分：失败模式库
 from loop_expr import (norm_op, skeleton, skeleton_freq, subtree_skels,
                         has_frozen_skel, fsa_period, sole_leaf,
@@ -159,56 +144,10 @@ from loop_expr import (norm_op, skeleton, skeleton_freq, subtree_skels,
 #   实测：面板 B = 4.42 GB 且**构造完成后只读**；而 Windows 是 spawn(无 fork) ⇒
 #   每个引擎进程各建一份。落成只读 memmap 后多进程共享同一批物理页（省内存 + 免重建）✓
 #   实现见 `engine/panel_cache.py`（含过期检测/只读保护 → 不会静默用旧面板）。
-PANEL_CACHE = 'off'
 
 
-def set_panel_cache(mode):
-    """切换面板缓存模式：`off`(默认, 现状) / `use`(必须命中) / `build`(构造并落盘)。
-
-    ★ 必须在 `run()` 之前调用（与 `set_mine_pool` 同理）：`base_fields()` 在 run 内首次被调用。
-    """
-    global PANEL_CACHE
-    m = (mode or 'off').strip().lower()
-    if m not in ('off', 'use', 'build'):
-        raise SystemExit('[--panel_cache] 非法取值 %r（可选: off/use/build）' % (mode,))
-    PANEL_CACHE = m
-    return PANEL_CACHE
 
 
-def set_mem_budget(lru_max=400, cache2_max=150, vreuse_cap_mb=800.0,
-                   lru_mb=1200.0, cache2_mb=800.0, batch_mb=1500.0):
-    """调「**每进程私有缓存**」的上限。
-
-    ★ 为什么需要它：并行跑 N 个池时，**面板**可以靠 `--panel_cache=use` 跨进程共享，
-      但 `_C._LRU` / `cache2` / `_C.VCACHE` 是**每进程私有**的（私有脏写，不能共享）⇒
-      它们才是"并行时的内存地板"。要把总占用压到某个数（如 ≤10 GB），
-      就得按 N 把这份预算切小 ✓
-    ★ 代价：缓存越小 ⇒ 越多的子树要**现场重算** ⇒ 每代变慢（时间换内存）。
-
-    ★★★★★ 2026-09-21 **治本**（用户："走治本的方案A吧"）：**条数上限管不住内存** ✗
-      —— 实测（`ai_test/_memprof_1000.py` 外部采样 · 1000 池单代）：
-        · `--n=800` 一代里，私有内存 **1 分钟到 4.9 GB、8 分钟到 14.6 GB（工作集 16.6 GB）** ✗
-        · 而且是**锯齿式上台阶**（12.5 ↔ 14.8 GB 反复 ✓）⇒ 回不到基线 = **缓存在囤** ✗
-        · 根因：`_C.LRU_MAX = 400`、`_C.CACHE2_MAX = 150` 都是**条数** ✗，而单条的体积随**池宽**变：
-          1000 池的 L1 子面板 = **2094 日 × 2818 股**（池并集 ✓ 实测日志 ✓）⇒ 单条 ≈ **47 MB** ✗
-          ⇒ `400 条 × 47 MB ≈ 18.8 GB` ✗✗（引擎日志里 _C.VCACHE 早就按 MB 算了 ✓，
-             只有这两个缓存漏了 ✗）
-        · 池越大 ⇒ 单条越大 ⇒ 越容易把机器压到换页（1000 池单代 110~172 分钟 ✗ = 嫌疑根因 ✓）
-      ⇒ 修法（**只改"缓存回收"，不动任何数值口径 ✓**）：
-        ① `trim_cache_mb()`：按 `arr.nbytes` 累计，超预算从**最旧**开始淘汰 ⇒ **硬上限** ✓
-        ② `--lru_mb / --cache2_mb`：字节预算（条数上限**保留作兜底** ✓）
-        ③ `--batch_mb`：L1 批大小**按字节自适应** ✗（固定 40 个时，宽池一批就 ≈1.9 GB ✗）
-    """
-    _C.LRU_MAX = max(20, int(lru_max))
-    _C.CACHE2_MAX = max(20, int(cache2_max))
-    _C._VREUSE_CAP_MB = max(0.0, float(vreuse_cap_mb))
-    _C.LRU_MB = max(50.0, float(lru_mb))
-    _C.CACHE2_MB = max(50.0, float(cache2_mb))
-    _C.BATCH_MB = max(100.0, float(batch_mb))
-    print('[内存预算] 每进程私有缓存: LRU=%d 条 / ≤%.0f MB · cache2=%d 条 / ≤%.0f MB · '
-          '_C.VCACHE≤%.0f MB · L1 单批≤%.0f MB (面板是否共享见 --panel_cache)'
-          % (_C.LRU_MAX, _C.LRU_MB, _C.CACHE2_MAX, _C.CACHE2_MB, _C._VREUSE_CAP_MB, _C.BATCH_MB), flush=True)
-    return _C.LRU_MAX, _C.CACHE2_MAX, _C._VREUSE_CAP_MB
 
 
 
@@ -222,11 +161,11 @@ def base_fields():
     #   · `use`   = 必须命中；缺失/过期**直接报错**（绝不偷偷重建，更不会拿旧面板算新结果）
     #   · `build` = 现场构造一份并落盘，随后继续用（结果与 off **逐位相同**）
     #   ⚠ 只有"面板从哪来"变了；`B_sub` / `_C.L1_POOL_MASK` 等派生逻辑**保持逐字不变** ✓
-    if PANEL_CACHE == 'off':
+    if _C.PANEL_CACHE == 'off':
         B, dates, cols, close = _build_panel_fresh()
     else:
         import panel_cache as _pc
-        if PANEL_CACHE == 'use':
+        if _C.PANEL_CACHE == 'use':
             B, dates, cols, _cv, _man = _pc.load(_panel_sha1())
             # close 只有 0.14 GB，**拷一份**避免"pandas 直接操作只读块"的一类意外
             close = pd.DataFrame(np.array(_cv), index=pd.Index(dates), columns=cols)
@@ -270,8 +209,6 @@ def base_fields():
 
 
 # ===================== 2. 算子 =====================
-def ts_mean(x, w):
-    return pd.DataFrame(x).rolling(w, min_periods=max(2, w // 2)).mean().values
 
 
 # ⚠ 2026-09-15（架构清扫 P0-1）删除 4 个**死代码**：`ts_max_op` / `ts_min_op` /
@@ -343,55 +280,12 @@ class _StateUnpickler(pickle.Unpickler):
 
 
 # ===================== 4. L1 批量 IC =====================
-def trim_cache(cache, cap):
-    """子树缓存容量控制: 条目超过 cap 时淘汰最早插入的键(dict 保插入序)。
-    子树缓存只是加速(命中失败会重算), 淘汰不影响正确性。"""
-    if cache is not None and len(cache) > cap:
-        for k in list(cache.keys())[:len(cache) - cap]:
-            cache.pop(k, None)
 
 
 
 
-def _cache_real_mb(cache):
-    """整个缓存的**真实**占用 MB（共用一份 `seen` ⇒ 多份视图共享的底座只计一次 ✓）。"""
-    seen = set()
-    return sum(_real_mb(v, seen) for v in cache.values())
 
 
-def trim_cache_mb(cache, max_mb):
-    """★★★★★ 2026-09-21（治本）：按**真实字节**裁缓存 ⇒ 内存有**硬上限** ✓
-
-    ★ 为什么必须按字节（实测见 `set_mem_budget` 的注释 ✓）：
-      `trim_cache` 只管"条数"✗，而单条大小随**池宽**变化 ——
-      1000 池的 L1 子面板是 2094 日 × 2818 股 ⇒ 单条 ≈ **47 MB** ✗
-      ⇒ 400 条 ≈ **18.8 GB** ✗（实测这一代的私有内存峰值 14.6 GB ✓ 工作集 16.6 GB ✓）
-      ⇒ 三个池并行就把 47.9 GB 的机器压到只剩 1.7 GB ⇒ 换页 ⇒ 单代 110~172 分钟 ✗
-    ★★ 第二刀（2026-09-21）：**"按字节"还不够 —— 要按"真实钉住的字节"** ✗
-      见 `_real_mb`：只数视图自己的 nbytes ⇒ 账实不符 ⇒ 预算**形同虚设** ✗
-    ★ 淘汰策略：dict 保插入序 ⇒ 从**最旧**开始丢 ✓（缓存只是加速、丢了会重算 ⇒ 不影响正确性 ✓）
-    ★ 返回：裁完之后的**真实**总 MB（便于日志/守门核验 ✓）
-    """
-    if cache is None:
-        return 0.0
-    try:
-        tot = _cache_real_mb(cache)
-        if tot <= max_mb:
-            return tot
-        n0 = len(cache)
-        for k in list(cache.keys()):
-            if tot <= max_mb:
-                break
-            cache.pop(k, None)
-            # ⚠ 必须**重算**而不是"减掉刚才那份" ✗ —— 底座可能被**多份视图共享** ✓
-            #   （减掉就会重复扣，把预算算成"早就达标"⇒ 又会提前停手 ✗）
-            tot = _cache_real_mb(cache)
-        if n0 > len(cache):
-            print('  [内存预算] 缓存裁至 %.0f MB（丢最旧 %d 个 ✓ 口径=**含视图底座**的真实占用 ✓）'
-                  % (tot, n0 - len(cache)), flush=True)
-        return max(tot, 0.0)
-    except Exception:                                        # noqa: BLE001
-        return 0.0                                           # 裁不动也不能影响主流程 ✓
 
 
 # rank_rows 已移至 loop_metrics.py（单一事实源, 2026-09-11）; 顶部 import 引入,
@@ -1746,56 +1640,8 @@ def run(args):
 
 
 
-def clone(n):
-    return Node(n.op, [clone(a) if isinstance(a, Node) else a for a in n.args])
 
 
-def guided_expr(rng, cfg=None):
-    """语义引导: 按【机制族】生成。中金 LLM 机制引导位定义 13 个机制族,
-    核心为跳空溢价/振幅/影线/价格结构(实证 overnight 85% / amplitude 63%)。
-    13族 = gap / gap_trend / gap_decay / amp / amp_vol / shadow / price_struct /
-           mom / rev / vol / liq / turn_anom / vpin
-    (此函数仅在引导位 LLM 候选不足时回退使用, 与 A角 Skill 的族口径同源。)
-    """
-    cfg = cfg or DEFAULT_CFG
-    kind = rng.choice(['gap', 'gap_trend', 'gap_decay', 'amp', 'amp_vol',
-                       'shadow', 'price_struct', 'mom', 'rev', 'vol', 'liq',
-                       'turn_anom', 'vpin'])
-    N = rng.choice([60, 100, 120, 150, 200])   # 长窗口(与中金 51~200 对齐)
-    M = rng.choice([5, 20, 60])                # 短窗口
-    VW = rng.choice([60, 100, 150, 200])       # ts_std 无120窗口
-    leaf = lambda: pick_leaf(rng, cfg)
-    if kind == 'gap':                          # 跳空溢价(中金第一大族)
-        return Node('ts_mean%d' % N, [Node('overnight', [])])
-    if kind == 'gap_trend':                    # 跳空趋势背离: sub(ma(overnight,N), 别字段)
-        return Node('sub', [Node('ts_mean%d' % N, [Node('overnight', [])]),
-                            Node('ts_mean%d' % N, [Node(leaf(), [])])])
-    if kind == 'gap_decay':                    # 隔夜溢价衰减: 短-长均值差
-        return Node('sub', [Node('ts_mean%d' % M, [Node('overnight', [])]),
-                            Node('ts_mean%d' % N, [Node('overnight', [])])])
-    if kind == 'amp':                          # 振幅(中金实证 63%)
-        return Node(rng.choice(['ts_mean%d' % N, 'neg']), [Node('amplitude', [])])
-    if kind == 'amp_vol':                      # 振幅波动聚集(波动率聚族变体)
-        return Node('ts_std%d' % VW, [Node('amplitude', [])])
-    if kind == 'shadow':                       # 影线支撑(中金 FSA 后被迫转向的方向)
-        return Node(rng.choice(['ts_mean%d' % N, 'neg']),
-                    [Node(rng.choice(['down_shadow', 'up_shadow']), [])])
-    if kind == 'price_struct':                 # 价格结构 hl_ratio / true_range
-        return Node('ts_mean%d' % N,
-                    [Node(rng.choice(['hl_ratio', 'true_range', 'intraday']), [])])
-    if kind == 'mom':                          # 动量
-        return Node('ts_delta%d' % M, [Node(rng.choice(['close', 'vwap']), [])])
-    if kind == 'rev':                          # 反转
-        return Node('neg', [Node('ts_delta%d' % M,
-                                 [Node(rng.choice(['close', 'vwap']), [])])])
-    if kind == 'vol':                          # 波动率风险溢价
-        return Node('neg', [Node('ts_std%d' % VW, [Node('ret', [])])])
-    if kind == 'liq':                          # 流动性
-        return Node('neg', [Node('log', [Node('ts_mean%d' % N, [Node(leaf(), [])])])])
-    if kind == 'turn_anom':                    # 量能/换手异动: 短-长换手偏离
-        return Node('sub', [Node('ts_mean%d' % M, [Node('turn_ratio', [])]),
-                            Node('ts_mean%d' % N, [Node('turn_ratio', [])])])
-    return Node('corr%d' % min(N, 100), [Node('volume', []), Node('ret', [])])  # vpin
 
 
 

@@ -41,3 +41,7 @@ def cs_scale_op(x):
 
 UNARY = _OPS.build_unary(_FO, vars())
 BINARY = _OPS.build_binary(_FO, vars())
+
+
+def ts_mean(x, w):
+    return pd.DataFrame(x).rolling(w, min_periods=max(2, w // 2)).mean().values

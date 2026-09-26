@@ -249,3 +249,7 @@ def _fsa_stats(args, cands, frozen, fsa, l1, nd, r, s, fsa_frz=None):
             print(f"     遗忘计数: {len(forgot)} 个骨架冷冻期结束（下次从 "
                   f"{FSA_FREEZE_SEQ[0]} 代重新开始）")
     return (frozen, nd, r, s)
+
+
+def clone(n):
+    return Node(n.op, [clone(a) if isinstance(a, Node) else a for a in n.args])
