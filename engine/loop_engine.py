@@ -1570,7 +1570,7 @@ def _critic_diagnose(args, fam_blocked, l1, pool_rows, res, seg_ok_list):
     return (critic, diag, res_c)
 
 
-def _agg_style_diag(_k, cfg, critic, diag, l1, obs_df, r, res):
+def _agg_style_diag(cfg, critic, diag, l1, obs_df, r, res):
     """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
 
     原段落: 风格暴露诊断聚合(2026-09-11, --style_obs): 落盘已在 L1 求值后完成, 此处只做分组聚合
@@ -1780,16 +1780,19 @@ def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_ex
           f"耗时 {time.time()-t0:.0f}s")
 
 
-def run(args):
+def _run_prepare(args):
+    """准备阶段：初始化 + 数据准备 + 载入上一代 state + 审查/黑名单/失败库/随机探索 -> ctx"""
     t0 = time.time()
     rng = random.Random(args.seed)
     np.random.seed(args.seed)
+    # ★ 无条件 import loop_llm：下方 `_jury_deep_review`（L2471）无论 --llm_guide 是否 off 都要用，
+    #   否则 --llm_guide=off 时 `loop_llm` 未绑定 -> UnboundLocalError（2026-09-26 基线跑暴露 ✓）
+    import loop_llm
     # ---- LLM 对话录音: 本代 A角/B角 与 DeepSeek 的全部往返落盘(ai_test, gitignore) ----
     # automation 无人值守, 人看不到实时 LLM 对话; 录音文件供跑代后随时回溯/本窗口转述。
     try:
-        import loop_llm as _llm
         _conv_dir = os.path.join(os.path.dirname(HERE), 'ai_test', 'loop_conv')
-        _llm.set_conv_path(os.path.join(_conv_dir, 'gen%02dC_conv.md' % args.gen))
+        loop_llm.set_conv_path(os.path.join(_conv_dir, 'gen%02dC_conv.md' % args.gen))
         print(f"  LLM 对话录音 -> ai_test/loop_conv/gen{args.gen:02d}C_conv.md", flush=True)
     except Exception as _e:
         print(f"  (LLM 对话录音初始化失败: {_e})", flush=True)
@@ -1915,6 +1918,27 @@ def run(args):
     # 随机位按该分布抽样(探索有苗头方向的新组合), 无证据时退化为 cfg 权重(均匀)。
     cfg_r = _rand_explore(bank, cfg, prev_l1)
 
+
+    return dict(
+        t0=t0, rng=rng, base=base, B=B, dates=dates, cols=cols, close=close,
+        T=T, S=S, U=U, fwd_ret=fwd_ret, seeds=seeds, fsa=fsa,
+        prev_l1=prev_l1, prev_l2=prev_l2, bank=bank, bank_ex=bank_ex,
+        bank_ext=bank_ext, bank_ex_ext=bank_ex_ext, frozen=frozen,
+        fsa_frz=fsa_frz, fail_lib=fail_lib, cfg=cfg,
+        _prev_pool_map=_prev_pool_map, n_tested_prev=n_tested_prev,
+        critic=critic, diag=diag, r=r, reasons=reasons,
+        block_fams=block_fams, f=f, fam_black_txt=fam_black_txt, nd=nd,
+        bad=bad, cfg_r=cfg_r,
+        loop_llm=loop_llm)
+
+
+def run(args):
+    ctx = _run_prepare(args)
+    (t0, rng, base, B, dates, cols, close, T, S, U, fwd_ret,
+     seeds, fsa, prev_l1, prev_l2, bank, bank_ex, bank_ext, bank_ex_ext, frozen, fsa_frz, fail_lib, cfg, _prev_pool_map, n_tested_prev, critic, diag, r, reasons, block_fams, f, fam_black_txt, nd, bad, cfg_r, loop_llm) = (
+        ctx['t0'], ctx['rng'], ctx['base'], ctx['B'], ctx['dates'], ctx['cols'], ctx['close'], ctx['T'], ctx['S'], ctx['U'], ctx['fwd_ret'],
+        ctx['seeds'], ctx['fsa'], ctx['prev_l1'], ctx['prev_l2'], ctx['bank'], ctx['bank_ex'], ctx['bank_ext'], ctx['bank_ex_ext'], ctx['frozen'], ctx['fsa_frz'], ctx['fail_lib'], ctx['cfg'], ctx['_prev_pool_map'], ctx['n_tested_prev'], ctx['critic'], ctx['diag'], ctx['r'], ctx['reasons'], ctx['block_fams'], ctx['f'], ctx['fam_black_txt'], ctx['nd'], ctx['bad'], ctx['cfg_r'], ctx['loop_llm'])
+
     # ---- 生成候选(按B角给的五维配比) ----
     # ★gen13修复: cut为累积上界, 判重/分支原来写成 cut[i] 相加 -> 数值>1恒真,
     # 使 r<cut0+cut1+cut2 永远成立: guided(引导族)与rand(纯随机)从不会被执行,
@@ -1928,7 +1952,6 @@ def run(args):
     llm_pool, llm_hyp = [], ''
     n_llm_call = n_llm_parse = n_llm_hit = 0
     if llm_on:
-        import loop_llm
         if not loop_llm.api_key():
             if getattr(args, 'llm_guide', 'auto') == 'on':
                 print("  [LLM引导] --llm_guide=on 但未找到 DeepSeek key -> 回退本地引导")
@@ -2849,7 +2872,7 @@ def run(args):
     # ---- 风格暴露诊断聚合(2026-09-11, --style_obs): 落盘已在 L1 求值后完成, 此处只做分组聚合 ----
     #  判读(见 docs/log/2026-09.md §8.3/§8.4): new vs old 两组对比, 若 L2 候选/通过集的
     #  |lntr|、|lnamt| 中位显著上升 -> 确诊"新排序分在低换手/低成交额方向加倍下注"。
-    next_cfg, reasons = _agg_style_diag(_k, cfg, critic, diag, l1, obs_df, r, res)
+    next_cfg, reasons = _agg_style_diag(cfg, critic, diag, l1, obs_df, r, res)
     # ---- 生成侧 LLM 引导留痕(独立引用体小节, 与 ai_review 块同风格) ----
     _log_llm_hint(args, jury_lines, llm_hyp, llm_on, n_jury_kill, n_jury_rev, n_llm_call, n_llm_hit, n_llm_parse)
 
