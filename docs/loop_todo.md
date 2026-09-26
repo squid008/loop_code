@@ -539,15 +539,25 @@ md 总览 ✓ · md 明细 ✓ · **不在** JSONL ✓ · **不在** 登记表 �
 
 ### 0.1 正在跑
 
-★ **2026-09-26 21:5x 实测：当前无在跑引擎**（用户此前把挖掘停了；进程实测无 `loop_engine` / `run_tracks` / `loop_watch` ✓）——
-`_control.json` = `running:false · enabled:["all","300"] · stopped:[] · curPool:null · curGen:null ·
-phase:"idle" · round:1/50 · execMode:"parallel" · maxParallel:2 · memPerEngine:5.0 ·
-panelCache:"use" · active:[]` ✓
+★ **正在跑：`all` gen81 ＋ `300` gen191**（2026-09-26 **23:17:19** 启动 · 调度器 pid **21388**）——
+`_control.json` = `running:true · enabled:["all","300"] · stopped:[] · round:1/50 · execMode:"parallel" ·
+maxParallel:2 · memPerEngine:5.0 · panelCache:"use"` ✓（驱动器日志：
+`在跑 2 个: all gen81(4min) | 300 gen191(4min) · 待启动 0 · 上限 2(自动·总容量) · 可用 3.8~18.5 GB` ✓）
 
-> ★★★ **v1.23.0（易维护性整治）发版后已重启挖掘** —— 引擎行为**逐字不变**（同 seed=777 复跑 +
-> `state` 逐字段对照全 OK · 全量回归 51/51）⇒ 重启只换**代码版本**，不影响已入库因子 ✓
-> ⚠ 重启前的健全性自查：`>1500 行巨型文件 0 个` · `loop_engine.py` **619 行**（只剩 `run()` 8 行编排）·
-> v1.22.2 那处 **`Node` 单类注册仍在**（`loop_engine.py` 末尾 `__main__` 块首条 `sys.modules.setdefault` ✓）
+> ★★★★★ **本次重启的来龙去脉（必读，别重蹈）**：`v1.23.0`（易维护性整治）发版后重启挖掘，
+> **第一批就崩** ✗ —— 文件级拆分**漏 import**（`HERE` / `trim_cache_mb` / `ts_mean` / `re`）＋
+> `_l2_pool_tags` 用了**调用方局部** `pool_rows`（⇒ L2 每候选 `NameError` 被 `except` 吞成一行
+> ⇒ **一个候选都入不了库** ✗）＋ 把 `FWD` 换成 `_FM.FWD` 让**副口径复原变 no-op**
+> （⇒ 后续候选**池内指标**静默按 20 日口径算 ✗）⇒ **`v1.23.1` 已修** ✓
+> ★ **根因 = 验收不完整**：Step 4（文件级拆分）**只跑了 `py_compile` + 全量回归**，
+> 漏了 Step 1~3 一直用的「**同 seed 复跑 + `state` 逐字段对照**」—— 而那 4 个名字
+> **只在特定池/参数下才走到**（`HERE` 那行只在 `all` 池「外部池注入」时执行，
+> 而对照用的是 `--mine_pool=500` ⇒ **正好跳过** ✗）⇒ 本版已**补 A/B**（回拆分前同参数跑：
+> 池内指标与汇总数字**逐字相同** ✓）＋ **新增守门 `tools/_test_undefined_names.py`（作用域感知）** ✓
+> （详见 `docs/maintainability.md §六`）
+> ⚠ **以后重启前自查（照做）**：① `python tools/_test_undefined_names.py` **0 处** ✓
+> ② 搬过函数就要做一次**同 seed A/B**（逐字一致）✓ ③ `>1500 行巨型文件 0 个`（`loop_engine.py` **619 行**）✓
+> ④ v1.22.2 那处 **`Node` 单类注册仍在**（`loop_engine.py` 末尾 `__main__` 块首条 `sys.modules.setdefault` ✓）
 > ★ 2026-09-23 起：**轮数上限可热改**（v1.21.43）——在面板改轮数 / 点「启动本池」带轮数都会立刻写进
 > `_control.json`，调度器**每轮重读** ⇒ **下一轮起生效**（正在跑的那一轮不受影响 ✓）
 > **查法（秒级）**：`python tools/tracks_status.py`（轨道一屏）或直接读 `ai_test/_tracks/_control.json` ✓
