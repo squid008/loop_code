@@ -2206,135 +2206,9 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
 
 
 
-def _run_l1_phase(ctx, args):
-    """L1 批量 IC + 过滤（形状/去相关/去重/族配额/FSA/jury）-> 写回 ctx；早退返回 True"""
-    U = ctx['U']
-    base = ctx['base']
-    fwd_ret = ctx['fwd_ret']
-    B = ctx['B']
-    cands = ctx['cands']
-    fail_lib = ctx['fail_lib']
-    frozen = ctx['frozen']
-    fsa = ctx['fsa']
-    rng = ctx['rng']
-    loop_llm = ctx['loop_llm']
-    bank = ctx['bank']
-    bank_ext = ctx['bank_ext']
-    nd = ctx['nd']
-    r = ctx['r']
-    fsa_frz = ctx['fsa_frz']
-
-    Bsub, Rsub, Usub = _run_l1(U, base, fwd_ret)
-    # ---- 形状量(十档单调性)所需的调仓日抽样视图: 只算一次 ----
-    # rank_rows 逐行独立 => rank_rows(F)[::FWD] ≡ rank_rows(F[::FWD])，抽样与不抽样等价(更快)
-    Rsub_s, Usub_s = Rsub[::FWD], Usub[::FWD]
-    _min_mono = float(getattr(args, 'min_mono', 0.0) or 0.0)      # 缺字段=关闭(默认行为)
-    _score_mode = getattr(args, 'score_mode', 'old') or 'old'
-    _style_obs = bool(getattr(args, 'style_obs', False))
-    _shape_neutral = bool(getattr(args, 'shape_neutral', 0))   # 形状量用风格中性收益(§8.5.1 行动①)
-    # 剥风格入库判据(2026-09-12, 见 docs/log/2026-09.md §8.13): L2 记录(可选门槛)
-    # 把因子对 lncap+lnamt 秩中性化后重跑回测 —— 判"超额是否只是市值/成交额风格暴露"。
-    _strip_style = bool(getattr(args, 'strip_style', False))
-    # 池内指标(2026-09-12, 见 docs/log/2026-09.md §8.9 B+B′): L2 在**池内**重跑回测,
-    # 用于给入库因子打「300好用/300+500好用/全都好用/只有全A好用」标签, 供将来因子库 PG 筛选。
-    # ★关键: L2 用的是**全量面板**(5384列), 池股天然都在里面 -> **不需要扩 L1 子面板列**
-    #  (那是 L1 层池感知才需要的代价: 随机2000 ∪ 池union2701 ≈ 3700 列 = +85% 成本)。
-    _min_pool_calmar = float(getattr(args, 'min_pool_calmar', -1.0))
-    _pool_gate_mode = getattr(args, 'pool_gate_mode', 'any') or 'any'
-    # ★ 全A 口径的夏普门槛(2026-09-13, §8.26): 原先是**硬编码 0.5**;
-    #   默认 0.5 = 行为完全不变(向后兼容)。与 --pool_gate_or_all 配合才有意义。
-    _min_sharpe = float(getattr(args, 'min_sharpe', 0.5))
-    # ★ 池门槛与全A 口径改 **OR** 语义(2026-09-13, §8.26; 默认关=保持原 AND 行为)。
-    #   依据: 池内有效与全A 有效基本不同源(300 池"池内有效但全A无效"31 个 vs "都有效"15 个)
-    #   ⇒ 对"只在池内有效"的因子, AND 等于自相矛盾。组合标定: OR 保留量约为 AND 的 8 倍。
-    _pool_gate_or_all = bool(getattr(args, 'pool_gate_or_all', False))
-    # ★ 收益流去重阈值(2026-09-13, roadmap §8.34; 0=关)。见 loop_engine.ex_max_corr 的 docstring。
-    _dup_ex_corr = float(getattr(args, 'dup_ex_corr', 0.0) or 0.0)
-    _ex_by_expr = {}       # {表达式: 本代 L2 的每期费后超额 Series} —— 供入库段做收益流去重
-    _n_dup_ex = 0
-    # ★ 池标签(2026-09-13, §8.42): {表达式: pool_tag} —— 入库文档要写"适用哪个池"
-    _tag_by_expr = {}
-    # ★ 剥风格档（2026-09-14, §1.9）：{表达式: (档位, 说明, 剥后calmar, 剥后超额)}
-    #   与 `_tag_by_expr` **并列**（不替代）—— 入库文档里两者都写。
-    _strip_by_expr = {}
-    # ★ 2026-09-22（v1.21.29 · (乙)）：**副口径**的剥风格记录（按口径分别落文档 ✓
-    #   否则 20 日入选的因子会在文档里写上 5 日的剥风格数字 ✗ —— 那是另一个口径的结论 ✓）
-    _strip2_by_expr = {}
-    # ★ 副口径入选者（`{expr: 副口径值}`）—— 供 `_save_state` 分口径写文档 ✓
-    _hzn2_by_expr = {}
-    _pool_gate_on = (_min_pool_calmar >= 0)      # 默认 -1 = 关; >=0 启用(0 是合法阈值)
-    _pool_obs = bool(getattr(args, 'pool_obs', False)) or _pool_gate_on
-    if _pool_gate_on and not getattr(args, 'pool_obs', False):
-        print(f"  [池门槛] 已启用(min_pool_calmar={_min_pool_calmar:g}, "
-              f"mode={_pool_gate_mode}) -> 自动打开池指标(否则门槛无从判定)")
-    _pools = []
-    if _pool_obs:
-        try:
-            _pools = parse_pools(getattr(args, 'pools', '300,500'))
-        except KeyError as e:
-            print(f"  [池指标] [!] --pools 非法({e}) -> 本代跳过池指标")
-            _pool_obs = False
-            if _pool_gate_on:
-                print("  [池门槛] [!] 池不可用 -> 本代池门槛失效(放行不误杀)")
-                _pool_gate_on = False
-    _reuse_v = bool(getattr(args, 'reuse_v', 1))       # 跨阶段复用 L1 值(默认开, 行为等价)
-    VCACHE.clear()
-    _VREUSE_MB[0] = 0.0
-    # ★need_shape 必须把 --style_obs / --shape_neutral 也算进来(2026-09-11 实测踩坑):
-    #  否则单独开 --style_obs(默认 old 排序)时 mono/shape_pos 不计算 -> 观测文件这两列全 NaN,
-    #  离线就无法复算 score_new = stab×(0.5+0.5·shape_pos), 整轮观测作废。
-    #  这**不改变选择压力**(need_shape 只管"算不算"), 只是让观测/中性化自足。
-    need_shape = ((_min_mono > 0) or (_score_mode == 'new')
-                  or _style_obs or _shape_neutral)
-    if _style_obs and _shape_neutral:
-        print("  [!] --style_obs 与 --shape_neutral 同时开: 观测文件里 shape_pos 与 shape_pos_n "
-              "都会是中性化版(拿不到原始变体)。**做测量请只用 --style_obs**。")
-    if need_shape:
-        print(f"  [形状] 已启用十档单调性计算 (min_mono={_min_mono:g}, "
-              f"score_mode={_score_mode}, style_obs={_style_obs}, "
-              f"shape_neutral={_shape_neutral}; "
-              f"调仓日视图 {Rsub_s.shape[0]}期)")
-    # ---- 风格暴露观测(2026-09-11, --style_obs 默认关) ----
-    #  口径 = standard_test【3】风格归因的四项特征定义; 取 **L1 子面板 + [::FWD] 调仓日视图**
-    #  (与 decile_shape 同视图 -> 两者共用一次 rank_rows); 快, 但只是"相对比较用代理",
-    #  绝对值以 standard_test 全量报告为准。用途: 验证批1 是否让因子更往低换手/低成交额挤。
-    STYLE_S, FEAT_S = {}, {}
-    # ★ L2 剥风格需要**全面板**风格值(§8.13): 与 L1 子面板版共用一次 `style_features`
-    #  (该函数两次 rolling 较贵 -> 一代只算一次)。只在 --strip_style 时保留全量
-    #  (lncap+lnamt 各 71MB) —— 不用时零额外开销。
-    STYLE_FULL = {}
-    if _style_obs or _shape_neutral or _strip_style:
-        _sf = style_features(B)
-        for _k in STYLE_KEYS:
-            if _strip_style and _k in ('lncap', 'lnamt'):
-                STYLE_FULL[_k] = _sf[_k]                             # 全面板(供 L2 剥除)
-            if _style_obs or _shape_neutral:
-                FEAT_S[_k] = _sf[_k][np.ix_(L1_ROWS, L1_COLS)][::FWD]    # 原始值(供中性化)
-                if _style_obs:
-                    STYLE_S[_k] = rank_rows(FEAT_S[_k])              # 秩(供 style_expo)
-        del _sf
-        if _style_obs:
-            print(f"  [风格观测] 已启用 ({', '.join(STYLE_KEYS)}; 子面板[::FWD] "
-                  f"{Rsub_s.shape[0]}期) -> {STYLE_OBS}")
-        if _strip_style:
-            print(f"  [剥风格] L2 将记录剥 lncap+lnamt 后的 IC/超额/Calmar -> {STRIP_OBS}"
-                  + (f"; **入库门槛 strip_calmar>{args.min_strip_calmar:g}**"
-                     if args.min_strip_calmar > 0 else "; 仅记录不设门槛(默认)"))
-    # ★风格中性收益: 把远期收益对 lncap/lnamt 逐期回归取残差。两种用途——
-    #   ① --style_obs:     只落观测(记 shape_pos_n), 供**离线**配对比较 old/new/new_n
-    #   ② --shape_neutral: 作为**主形状量**的收益入参 -> shape_pos 即"风格中性后的档位单调性",
-    #                       直接进入 --min_mono 与 l1_score(new)。§8.5.1 判定 ✅ 后的行动①。
-    Rsub_s_n = None
-    if _style_obs or _shape_neutral:
-        try:
-            Rsub_s_n = neutralize_rows(Rsub_s, [FEAT_S['lncap'], FEAT_S['lnamt']], min_n=50)
-            print(f"  [形状] 已算风格中性收益(对 lncap/lnamt 逐期回归残差) -> "
-                  f"{'★参与选择(--shape_neutral)' if _shape_neutral else '仅观测(shape_pos_n)'}")
-        except Exception as e:
-            Rsub_s_n = None
-            print(f"  [形状] 中性收益失败(仅缺中性化能力): {type(e).__name__}: {e}")
-    # 主形状量用哪套收益(原始 / 中性化)
-    R_SHAPE = Rsub_s_n if (_shape_neutral and Rsub_s_n is not None) else Rsub_s
+def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
+             _reuse_v, STYLE_S, R_SHAPE, Usub_s, Rsub_s_n):
+    """L1 批量求值 + 形状量/风格暴露 + 风格观测落盘 + 失败库记录 -> (l1, obs_df)"""
     stats = []
     BATCH = args.batch
     # ★★★★★ 2026-09-21（治本）：批次大小**按字节自适应** ✗ —— 固定 40 个候选时，
@@ -2504,6 +2378,141 @@ def _run_l1_phase(ctx, args):
             flib_mark(fail_lib, nd, args.gen, False, 'ic')
         elif r_['stab'] <= args.min_stab:
             flib_mark(fail_lib, nd, args.gen, False, 'stab')
+
+    return l1, obs_df
+
+
+def _run_l1_phase(ctx, args):
+    """L1 批量 IC + 过滤（形状/去相关/去重/族配额/FSA/jury）-> 写回 ctx；早退返回 True"""
+    U = ctx['U']
+    base = ctx['base']
+    fwd_ret = ctx['fwd_ret']
+    B = ctx['B']
+    cands = ctx['cands']
+    fail_lib = ctx['fail_lib']
+    frozen = ctx['frozen']
+    fsa = ctx['fsa']
+    rng = ctx['rng']
+    loop_llm = ctx['loop_llm']
+    bank = ctx['bank']
+    bank_ext = ctx['bank_ext']
+    nd = ctx['nd']
+    r = ctx['r']
+    fsa_frz = ctx['fsa_frz']
+
+    Bsub, Rsub, Usub = _run_l1(U, base, fwd_ret)
+    # ---- 形状量(十档单调性)所需的调仓日抽样视图: 只算一次 ----
+    # rank_rows 逐行独立 => rank_rows(F)[::FWD] ≡ rank_rows(F[::FWD])，抽样与不抽样等价(更快)
+    Rsub_s, Usub_s = Rsub[::FWD], Usub[::FWD]
+    _min_mono = float(getattr(args, 'min_mono', 0.0) or 0.0)      # 缺字段=关闭(默认行为)
+    _score_mode = getattr(args, 'score_mode', 'old') or 'old'
+    _style_obs = bool(getattr(args, 'style_obs', False))
+    _shape_neutral = bool(getattr(args, 'shape_neutral', 0))   # 形状量用风格中性收益(§8.5.1 行动①)
+    # 剥风格入库判据(2026-09-12, 见 docs/log/2026-09.md §8.13): L2 记录(可选门槛)
+    # 把因子对 lncap+lnamt 秩中性化后重跑回测 —— 判"超额是否只是市值/成交额风格暴露"。
+    _strip_style = bool(getattr(args, 'strip_style', False))
+    # 池内指标(2026-09-12, 见 docs/log/2026-09.md §8.9 B+B′): L2 在**池内**重跑回测,
+    # 用于给入库因子打「300好用/300+500好用/全都好用/只有全A好用」标签, 供将来因子库 PG 筛选。
+    # ★关键: L2 用的是**全量面板**(5384列), 池股天然都在里面 -> **不需要扩 L1 子面板列**
+    #  (那是 L1 层池感知才需要的代价: 随机2000 ∪ 池union2701 ≈ 3700 列 = +85% 成本)。
+    _min_pool_calmar = float(getattr(args, 'min_pool_calmar', -1.0))
+    _pool_gate_mode = getattr(args, 'pool_gate_mode', 'any') or 'any'
+    # ★ 全A 口径的夏普门槛(2026-09-13, §8.26): 原先是**硬编码 0.5**;
+    #   默认 0.5 = 行为完全不变(向后兼容)。与 --pool_gate_or_all 配合才有意义。
+    _min_sharpe = float(getattr(args, 'min_sharpe', 0.5))
+    # ★ 池门槛与全A 口径改 **OR** 语义(2026-09-13, §8.26; 默认关=保持原 AND 行为)。
+    #   依据: 池内有效与全A 有效基本不同源(300 池"池内有效但全A无效"31 个 vs "都有效"15 个)
+    #   ⇒ 对"只在池内有效"的因子, AND 等于自相矛盾。组合标定: OR 保留量约为 AND 的 8 倍。
+    _pool_gate_or_all = bool(getattr(args, 'pool_gate_or_all', False))
+    # ★ 收益流去重阈值(2026-09-13, roadmap §8.34; 0=关)。见 loop_engine.ex_max_corr 的 docstring。
+    _dup_ex_corr = float(getattr(args, 'dup_ex_corr', 0.0) or 0.0)
+    _ex_by_expr = {}       # {表达式: 本代 L2 的每期费后超额 Series} —— 供入库段做收益流去重
+    _n_dup_ex = 0
+    # ★ 池标签(2026-09-13, §8.42): {表达式: pool_tag} —— 入库文档要写"适用哪个池"
+    _tag_by_expr = {}
+    # ★ 剥风格档（2026-09-14, §1.9）：{表达式: (档位, 说明, 剥后calmar, 剥后超额)}
+    #   与 `_tag_by_expr` **并列**（不替代）—— 入库文档里两者都写。
+    _strip_by_expr = {}
+    # ★ 2026-09-22（v1.21.29 · (乙)）：**副口径**的剥风格记录（按口径分别落文档 ✓
+    #   否则 20 日入选的因子会在文档里写上 5 日的剥风格数字 ✗ —— 那是另一个口径的结论 ✓）
+    _strip2_by_expr = {}
+    # ★ 副口径入选者（`{expr: 副口径值}`）—— 供 `_save_state` 分口径写文档 ✓
+    _hzn2_by_expr = {}
+    _pool_gate_on = (_min_pool_calmar >= 0)      # 默认 -1 = 关; >=0 启用(0 是合法阈值)
+    _pool_obs = bool(getattr(args, 'pool_obs', False)) or _pool_gate_on
+    if _pool_gate_on and not getattr(args, 'pool_obs', False):
+        print(f"  [池门槛] 已启用(min_pool_calmar={_min_pool_calmar:g}, "
+              f"mode={_pool_gate_mode}) -> 自动打开池指标(否则门槛无从判定)")
+    _pools = []
+    if _pool_obs:
+        try:
+            _pools = parse_pools(getattr(args, 'pools', '300,500'))
+        except KeyError as e:
+            print(f"  [池指标] [!] --pools 非法({e}) -> 本代跳过池指标")
+            _pool_obs = False
+            if _pool_gate_on:
+                print("  [池门槛] [!] 池不可用 -> 本代池门槛失效(放行不误杀)")
+                _pool_gate_on = False
+    _reuse_v = bool(getattr(args, 'reuse_v', 1))       # 跨阶段复用 L1 值(默认开, 行为等价)
+    VCACHE.clear()
+    _VREUSE_MB[0] = 0.0
+    # ★need_shape 必须把 --style_obs / --shape_neutral 也算进来(2026-09-11 实测踩坑):
+    #  否则单独开 --style_obs(默认 old 排序)时 mono/shape_pos 不计算 -> 观测文件这两列全 NaN,
+    #  离线就无法复算 score_new = stab×(0.5+0.5·shape_pos), 整轮观测作废。
+    #  这**不改变选择压力**(need_shape 只管"算不算"), 只是让观测/中性化自足。
+    need_shape = ((_min_mono > 0) or (_score_mode == 'new')
+                  or _style_obs or _shape_neutral)
+    if _style_obs and _shape_neutral:
+        print("  [!] --style_obs 与 --shape_neutral 同时开: 观测文件里 shape_pos 与 shape_pos_n "
+              "都会是中性化版(拿不到原始变体)。**做测量请只用 --style_obs**。")
+    if need_shape:
+        print(f"  [形状] 已启用十档单调性计算 (min_mono={_min_mono:g}, "
+              f"score_mode={_score_mode}, style_obs={_style_obs}, "
+              f"shape_neutral={_shape_neutral}; "
+              f"调仓日视图 {Rsub_s.shape[0]}期)")
+    # ---- 风格暴露观测(2026-09-11, --style_obs 默认关) ----
+    #  口径 = standard_test【3】风格归因的四项特征定义; 取 **L1 子面板 + [::FWD] 调仓日视图**
+    #  (与 decile_shape 同视图 -> 两者共用一次 rank_rows); 快, 但只是"相对比较用代理",
+    #  绝对值以 standard_test 全量报告为准。用途: 验证批1 是否让因子更往低换手/低成交额挤。
+    STYLE_S, FEAT_S = {}, {}
+    # ★ L2 剥风格需要**全面板**风格值(§8.13): 与 L1 子面板版共用一次 `style_features`
+    #  (该函数两次 rolling 较贵 -> 一代只算一次)。只在 --strip_style 时保留全量
+    #  (lncap+lnamt 各 71MB) —— 不用时零额外开销。
+    STYLE_FULL = {}
+    if _style_obs or _shape_neutral or _strip_style:
+        _sf = style_features(B)
+        for _k in STYLE_KEYS:
+            if _strip_style and _k in ('lncap', 'lnamt'):
+                STYLE_FULL[_k] = _sf[_k]                             # 全面板(供 L2 剥除)
+            if _style_obs or _shape_neutral:
+                FEAT_S[_k] = _sf[_k][np.ix_(L1_ROWS, L1_COLS)][::FWD]    # 原始值(供中性化)
+                if _style_obs:
+                    STYLE_S[_k] = rank_rows(FEAT_S[_k])              # 秩(供 style_expo)
+        del _sf
+        if _style_obs:
+            print(f"  [风格观测] 已启用 ({', '.join(STYLE_KEYS)}; 子面板[::FWD] "
+                  f"{Rsub_s.shape[0]}期) -> {STYLE_OBS}")
+        if _strip_style:
+            print(f"  [剥风格] L2 将记录剥 lncap+lnamt 后的 IC/超额/Calmar -> {STRIP_OBS}"
+                  + (f"; **入库门槛 strip_calmar>{args.min_strip_calmar:g}**"
+                     if args.min_strip_calmar > 0 else "; 仅记录不设门槛(默认)"))
+    # ★风格中性收益: 把远期收益对 lncap/lnamt 逐期回归取残差。两种用途——
+    #   ① --style_obs:     只落观测(记 shape_pos_n), 供**离线**配对比较 old/new/new_n
+    #   ② --shape_neutral: 作为**主形状量**的收益入参 -> shape_pos 即"风格中性后的档位单调性",
+    #                       直接进入 --min_mono 与 l1_score(new)。§8.5.1 判定 ✅ 后的行动①。
+    Rsub_s_n = None
+    if _style_obs or _shape_neutral:
+        try:
+            Rsub_s_n = neutralize_rows(Rsub_s, [FEAT_S['lncap'], FEAT_S['lnamt']], min_n=50)
+            print(f"  [形状] 已算风格中性收益(对 lncap/lnamt 逐期回归残差) -> "
+                  f"{'★参与选择(--shape_neutral)' if _shape_neutral else '仅观测(shape_pos_n)'}")
+        except Exception as e:
+            Rsub_s_n = None
+            print(f"  [形状] 中性收益失败(仅缺中性化能力): {type(e).__name__}: {e}")
+    # 主形状量用哪套收益(原始 / 中性化)
+    R_SHAPE = Rsub_s_n if (_shape_neutral and Rsub_s_n is not None) else Rsub_s
+    l1, obs_df = _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape,
+                           _style_obs, _reuse_v, STYLE_S, R_SHAPE, Usub_s, Rsub_s_n)
     l1 = _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mode)
     if l1 is None:
         return True
