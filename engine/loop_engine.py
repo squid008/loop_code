@@ -81,17 +81,6 @@ try:
 except Exception:
     pass
 
-STATE = os.path.join(HERE, 'loop_state.pkl')
-ARCHIVE = os.path.join(os.path.dirname(HERE), 'docs', 'loop_archive.csv')
-# 风格暴露观测独立成文件(2026-09-11): 不进 ARCHIVE 表头 —— 追加模式下加列会让历史行错位
-STYLE_OBS = os.path.join(os.path.dirname(HERE), 'docs', 'loop_style_obs.csv')
-# 剥风格入库判据的逐代明细(2026-09-12, --strip_style)。同样独立成文件, 理由同 STYLE_OBS。
-STRIP_OBS = os.path.join(os.path.dirname(HERE), 'docs', 'loop_strip_style.csv')
-# 池内指标(2026-09-12, --pool_obs)。**长表**(每候选 x 每池一行) —— 不用宽表是因为
-# 池集合由 --pools 决定, 宽表换池集合会导致追加时表头错位(与 archive 同一个坑)。
-POOL_OBS = os.path.join(os.path.dirname(HERE), 'docs', 'loop_pool_obs.csv')
-JOURNAL = os.path.join(os.path.dirname(HERE), 'docs', 'loop_journal.md')  # B角诊断日志(loop_code/docs)
-LIBRARY = os.path.join(os.path.dirname(HERE), 'docs', 'factor_library.md')  # 入库因子文档(代末自动同步新增)
 
 # ===================== 三池并行挖掘(2026-09-12, roadmap §8.19) =====================
 # 用户方案: 全A / 沪深300 / 中证500 三条**完全独立**的轨迹(各自 state/bank/种子/冻结/失败库)。
@@ -103,8 +92,6 @@ LIBRARY = os.path.join(os.path.dirname(HERE), 'docs', 'factor_library.md')  # �
 #       '300'/'500' = 全新独立轨迹(文件加 _300/_500 后缀)。可选池见 engine/loop_pools.py 的 POOLS。
 MINE_POOL = 'all'
 L1_POOL_MASK = None       # (len(L1_ROWS), len(L1_COLS)) bool; None = 不加池约束(全A现状)
-# 原始路径快照: set_mine_pool 永远**从快照派生** -> 重复调用不会叠后缀(_300_500)
-_ORIG_PATHS = {}
 
 
 def set_mine_pool(tag):
@@ -116,26 +103,16 @@ def set_mine_pool(tag):
 
     tag='all' 时**完全不动**(向后兼容)。幂等(可从原始路径重复派生)。返回实际生效的 tag。
     """
-    global MINE_POOL, STATE, ARCHIVE, STYLE_OBS, STRIP_OBS, POOL_OBS, JOURNAL, LIBRARY
-    if not _ORIG_PATHS:                          # 首次调用时快照原始路径
-        _ORIG_PATHS.update(STATE=STATE, ARCHIVE=ARCHIVE, STYLE_OBS=STYLE_OBS,
-                           STRIP_OBS=STRIP_OBS, POOL_OBS=POOL_OBS,
-                           JOURNAL=JOURNAL, LIBRARY=LIBRARY)
-
-    def _apply(sfx):
-        for k in _ORIG_PATHS:
-            r, e = os.path.splitext(_ORIG_PATHS[k])   # 后缀加在扩展名前: a/b.md -> a/b_300.md
-            globals()[k] = r + sfx + e
-
+    global MINE_POOL
     if not tag or tag == 'all':
         MINE_POOL = 'all'
-        _apply('')
+        _P.apply_suffix('')
         return 'all'
     import loop_pools as _LP
     if tag not in _LP.POOLS:
         raise SystemExit(f"[--mine_pool] 未知池 '{tag}'; 可选: all / {sorted(_LP.POOLS)}")
     MINE_POOL = tag
-    _apply('_' + tag)
+    _P.apply_suffix('_' + tag)
     return tag
 
 
@@ -151,6 +128,7 @@ from loop_dims import review_expr, dim_of      # ★ L3 拆分：跨量纲审查
 from loop_expr import _fsa_stats  # ★ 文件级拆分：FSA 骨架统计
 from loop_gen import _build_fam_blacklist  # ★ 文件级拆分：结构族黑名单
 from loop_data import _build_panel_fresh, _panel_sha1  # ★ 文件级拆分：面板构造
+import loop_paths as _P  # ★ 文件级拆分：路径常量单一事实源（用 _P.STATE 运行时取，勿值拷贝）
 from loop_persist import append_csv_schema_safe, _real_mb  # ★ 文件级拆分：落盘/工具
 from loop_llm_guide import llm_fetch, parse_expr  # ★ L3 拆分：LLM 引导
 
@@ -600,7 +578,7 @@ def _mk_library_skeleton(fname):
         '| `docs/loop_pool_obs{s}.csv` | 池 **{t}** 候选的**三池池内指标**宽表 |\n'
         '| `docs/loop_archive{s}.csv` | 池 **{t}** 每代 L2 全量候选流水 |\n'
     ).format(t=tag, s=sfx)
-    io.open(LIBRARY, 'w', encoding='utf-8').write(txt)
+    io.open(_P.LIBRARY, 'w', encoding='utf-8').write(txt)
 
 
 # ★★★★ 2026-09-17（用户："我发现又入库了一个新因子，但**找不到什么时候入库的、入的哪个库**"
@@ -678,19 +656,19 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
     try:
         if not added_exprs:
             return
-        if not os.path.exists(LIBRARY):
+        if not os.path.exists(_P.LIBRARY):
             # ★★ 不再静默跳过（2026-09-13 实录, roadmap §8.44）：
-            #   per-pool 的 LIBRARY 路径是 `set_mine_pool` 派生的（`factor_library_{pool}.md`），
+            #   per-pool 的 _P.LIBRARY 路径是 `set_mine_pool` 派生的（`factor_library_{pool}.md`），
             #   而这三个文件**从来没被创建过** ⇒ 原先的 `return` 把失败**完全吞掉**
             #   （不报错、不告警、不留痕）⇒ 实测 `--mine_pool=1000` 连跑 2 代入库 **3 个因子**，
             #   文档**一个都没写**；300 池入库的那 1 个也从没写进 `factor_library_300.md`。
             #   ⚠ 这与今天修的 `--pool_obs` 是**同一类坑**：新功能只做了一半（路径派生了、
             #     文件没人建），而且**失败无声**。⇒ 修法：**自动创建骨架 + 明确打印**。
-            _mk_library_skeleton(os.path.basename(LIBRARY))
-            print(f"  [文档] {os.path.basename(LIBRARY)} 不存在 -> **已自动创建骨架**"
+            _mk_library_skeleton(os.path.basename(_P.LIBRARY))
+            print(f"  [文档] {os.path.basename(_P.LIBRARY)} 不存在 -> **已自动创建骨架**"
                   f"（首次同步；此前该池的入库因子从未写进文档）")
         rows = {str(r['expr']): r for _, r in res.iterrows()} if len(res) else {}
-        txt = io.open(LIBRARY, encoding='utf-8').read()
+        txt = io.open(_P.LIBRARY, encoding='utf-8').read()
         nos = [int(x) for x in re.findall(r'\bF(\d{2})\b', txt)]
         no = (max(nos) + 1) if nos else 1
         tbl_rows, det_rows = [], []
@@ -822,17 +800,17 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
             txt = txt.rstrip('\n') + add_det + '\n'
         else:
             txt = txt[:p] + add_det + '\n---\n\n' + txt[p:]
-        io.open(LIBRARY, 'w', encoding='utf-8').write(txt)
+        io.open(_P.LIBRARY, 'w', encoding='utf-8').write(txt)
         # ★ 同步落一份**结构化入库事件**（看板"新入库日志"卡片读它 ✓；失败只告警、不影响入库 ✓）
         append_library_entries(evs)
         # ⚠ 打印**真实文件名**（2026-09-13）：原先硬编码写 `factor_library.md`，
         #   池轨道跑时也在报 `factor_library.md`，**指到了别的文件** ⇒ 排查时误导。
-        print(f"  [文档] {os.path.basename(LIBRARY)} 已自动追加 {len(det_rows)} 条新入库 "
+        print(f"  [文档] {os.path.basename(_P.LIBRARY)} 已自动追加 {len(det_rows)} 条新入库 "
               f"(F{nos and max(nos)+1 or 1}~F{no-1}, 累计 {n_total})")
     except Exception as e:
         # ⚠ 失败路径也要报**真实文件名**（2026-09-14 修）：成功路径早已改成 basename，
         #   失败路径却还硬编码 `factor_library.md` ⇒ 池轨道出错时会**指错文件**（§8.44 的孪生坑）。
-        print(f"  [文档] {os.path.basename(LIBRARY)} 自动同步失败(不影响入库): "
+        print(f"  [文档] {os.path.basename(_P.LIBRARY)} 自动同步失败(不影响入库): "
               f"{type(e).__name__}: {e}")
 
 
@@ -1162,7 +1140,7 @@ def _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool
                              else "**（与全A 口径 AND）") )
                          if _pool_gate_on else "仅记录不设门槛(默认)")
             print(f"  [池指标] 已启用 池={_pools} (PIT掩码 {_sz}; "
-                  f"用时 {time.time() - _t_pool:.0f}s) -> {POOL_OBS}; {_gate_txt}")
+                  f"用时 {time.time() - _t_pool:.0f}s) -> {_P.POOL_OBS}; {_gate_txt}")
         except Exception as e:
             print(f"  [池指标] [!] 掩码构建失败 -> 本代跳过池指标: {type(e).__name__}: {e}")
             POOL_M = {}
@@ -1182,9 +1160,9 @@ def _dump_strip_detail(_strip_style, strip_rows):
         try:
             _sd = pd.DataFrame(strip_rows)
             # ★ schema-aware 追加(2026-09-13, §8.30): 加列时会**重写并救回旧行**, 不再产生混合宽度
-            _st, _sn = append_csv_schema_safe(STRIP_OBS, _sd)
+            _st, _sn = append_csv_schema_safe(_P.STRIP_OBS, _sd)
             _n_pos = int((_sd['strip_ann_ex'] > 0).sum())
-            print(f"已存 {STRIP_OBS} ({_st}, 本代 {len(_sd)} 条 L2 候选; "
+            print(f"已存 {_P.STRIP_OBS} ({_st}, 本代 {len(_sd)} 条 L2 候选; "
                   f"剥风格后超额仍为正 {_n_pos}/{len(_sd)})")
         except Exception as e:
             print(f"  [剥风格] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
@@ -1199,14 +1177,14 @@ def _dump_pool_obs(POOL_M, _pools, args, fail_lib, nd, pool_rows, rows, top):
         try:
             _pdd = pd.DataFrame(pool_rows)
             # ★ schema-aware 追加(2026-09-13, §8.30): 见 append_csv_schema_safe 的 docstring
-            _pst, _psn = append_csv_schema_safe(POOL_OBS, _pdd)
+            _pst, _psn = append_csv_schema_safe(_P.POOL_OBS, _pdd)
             if 'rewritten' in _pst:
-                print(f"  [池指标] schema 变化 -> 已重写 {os.path.basename(POOL_OBS)}: {_pst}")
+                print(f"  [池指标] schema 变化 -> 已重写 {os.path.basename(_P.POOL_OBS)}: {_pst}")
             _n_cand = len(_pdd) // max(len(_pools), 1)
             _msg = ', '.join(
                 f"{t}: 超额>0 {int((_pdd.loc[_pdd['pool'] == t, 'ann_ex'] > 0).sum())}"
                 f"/{int((_pdd['pool'] == t).sum())}" for t in _pools)
-            print(f"已存 {POOL_OBS} (追加, 本代 {len(_pdd)} 行 = {_n_cand} 候选 x "
+            print(f"已存 {_P.POOL_OBS} (追加, 本代 {len(_pdd)} 行 = {_n_cand} 候选 x "
                   f"{len(_pools)} 池; 池内超额>0 -> {_msg})")
         except Exception as e:
             print(f"  [池指标] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
@@ -1227,10 +1205,10 @@ def _dump_pool_obs(POOL_M, _pools, args, fail_lib, nd, pool_rows, rows, top):
         #   「16列旧行 + 17列新行」混合宽度 ⇒ `pd.read_csv` 报
         #   `Expected 16 fields in line 165, saw 17`。**同一个坑的第三处**
         #   (前两处: loop_pool_obs_* / loop_strip_style_*, 见 `tools/fix_csv_schema.py`)。
-        _ast, _asn = append_csv_schema_safe(ARCHIVE, res)
+        _ast, _asn = append_csv_schema_safe(_P.ARCHIVE, res)
         if 'rewritten' in _ast:
-            print(f"  [流水] schema 变化 -> 已重写 {os.path.basename(ARCHIVE)}: {_ast}")
-        print(f"\n已存 {ARCHIVE} ({_ast}, 本代 {len(res)} 条)")
+            print(f"  [流水] schema 变化 -> 已重写 {os.path.basename(_P.ARCHIVE)}: {_ast}")
+        print(f"\n已存 {_P.ARCHIVE} ({_ast}, 本代 {len(res)} 条)")
         p = res[res['passed']]
         print(f"L2 通过 {len(p)}/{len(res)} 个")
         if len(p):
@@ -1280,8 +1258,8 @@ def _agg_style_diag(cfg, critic, diag, l1, obs_df, r, res):
     print("\n[B角建议] 下一代:")
     for r in reasons:
         print("  -", r)
-    critic.report(diag, next_cfg, reasons, JOURNAL)
-    print(f"诊断已写入 {JOURNAL}")
+    critic.report(diag, next_cfg, reasons, _P.JOURNAL)
+    print(f"诊断已写入 {_P.JOURNAL}")
     return (next_cfg, reasons)
 
 
@@ -1292,11 +1270,11 @@ def _log_llm_hint(args, jury_lines, llm_hyp, llm_on, n_jury_kill, n_jury_rev, n_
     """
     if llm_on and n_llm_call:
         llm_journal_block(args.gen, n_llm_call, n_llm_parse, n_llm_hit,
-                          llm_hyp, JOURNAL)
-        print(f"LLM 引导小结已写入 {JOURNAL}")
+                          llm_hyp, _P.JOURNAL)
+        print(f"LLM 引导小结已写入 {_P.JOURNAL}")
     if n_jury_rev:
-        llm_jury_block(args.gen, n_jury_rev, n_jury_kill, jury_lines, JOURNAL)
-        print(f"LLM 候选审查小结已写入 {JOURNAL}")
+        llm_jury_block(args.gen, n_jury_rev, n_jury_kill, jury_lines, _P.JOURNAL)
+        print(f"LLM 候选审查小结已写入 {_P.JOURNAL}")
 
 
 def _critic_llm_review(_v, args, critic, diag, l1, next_cfg, reasons, res_c):
@@ -1307,7 +1285,7 @@ def _critic_llm_review(_v, args, critic, diag, l1, next_cfg, reasons, res_c):
     ai = getattr(args, 'ai_critic', 'auto')
     if ai != 'off':
         _airv = critic.ai_review(diag, l1, res_c if len(res_c) else None, args.gen,
-                                 JOURNAL, reasons=reasons, sug=next_cfg, force=(ai == 'on'))
+                                 _P.JOURNAL, reasons=reasons, sug=next_cfg, force=(ai == 'on'))
         # ★★★ 把 LLM 的否决**真正交回决策链**（2026-09-14, §1.1 修法④）——
         #   此前 `ai_review()` 的返回值**只用于打印、从不回写 `sug`**
         #   ⇒ 实测 **85/98 次**独立、跨池一致的反驳（"深度加深会加剧过拟合"）**全部被浪费**。
@@ -1424,10 +1402,10 @@ def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_ex
     next_cfg.setdefault('bank_skel_max', args.bank_skel_max)
     fail_lib = fail_lib_cleanup(fail_lib, args.gen)
     # ★ 原子写(2026-09-12 加固): 先写 .tmp 再 os.replace 原子替换。
-    #   原因: 原 `open(STATE,'wb')` 会**立刻把旧 state 截断成 0 字节**, 一旦 dump 中途异常
+    #   原因: 原 `open(_P.STATE,'wb')` 会**立刻把旧 state 截断成 0 字节**, 一旦 dump 中途异常
     #   (或进程被杀), 就得到一个 0 字节坏状态 —— 而 journal 已写了"第 N 代完成"
     #   ⇒ 下次续跑会拿坏状态接代数, 静默错乱。实录见 roadmap §8.23。
-    _tmp = STATE + '.tmp'
+    _tmp = _P.STATE + '.tmp'
     with open(_tmp, 'wb') as f:
         pickle.dump(dict(seeds=new_seeds[:60], fsa=fsa,
                          # ★ 入库库**全量保存**(2026-09-12 去掉 `bank[-30:]` 上限, 用户选定):
@@ -1453,7 +1431,7 @@ def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_ex
                         #   体积很小（每代候选数个小 float），可忽略。
                         last_pool_map=_pool_best(pool_rows),
                          cfg=next_cfg), f)
-    os.replace(_tmp, STATE)        # 原子替换: 要么全新状态, 要么保持旧状态, 不会出现半成品
+    os.replace(_tmp, _P.STATE)        # 原子替换: 要么全新状态, 要么保持旧状态, 不会出现半成品
     # ⚠ 日志口径: 打印的必须是**实际持久化**的数量(此前截断时打内存值 -> 与落盘不一致)
     print(f"\n保存状态: 种子 {len(new_seeds[:60])} 个, 入库因子 {len(bank)} 个(全量), "
           f"收益流库 {len(bank_ex)} 条, 冻结骨架 {len(frozen)} 个, 失败库 {len(fail_lib)} 条, "
@@ -1510,8 +1488,8 @@ def _run_prepare(args):
     fail_lib = {}              # 失败模式库(骨架级成败滚动统计, 中金: 生成阶段排除)
     cfg = dict(DEFAULT_CFG)
     # ★ n_tested 的基准必须在**写盘之前**取好(2026-09-12 修 —— 这是一个崩在整代末尾的隐蔽 bug):
-    #   原写法 `n_tested=st.get('n_tested',0)+len(cands) if os.path.exists(STATE) else len(cands)`
-    #   的三元条件是在 `with open(STATE,'wb')` **之后**求值的 —— 而那一步已经把文件创建出来了
+    #   原写法 `n_tested=st.get('n_tested',0)+len(cands) if os.path.exists(_P.STATE) else len(cands)`
+    #   的三元条件是在 `with open(_P.STATE,'wb')` **之后**求值的 —— 而那一步已经把文件创建出来了
     #   ⇒ 条件**恒为 True**; 全新轨迹(无既有 state)时 `st` 从未绑定 ⇒ UnboundLocalError
     #   ⇒ 崩在**整代最后一行**(30 分钟计算白做, 且 state 被 0 字节覆盖)。
     #   实录: `--mine_pool=300` 首次全新轨迹即崩(loop_state_300.pkl 被创建为 0 字节)。
@@ -1521,8 +1499,8 @@ def _run_prepare(args):
     #   ⚠ 无 state 时必须能保持为 None（否则 `st` 未绑定 -> UnboundLocalError，
     #     这正是 §8.23 那个"崩在整代最后一行"的同类坑）。
     _prev_pool_map = None
-    if os.path.exists(STATE):
-        with open(STATE, 'rb') as f:
+    if os.path.exists(_P.STATE):
+        with open(_P.STATE, 'rb') as f:
             # ★★★★★ 2026-09-25：走**归一** Unpickler —— 把历史上误存的 `loop_engine.Node`
             #   也还原成本模块的 `Node`（详见**文件末尾** `__main__` 块的注册处 / `_StateUnpickler`）✓
             #   ⚠ 不加这一句：`bank`/`seeds`/`last_l1` 里的那批"第二份"Node 会让
@@ -2047,10 +2025,10 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
                 mono_n=d_.get('mono_n', np.nan), shape_pos_n=d_.get('shape_pos_n', np.nan),
                 **{'st_' + k: d_['st_' + k] for k in STYLE_KEYS})
                 for d_ in stats if ('st_' + STYLE_KEYS[0]) in d_])
-            need_h = (not os.path.exists(STYLE_OBS)) or os.path.getsize(STYLE_OBS) == 0
-            obs_df.to_csv(STYLE_OBS, index=False, mode='a', header=need_h,
+            need_h = (not os.path.exists(_P.STYLE_OBS)) or os.path.getsize(_P.STYLE_OBS) == 0
+            obs_df.to_csv(_P.STYLE_OBS, index=False, mode='a', header=need_h,
                           encoding='utf-8-sig')
-            print(f"已存 {STYLE_OBS} (追加, 本代 {len(obs_df)} 条候选)")
+            print(f"已存 {_P.STYLE_OBS} (追加, 本代 {len(obs_df)} 条候选)")
             if obs_df['shape_pos'].isna().all():          # 自检: 见上方 need_shape 的踩坑注释
                 print("  [风格观测] [!] shape_pos 全为 NaN -> need_shape 未生效, "
                       "本轮观测无法复算 score_new, 请检查 --score_mode/--min_mono/--style_obs")
@@ -2177,9 +2155,9 @@ def _run_l1_phase(ctx, args):
         del _sf
         if _style_obs:
             print(f"  [风格观测] 已启用 ({', '.join(STYLE_KEYS)}; 子面板[::FWD] "
-                  f"{Rsub_s.shape[0]}期) -> {STYLE_OBS}")
+                  f"{Rsub_s.shape[0]}期) -> {_P.STYLE_OBS}")
         if _strip_style:
-            print(f"  [剥风格] L2 将记录剥 lncap+lnamt 后的 IC/超额/Calmar -> {STRIP_OBS}"
+            print(f"  [剥风格] L2 将记录剥 lncap+lnamt 后的 IC/超额/Calmar -> {_P.STRIP_OBS}"
                   + (f"; **入库门槛 strip_calmar>{args.min_strip_calmar:g}**"
                      if args.min_strip_calmar > 0 else "; 仅记录不设门槛(默认)"))
     # ★风格中性收益: 把远期收益对 lncap/lnamt 逐期回归取残差。两种用途——
