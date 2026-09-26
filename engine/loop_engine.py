@@ -129,7 +129,8 @@ from loop_expr import _fsa_stats  # ★ 文件级拆分：FSA 骨架统计
 from loop_gen import _build_fam_blacklist  # ★ 文件级拆分：结构族黑名单
 from loop_data import _build_panel_fresh, _panel_sha1  # ★ 文件级拆分：面板构造
 import loop_paths as _P  # ★ 文件级拆分：路径常量单一事实源（用 _P.STATE 运行时取，勿值拷贝）
-from loop_persist import append_csv_schema_safe, _real_mb  # ★ 文件级拆分：落盘/工具
+from loop_persist import (append_csv_schema_safe, _real_mb,
+                         _dump_strip_detail, _dump_pool_obs)  # ★ 文件级拆分：落盘
 from loop_llm_guide import llm_fetch, parse_expr  # ★ L3 拆分：LLM 引导
 
 LLM_MAX_SIZE = 15         # 解析上限: 超过该节点总数的巨型表达式视为 LLM 失控, 丢弃
@@ -1151,69 +1152,6 @@ def _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool
     return (POOL_M, _lp, _t_l2, top)
 
 
-def _dump_strip_detail(_strip_style, strip_rows):
-    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
-
-    原段落: 剥风格明细落盘(2026-09-12, --strip_style; 独立文件, 不进 archive 表头)
-    """
-    if _strip_style and strip_rows:
-        try:
-            _sd = pd.DataFrame(strip_rows)
-            # ★ schema-aware 追加(2026-09-13, §8.30): 加列时会**重写并救回旧行**, 不再产生混合宽度
-            _st, _sn = append_csv_schema_safe(_P.STRIP_OBS, _sd)
-            _n_pos = int((_sd['strip_ann_ex'] > 0).sum())
-            print(f"已存 {_P.STRIP_OBS} ({_st}, 本代 {len(_sd)} 条 L2 候选; "
-                  f"剥风格后超额仍为正 {_n_pos}/{len(_sd)})")
-        except Exception as e:
-            print(f"  [剥风格] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
-
-
-def _dump_pool_obs(POOL_M, _pools, args, fail_lib, nd, pool_rows, rows, top):
-    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
-
-    原段落: 池内指标落盘(2026-09-12, --pool_obs; **长表**, 独立文件)
-    """
-    if POOL_M and pool_rows:
-        try:
-            _pdd = pd.DataFrame(pool_rows)
-            # ★ schema-aware 追加(2026-09-13, §8.30): 见 append_csv_schema_safe 的 docstring
-            _pst, _psn = append_csv_schema_safe(_P.POOL_OBS, _pdd)
-            if 'rewritten' in _pst:
-                print(f"  [池指标] schema 变化 -> 已重写 {os.path.basename(_P.POOL_OBS)}: {_pst}")
-            _n_cand = len(_pdd) // max(len(_pools), 1)
-            _msg = ', '.join(
-                f"{t}: 超额>0 {int((_pdd.loc[_pdd['pool'] == t, 'ann_ex'] > 0).sum())}"
-                f"/{int((_pdd['pool'] == t).sum())}" for t in _pools)
-            print(f"已存 {_P.POOL_OBS} (追加, 本代 {len(_pdd)} 行 = {_n_cand} 候选 x "
-                  f"{len(_pools)} 池; 池内超额>0 -> {_msg})")
-        except Exception as e:
-            print(f"  [池指标] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
-    res = pd.DataFrame(rows)
-    # 失败模式库: L2 费后结果落地成败(中金: 失败表达式写入失败库, 生成阶段排除)
-    top_node = {str(r['node']): r['node'] for _, r in top.iterrows()}
-    for _, r_ in res.iterrows():
-        nd = top_node.get(r_['expr'])
-        if nd is not None:
-            flib_mark(fail_lib, nd, args.gen, bool(r_['passed']),
-                      '' if r_['passed'] else 'l2')
-    if len(res):
-        # 逐代累积流水(带 gen/cat/leaf 列): 文件缺失/为空时写表头, 其后追加
-        # —— 每代 L2 明细永久留档(gen16 前旧快照已归 history/loop_archive.legacy_pre_gen16.csv)
-        res.insert(0, 'gen', args.gen)
-        # ★ schema-aware 追加(2026-09-13, §8.44): 原先是"只判文件有无/为空"决定写不写表头,
-        #   而 §8.34 给本表加了 `max_ex_corr`(第 17 列) ⇒ `loop_archive_300/500.csv` 变成
-        #   「16列旧行 + 17列新行」混合宽度 ⇒ `pd.read_csv` 报
-        #   `Expected 16 fields in line 165, saw 17`。**同一个坑的第三处**
-        #   (前两处: loop_pool_obs_* / loop_strip_style_*, 见 `tools/fix_csv_schema.py`)。
-        _ast, _asn = append_csv_schema_safe(_P.ARCHIVE, res)
-        if 'rewritten' in _ast:
-            print(f"  [流水] schema 变化 -> 已重写 {os.path.basename(_P.ARCHIVE)}: {_ast}")
-        print(f"\n已存 {_P.ARCHIVE} ({_ast}, 本代 {len(res)} 条)")
-        p = res[res['passed']]
-        print(f"L2 通过 {len(p)}/{len(res)} 个")
-        if len(p):
-            print(p.round(4).to_string(index=False))
-    return (nd, res)
 
 
 def _critic_diagnose(args, fam_blocked, l1, pool_rows, res, seg_ok_list):
