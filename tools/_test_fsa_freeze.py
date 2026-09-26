@@ -144,6 +144,8 @@ def t_static():
     print('\n[6] 常量 / 落盘 / 口径（静态钉住）')
     src = io.open(os.path.join(ROOT, 'engine', 'loop_engine.py'), encoding='utf-8').read()
     expr_src = io.open(os.path.join(ROOT, 'engine', 'loop_expr.py'), encoding='utf-8').read()  # _fsa_stats 已迁 loop_expr
+    persist_src = io.open(os.path.join(ROOT, 'engine', 'loop_persist.py'), encoding='utf-8').read()  # _save_state 已迁 loop_persist
+    stage_src = io.open(os.path.join(ROOT, 'engine', 'loop_stage.py'), encoding='utf-8').read()  # _run_prepare 已迁 loop_stage
     core = io.open(os.path.join(ROOT, 'dashboard', 'api', 'app', 'sources', 'core.py'),
                    encoding='utf-8').read()
     chk('冻结期序列 = 2→4→8 封顶 · 冷却期 = %d 代' % LE.FSA_COOL_GENS,
@@ -151,7 +153,7 @@ def t_static():
     chk('`fsa_period`：1→2 · 2→4 · 3→8 · 4→8 · 9→8（封顶不翻倍）',
         [LE.fsa_period(i) for i in (1, 2, 3, 4, 9)] == [2, 4, 8, 8, 8])
     chk('★★ 记账**落盘**（`fsa_frz=fsa_frz,`）且**读得回**（`st.get(\'fsa_frz\')`）—— 缺一则跨代失效 ✗',
-        'fsa_frz=fsa_frz,' in src and "st.get('fsa_frz')" in src)
+        'fsa_frz=fsa_frz,' in persist_src and "st.get('fsa_frz')" in stage_src)
     chk('★★ `frozen` 仍是**骨架字符串列表**（`frozen = sorted(cur)`）⇒ 看板 `frozen_n` 口径不变 ✓',
         'frozen = sorted(cur)' in expr_src and "len(st.get('frozen') or [])" in core)
     chk('日志留痕四件套齐全（新冻结次数+代数 / 续期 / 到期解冻 / 遗忘计数）',

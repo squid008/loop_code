@@ -15,6 +15,8 @@ import pandas as pd
 import json
 import pickle
 
+from loop_expr import Node
+
 import loop_paths as _P
 from loop_faillib import flib_mark, fail_lib_cleanup
 from loop_expr import skeleton, skeleton_freq
@@ -761,3 +763,25 @@ def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_ex
                                                  key=lambda kv: -kv[1].get('left', 0))[:3]) + '）'
              if fsa_frz else '') + ', '
           f"耗时 {time.time()-t0:.0f}s")
+
+
+class _StateUnpickler(pickle.Unpickler):
+    """★★★★★ 2026-09-25：读 state 时把**历史上误存的** `loop_engine.Node` 一并归一成本类 ✓
+
+    背景（完整说明见**文件末尾** `__main__` 块里那行注册）：引擎直跑时曾并存**两个 `Node` 类**
+    （`__main__.Node` 与 `loop_engine.Node`）⇒ 旧 state 的 `bank` / `seeds` / `last_l1`
+    里混着两份类 ✗
+
+    ⚠ 为什么必须归一：`isinstance(x, Node)` 是**类身份**判定 ⇒ 对第二份实例恒为 False ✗
+      ⇒ `collect` / `leaf_parts` / **`skeleton`（骨架去重 / FSA 冻结）** / `key` / `size` /
+      `crossover` / `mutate` / `dim_of` **全部对那批因子失效** ✗✗
+      （实测：`bank` 439 个 Node 里 **438 个**是第二份 ⇒ 去重与 FSA 一直没对它们生效 ✗）
+
+    修法：**只认类名** —— 不管 pickle 里记的是 `__main__.Node` 还是 `loop_engine.Node`，
+      一律还原成**本模块**的 `Node` ✓（结构逐字一致，差的只是类身份 ✓）
+    """
+
+    def find_class(self, module, name):
+        if name == 'Node':
+            return Node
+        return super().find_class(module, name)

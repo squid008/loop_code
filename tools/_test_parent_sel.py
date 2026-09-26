@@ -126,9 +126,10 @@ def t_edge(LE):
 def t_wired():
     print('\n[5] 静态断言：接线正确 + 默认行为不变')
     src = open(os.path.join(ENG, 'loop_engine.py'), encoding='utf-8').read()
+    stage_src = open(os.path.join(ENG, 'loop_stage.py'), encoding='utf-8').read()  # _run_gen 已迁 loop_stage
     chk("default='uniform'" in src, 'argparse `--parent_sel` 默认 = uniform（**行为不变**）')
     chk("'--parent_top_pct', type=float, default=0.30" in src, '`--parent_top_pct` 默认 0.30 ✓')
-    n_pick = len(re.findall(r'pick_parent\(rng, seeds, _psel, _ptop\)', src))
+    n_pick = len(re.findall(r'pick_parent\(rng, seeds, _psel, _ptop\)', stage_src))
     chk(n_pick == 2, '两处亲本抽取（变异 + 交叉第二亲本）都改走 `pick_parent`，实得 {}'.format(n_pick))
     # ★ 精确断言：剥掉注释 + 屏蔽 `pick_parent` 函数体后，不应再有 `rng.choice(seeds` 直抽。
     #   （初版用 `str.replace` 拼凑，漏掉函数内的第 3 种形态 ⇒ 假 FAIL；写测试也要避免"脆断言"）

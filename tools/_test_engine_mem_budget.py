@@ -39,6 +39,7 @@ def chk(desc, cond, hint=''):
 
 src = io.open(ENG, encoding='utf-8').read()
 cache_src = io.open(os.path.join(ROOT, 'engine', 'loop_cache.py'), encoding='utf-8').read()  # 缓存常量已迁 loop_cache
+stage_src = io.open(os.path.join(ROOT, 'engine', 'loop_stage.py'), encoding='utf-8').read()  # L1 批自适应已迁 loop_stage
 
 print('【1】`trim_cache_mb()` 真的按字节裁（动态验证）')
 try:
@@ -87,14 +88,14 @@ print('\n【2】三处裁剪点都接上了（少一处就白改 ✗）')
 # ★ 只数**行首的调用**（`^\s*trim_cache_mb\(`）⇒ 注释/文档串里的提及不算 ✗（自测时踩过 ✓）
 # ★ 2026-09-21 补第二步后：应该是 **4 处** —— `_LRU` 批末×1 + **`_LRU` 批内（每 8 个候选）×1**
 #   + `cache2` 去相关×1 + `cache2` 去重×1 ✓（少任何一处都会让内存重新上台阶 ✗）
-n_call = len(re.findall(r'^[ \t]+trim_cache_mb\(', src, re.M))
+n_call = len(re.findall(r'^[ \t]+trim_cache_mb\(', stage_src, re.M))
 chk('trim_cache_mb 被**调用** 4 次（_LRU 批末+批内 · cache2 去相关+去重，实 %d）' % n_call, n_call == 4)
 chk('_LRU 在**批内**也有一次（防"一批之内一路上台阶"✗）',
-    re.search(r"if i and \(i % 8\) == 0:\s*\n\s*trim_cache_mb\(_C\._LRU, _C\.LRU_MB\)", src) is not None,
+    re.search(r"if i and \(i % 8\) == 0:\s*\n\s*trim_cache_mb\(_C\._LRU, _C\.LRU_MB\)", stage_src) is not None,
     '实测：只靠批末裁剪，第一批就会顶到 8.9 GB ✗')
 chk('_LRU 裁剪处同时调了字节版',
-    re.search(r'trim_cache\(_C\._LRU, _C\.LRU_MAX\)[^\n]*\n[^\n]*trim_cache_mb\(_C\._LRU, _C\.LRU_MB\)', src) is not None)
-_n2 = len(re.findall(r'trim_cache\(cache2, _C\.CACHE2_MAX\)[^\n]*\n[^\n]*trim_cache_mb\(cache2, _C\.CACHE2_MB\)', src))
+    re.search(r'trim_cache\(_C\._LRU, _C\.LRU_MAX\)[^\n]*\n[^\n]*trim_cache_mb\(_C\._LRU, _C\.LRU_MB\)', stage_src) is not None)
+_n2 = len(re.findall(r'trim_cache\(cache2, _C\.CACHE2_MAX\)[^\n]*\n[^\n]*trim_cache_mb\(cache2, _C\.CACHE2_MB\)', stage_src))
 chk('两处 cache2 裁剪（去相关 + 去重）都接了字节版（实 %d 处）' % _n2, _n2 == 2,
     '两处 cache2 都要接 ✓')
 
@@ -119,9 +120,9 @@ chk('全局 LRU_MB / CACHE2_MB / BATCH_MB 有定义', all(
 
 print('\n【4】L1 批大小按字节自适应（宽池不许一批 2 GB ✗）')
 chk('有 BATCH_MB / 单条 MB 的自适应代码',
-    ('_per_mb' in src) and re.search(r'BATCH_MB\s*/\s*_per_mb', src) is not None)
+    ('_per_mb' in stage_src) and re.search(r'BATCH_MB\s*/\s*_per_mb', stage_src) is not None)
 chk('自适应在 BATCH = args.batch 之后生效',
-    re.search(r'BATCH = args\.batch[\s\S]{0,1200}?BATCH = _cap', src) is not None)
+    re.search(r'BATCH = args\.batch[\s\S]{0,1200}?BATCH = _cap', stage_src) is not None)
 
 print('\n' + ('★ 全过 ✓ 引擎私有缓存已是"字节预算"（内存有硬上限 ✓）' if not FAIL
              else '✗ 有 %d 项没过：\n  - %s' % (len(FAIL), '\n  - '.join(FAIL))))

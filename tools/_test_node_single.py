@@ -76,11 +76,13 @@ chk('注册在 `run(_args)` **之前**（`loop_critic` 是惰性 import ⇒ 足�
 
 print()
 print('[2] 静态：读 state 时归一旧数据')
+PERSIST_SRC = io.open(os.path.join(ENG, 'loop_persist.py'), encoding='utf-8').read()  # _StateUnpickler 已迁 loop_persist
+STAGE_SRC = io.open(os.path.join(ENG, 'loop_stage.py'), encoding='utf-8').read()  # 读取调用在 loop_stage
 chk('定义了 `_StateUnpickler`（`find_class` 把类名 Node 一律映射成本模块的）',
-    'class _StateUnpickler(pickle.Unpickler)' in SRC
+    'class _StateUnpickler(pickle.Unpickler)' in PERSIST_SRC
     and re.search(r"def find_class\(self, module, name\):\s*\n\s+if name == 'Node':\s*\n\s+return Node",
-                  SRC) is not None)
-_n_call = len(re.findall(r'(st|_stp) = _StateUnpickler\(', SRC))
+                  PERSIST_SRC) is not None)
+_n_call = len(re.findall(r'(st|_stp) = _StateUnpickler\(', STAGE_SRC))
 chk('state 的**两处**读取都走了它（主 state + 外部池注入），实 %d 处' % _n_call, _n_call == 2)
 chk('没有残留的裸 `pickle.load` 读 state ✗',
     re.search(r'\b(st|_stp) = pickle\.load\(', SRC) is None)

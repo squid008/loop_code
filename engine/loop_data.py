@@ -10,7 +10,9 @@ import os
 import numpy as np
 import pandas as pd
 
-from factor_miner import load_panel, prepare
+from factor_miner import load_panel, prepare, START
+import loop_cache as _C
+import loop_paths as _P
 from loop_fields import FIELDS, MF16, BARRA_LEAVES, FA_LEAVES
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -84,3 +86,49 @@ def _panel_sha1():
     return _PANEL_CODE_SHA1
 
 
+def base_fields():
+    """返回 {name: (T,S) float32} 基础字段 + 日期/列"""
+    if _C._BASE is not None:
+        return _C._BASE
+    # ★★★ 2026-09-16「面板只读缓存」（`--panel_cache`，**默认 off ⇒ 与改造前逐位不变**）：
+    #   面板 4.42 GB 且构造后只读 ⇒ 落成只读 memmap 后多进程共享同一批物理页（spawn 下也能省内存）。
+    #   · `use`   = 必须命中；缺失/过期**直接报错**（绝不偷偷重建，更不会拿旧面板算新结果）
+    #   · `build` = 现场构造一份并落盘，随后继续用（结果与 off **逐位相同**）
+    #   ⚠ 只有"面板从哪来"变了；`B_sub` / `_C.L1_POOL_MASK` 等派生逻辑**保持逐字不变** ✓
+    if _C.PANEL_CACHE == 'off':
+        B, dates, cols, close = _build_panel_fresh()
+    else:
+        import panel_cache as _pc
+        if _C.PANEL_CACHE == 'use':
+            B, dates, cols, _cv, _man = _pc.load(_panel_sha1())
+            # close 只有 0.14 GB，**拷一份**避免"pandas 直接操作只读块"的一类意外
+            close = pd.DataFrame(np.array(_cv), index=pd.Index(dates), columns=cols)
+            print('[面板缓存] 只读映射命中: %d 字段 / %.2f GB -> %s'
+                  % (len(B), _pc.size_gb(B), _pc.CACHE_DIR), flush=True)
+        else:
+            B, dates, cols, close = _build_panel_fresh()
+            _pc.save(B, dates, cols, close.values, _panel_sha1())
+    # ★L1 子面板: 粗筛不需要全样本(瓶颈是内存带宽, 不是计算)。
+    #   时间只取 START 之后 + 截面随机抽样 -> 数据量降到 ~1/4, 实测整体提速 3~4 倍。
+    #   L1 只是排序用, 抽样误差可接受; L2 精筛仍用全样本。
+    _C.L1_ROWS = np.where(dates >= START)[0]
+    if _P.MINE_POOL != 'all':
+        # ★池内挖掘(§8.19): L1 列 = 池**并集**(不随机抽样 —— 必须保证任一时点的成分都在)。
+        #   掩码另按 PIT 生效, 故并集稍大不影响口径。
+        import loop_pools as _LP
+        uni = _LP.pool_union(_P.MINE_POOL)
+        _C.L1_COLS = np.array([i for i, c in enumerate(cols) if c in uni], dtype=np.int64)
+        if _C.L1_COLS.size == 0:
+            raise SystemExit(f"[--mine_pool={_P.MINE_POOL}] 池并集与面板列无交集, 检查股票代码格式")
+        _C.L1_POOL_MASK = _LP.pool_mask(_P.MINE_POOL, dates, cols)[np.ix_(_C.L1_ROWS, _C.L1_COLS)]
+        print(f"[--mine_pool={_P.MINE_POOL}] L1 子面板列 = 池并集 {_C.L1_COLS.size} 只; "
+              f"当期池成分中位 {int(np.median(_C.L1_POOL_MASK.sum(1)))} 只 "
+              f"(面板共 {close.shape[1]} 列)")
+    else:
+        nsub = min(close.shape[1], _C.L1_STOCKS)
+        _C.L1_COLS = np.sort(np.random.default_rng(20240917).choice(
+            close.shape[1], nsub, replace=False))
+        _C.L1_POOL_MASK = None
+    B_sub = {k: v[np.ix_(_C.L1_ROWS, _C.L1_COLS)] for k, v in B.items()}
+    _C._BASE = dict(B=B, B_sub=B_sub, dates=dates, cols=cols, close=close)
+    return _C._BASE
