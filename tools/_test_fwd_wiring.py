@@ -50,8 +50,13 @@ for dp, _dn, fns in os.walk(os.path.join(ROOT, 'engine')):
             t = io.open(p, encoding='utf-8').read()
         except Exception:                                        # noqa: BLE001
             continue
-        for m in re.finditer(r'^from factor_miner import \(?([^)\n]*(?:\n[^)\n]*)*)\)?', t, re.M):
-            if re.search(r'\bFWD\b', m.group(1)):
+        # ★ 2026-09-26 修（**原正则会把 import 之后的注释行也吞进来** ✗ ⇒ 注释里只要提到 `FWD`
+        #   就误报 ✓ 实测：拆分后 `loop_stage.py` 的说明注释被判成"值拷贝 import" ✗）⇒
+        #   只认两种**真实的 import 形态**：① 带括号（到 `)` 为止）② 单行（到行尾为止）✓
+        _pat = re.compile(r'^from factor_miner import \(([^)]*)\)'
+                          r'|^from factor_miner import ([^\n(]+)$', re.M | re.S)
+        for m in _pat.finditer(t):
+            if re.search(r'\bFWD\b', m.group(1) or m.group(2) or ''):
                 _bad.append(os.path.basename(p))
 chk('engine/ 下没有 `from factor_miner import … FWD`（实 %d 处）' % len(_bad),
     not _bad, '值拷贝 ⇒ set_fwd() 改不到它 ✗（换口径会静默失效 ✓）')

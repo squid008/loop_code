@@ -14,8 +14,17 @@ import pandas as pd
 import factor_miner as _FM
 from factor_miner import evaluate_real, cs_rank, pass_filter, get_universe, START
 
+# ★★★★★ 2026-09-26（拆分后**必须还原**这条语义，否则静默改口径 ✗✗）：
+#   `FWD` = **本模块的主口径**（默认 5）—— 它同时供 ① 全部 `[::FWD]` 调仓日切片、
+#   ② 副口径块的 `finally` **复原**（`_FM.set_fwd(int(FWD))`）。
+#   ⚠ **不能**把它换成 `_FM.FWD` ✗：`_FM.set_fwd(20)` 之后 `_FM.FWD` 自己就是 20 ⇒
+#     "复原"变成 **no-op** ⇒ 后续候选的**池内指标**全部按 20 日口径算 ✗（实测：
+#     池门槛 `+0.254` 而正确值 `+0.192` —— A/B 对拍抓到的 ✓）。
+#   ⚠ `--fwd` 由 `loop_engine.py` 的 `main()` **同步两个模块**（见那里的同步块 ✓）。
+FWD = _FM.FWD
+
 from loop_expr import (Node, collect, skeleton, root_fam, has_frozen_skel, clone, _fsa_stats)
-from loop_ops import UNARY, BINARY
+from loop_ops import UNARY, BINARY, ts_mean
 from loop_gen import (DEFAULT_CFG, _clean_cfg, rand_expr, eval_expr, mutate, leaf_parts,
                      crossover, pick_parent, perturb, guided_expr, _build_fam_blacklist)
 from loop_dims import review_expr
@@ -35,7 +44,10 @@ from loop_llm_guide import llm_fetch
 from cost_presets import cost_label
 
 import loop_cache as _C
+from loop_cache import trim_cache, trim_cache_mb
 import loop_paths as _P
+
+HERE = os.path.dirname(os.path.abspath(__file__))   # engine/ 目录（与 loop_engine.py 同目录）
 
 
 def _run_prepare(args):
@@ -59,7 +71,7 @@ def _run_prepare(args):
     T, S = close.shape
 
     U = get_universe().reindex(index=dates, columns=cols).fillna(False).values
-    fwd_ret = (close.shift(-(1 + _FM.FWD)) / close.shift(-1) - 1).values
+    fwd_ret = (close.shift(-(1 + FWD)) / close.shift(-1) - 1).values
 
     # 载入上一代: 种子 + B角建议
     seeds, fsa, prev_l1, prev_l2, bank = [], {}, None, None, []
@@ -361,20 +373,20 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
         Kr = {}
         for k, v in KNOWN.items():
             vs = v[np.ix_(_C.L1_ROWS, _C.L1_COLS)]
-            Kr[k] = rank_rows(vs[::_FM.FWD])
+            Kr[k] = rank_rows(vs[::FWD])
         # ★ 2026-09-14（§1.8）：对照集 = 自己的 bank **+ 外部池库**（`bank_ext`，只读注入）
         #   不注入的话，跑全A 时这一层"看不见池库" ⇒ 重挖。
         for bi, bnd in enumerate(bank + bank_ext):
             try:
                 vb = eval_expr(bnd, Bsub, cache2)
-                Kr[f'bank{bi}'] = rank_rows(vb[::_FM.FWD])
+                Kr[f'bank{bi}'] = rank_rows(vb[::FWD])
                 del vb
             except Exception:
                 pass
         keep_rows = []
         n_hit = 0
         for _, r in l1.iterrows():
-            # ★复用 L1 已算的 [::_FM.FWD] 值视图(命中则完全跳过 eval_expr, 结果逐位不变)
+            # ★复用 L1 已算的 [::FWD] 值视图(命中则完全跳过 eval_expr, 结果逐位不变)
             v0 = _C.VCACHE.get(r['expr']) if _reuse_v else None
             if v0 is not None:
                 n_hit += 1
@@ -382,7 +394,7 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
                 v0 = eval_expr(r['node'], Bsub, cache2)
                 if r['sign'] < 0:
                     v0 = -v0
-                v0 = v0[::_FM.FWD]
+                v0 = v0[::FWD]
             v = rank_rows(v0)
             del v0
             mx = 0.0
@@ -436,7 +448,7 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
             v = eval_expr(r['node'], Bsub, cache2)
             if r['sign'] < 0:
                 v = -v
-            v = rank_rows(v[::_FM.FWD])[samp]
+            v = rank_rows(v[::FWD])[samp]
         dup = False
         for w in seen_v:
             m = np.isfinite(v) & np.isfinite(w)
@@ -537,9 +549,9 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
                 sty.append(None)
                 shn.append(None)
                 continue
-            # 秩视图只算一次: decile_shape 与风格观测共用(两者都基于 [::_FM.FWD] 调仓日视图)
+            # 秩视图只算一次: decile_shape 与风格观测共用(两者都基于 [::FWD] 调仓日视图)
             try:
-                rs = rank_rows(v[::_FM.FWD])
+                rs = rank_rows(v[::FWD])
             except Exception:
                 shp.append(None)
                 sty.append(None)
@@ -582,7 +594,7 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
                 for _k in STYLE_KEYS:
                     d['st_' + _k] = sy[_k]
             stats.append(d)
-        # ---- 跨阶段复用 L1 值(2026-09-12): 只存**过 ic/stab 门槛**候选的 [::_FM.FWD] 视图。
+        # ---- 跨阶段复用 L1 值(2026-09-12): 只存**过 ic/stab 门槛**候选的 [::FWD] 视图。
         #  存的是符号对齐后的同一数组 -> 去相关/去重的 rank_rows 结果逐位不变(行为等价)。
         #  成本仅一次 memcpy(~3.35MB/个); 省下的是一次完整 eval_expr + rank_rows(~2.5s/个)。
         if _reuse_v and vals:
@@ -590,7 +602,7 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
                 if _C._VREUSE_MB[0] >= _C._VREUSE_CAP_MB:
                     break
                 if _d_['ic'] > args.min_ic and _d_['stab'] > args.min_stab:
-                    _arr = np.ascontiguousarray(_v[::_FM.FWD])
+                    _arr = np.ascontiguousarray(_v[::FWD])
                     _C.VCACHE[_d_['expr']] = _arr
                     _C._VREUSE_MB[0] += _arr.nbytes / 1e6
         n_eval += len(vals)
@@ -659,8 +671,8 @@ def _run_l1_phase(ctx, args):
 
     Bsub, Rsub, Usub = _run_l1(U, base, fwd_ret)
     # ---- 形状量(十档单调性)所需的调仓日抽样视图: 只算一次 ----
-    # rank_rows 逐行独立 => rank_rows(F)[::_FM.FWD] ≡ rank_rows(F[::_FM.FWD])，抽样与不抽样等价(更快)
-    Rsub_s, Usub_s = Rsub[::_FM.FWD], Usub[::_FM.FWD]
+    # rank_rows 逐行独立 => rank_rows(F)[::FWD] ≡ rank_rows(F[::FWD])，抽样与不抽样等价(更快)
+    Rsub_s, Usub_s = Rsub[::FWD], Usub[::FWD]
     _min_mono = float(getattr(args, 'min_mono', 0.0) or 0.0)      # 缺字段=关闭(默认行为)
     _score_mode = getattr(args, 'score_mode', 'old') or 'old'
     _style_obs = bool(getattr(args, 'style_obs', False))
@@ -728,7 +740,7 @@ def _run_l1_phase(ctx, args):
               f"shape_neutral={_shape_neutral}; "
               f"调仓日视图 {Rsub_s.shape[0]}期)")
     # ---- 风格暴露观测(2026-09-11, --style_obs 默认关) ----
-    #  口径 = standard_test【3】风格归因的四项特征定义; 取 **L1 子面板 + [::_FM.FWD] 调仓日视图**
+    #  口径 = standard_test【3】风格归因的四项特征定义; 取 **L1 子面板 + [::FWD] 调仓日视图**
     #  (与 decile_shape 同视图 -> 两者共用一次 rank_rows); 快, 但只是"相对比较用代理",
     #  绝对值以 standard_test 全量报告为准。用途: 验证批1 是否让因子更往低换手/低成交额挤。
     STYLE_S, FEAT_S = {}, {}
@@ -742,12 +754,12 @@ def _run_l1_phase(ctx, args):
             if _strip_style and _k in ('lncap', 'lnamt'):
                 STYLE_FULL[_k] = _sf[_k]                             # 全面板(供 L2 剥除)
             if _style_obs or _shape_neutral:
-                FEAT_S[_k] = _sf[_k][np.ix_(_C.L1_ROWS, _C.L1_COLS)][::_FM.FWD]    # 原始值(供中性化)
+                FEAT_S[_k] = _sf[_k][np.ix_(_C.L1_ROWS, _C.L1_COLS)][::FWD]    # 原始值(供中性化)
                 if _style_obs:
                     STYLE_S[_k] = rank_rows(FEAT_S[_k])              # 秩(供 style_expo)
         del _sf
         if _style_obs:
-            print(f"  [风格观测] 已启用 ({', '.join(STYLE_KEYS)}; 子面板[::_FM.FWD] "
+            print(f"  [风格观测] 已启用 ({', '.join(STYLE_KEYS)}; 子面板[::FWD] "
                   f"{Rsub_s.shape[0]}期) -> {_P.STYLE_OBS}")
         if _strip_style:
             print(f"  [剥风格] L2 将记录剥 lncap+lnamt 后的 IC/超额/Calmar -> {_P.STRIP_OBS}"
@@ -875,15 +887,15 @@ def _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style,
     #    · 副口径**只做** 主评 + 剥风格 + 分段（不做池内 ✗）——
     #      池内门槛是"池轨道"的概念 ✓，而副口径的价值在**全A 口径下**捞真信号 ✓；
     #      判定上它走 `_ok_q2`（全A 量化口径 ✓），与 `combine_ok` 的 OR 语义天然相容 ✓
-    #    · ⚠⚠ **`_FM.FWD` 必须在 finally 里复原** ✗✗ —— 它是模块全局，
-    #      `evaluate_real` 在**调用时**读它（实测确认 ✓：`fwd_ret=(close.shift(-(1+_FM.FWD))…)` 在函数体内 ✓）
+    #    · ⚠⚠ **`FWD` 必须在 finally 里复原** ✗✗ —— 它是模块全局，
+    #      `evaluate_real` 在**调用时**读它（实测确认 ✓：`fwd_ret=(close.shift(-(1+FWD))…)` 在函数体内 ✓）
     #      ⇒ 一旦中途异常而不复原，**后面所有候选都会按副口径评估** ✗ 且**不报错** ✓
     if args.dual_fwd and rr is not None:
         try:
-            # ⚠⚠ **只切 `factor_miner._FM.FWD`，不碰本模块的 `_FM.FWD`** ✗ ——
-            #   本模块的 `_FM.FWD` 只在**候选循环之前**的预计算里用（`[::_FM.FWD]` 切片 ✓），
+            # ⚠⚠ **只切 `factor_miner.FWD`，不碰本模块的 `FWD`** ✗ ——
+            #   本模块的 `FWD` 只在**候选循环之前**的预计算里用（`[::FWD]` 切片 ✓），
             #   而求值读的是 `factor_miner` 自己的全局 ✓ ⇒ 不需要动它 ✓
-            #   ★ 而且**不能**在函数里裸写 `_FM.FWD = …` ✗：没有 `global` 声明 ⇒
+            #   ★ 而且**不能**在函数里裸写 `FWD = …` ✗：没有 `global` 声明 ⇒
             #     Python 会当**局部变量** ⇒ 既改不到全局、又会 `UnboundLocalError` ✗✗
             #     （我第一版就是这么写的 ✓ 自查拦下 ✓）
             _FM.set_fwd(int(args.dual_fwd))
@@ -909,9 +921,9 @@ def _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style,
             print(f"  [{j}] 副口径({int(args.dual_fwd)})评估失败(不影响主流程): "
                   f"{type(e2).__name__}: {e2}")
         finally:
-            # ★★ 复原主口径：`_FM.FWD` 是本轮主口径（5 日 ✓ 由 `--fwd` 同步块设定 ✓）
+            # ★★ 复原主口径：`FWD` 是本轮主口径（5 日 ✓ 由 `--fwd` 同步块设定 ✓）
             #   必须在 finally ⇒ 中途异常也要复原 ✗（否则后续候选全按副口径 ✓ 且静默 ✓）
-            _FM.set_fwd(int(_FM.FWD))
+            _FM.set_fwd(int(FWD))
         # 副口径的判定（**与主口径同一套闸** ✓，但走"全A 量化口径"这条 OR 支路 ✓）
         if rr2 is not None:
             try:
@@ -965,7 +977,9 @@ def _l2_pool_tags(j, nd, fac, dates, cols, close, args, POOL_M, MCAP, _pools, _l
             except Exception as e_p:
                 print(f"  [{j}] 池 {_tg} 计算失败(不影响主流程): "
                       f"{type(e_p).__name__}: {e_p}")
-        pool_rows.extend(pool_rec)
+        # ⚠ `pool_rows.extend(pool_rec)` **不在这里做** —— 它是**调用方** `_run_l2_phase` 的局部变量 ✗
+        #   （2026-09-26 真事故：搬函数时把它留在这儿 ⇒ 每次 L2 都 `NameError: pool_rows` 被
+        #    `except` 吞掉 ⇒ **一个候选都入不了库** ✗✗）⇒ 已移到调用方紧接调用之后 ✓
         # ★ 池标签(2026-09-13, §8.42): 规则取自 `loop_pools.derive_tag`(**单一事实源**,
         #   与 `standard/pool_tags.py` 派生 docs/pool_tags.csv 同口径)。
         #   用户诉求:「一眼看出这个因子是全A+哪个池好用、还是只有全A好用」。
@@ -1096,10 +1110,13 @@ def _run_l2_phase(ctx, args):
             #  ⚠ evaluate_real 选股是 `fac.loc[d][U].dropna()` ⇒ 池外 NaN 自动被排除;
             #    且"池等权"基准随之变成**同池等权**(与 standard_test 口径一致, 不是全A等权)。
             pool_rec = _l2_pool_tags(j, nd, fac, dates, cols, close, args, POOL_M, MCAP, _pools, _lp, rr, strip_rec, strip2, pool_rec, _tag_by_expr, _strip_by_expr, _strip2_by_expr)
+            # ★ 池内明细(长表) 落 `pool_rows` —— 原在 `_l2_pool_tags` 里（那是**调用方局部** ✗），
+            #   2026-09-26 移回调用方；`POOL_M` 关或 `rr is None` 时 `pool_rec` 本就是空表 ⇒ 逐字等价 ✓
+            pool_rows.extend(pool_rec)
             del f
             gc.collect()
         except Exception as e:
-            print(f"  [{j}] ERR {type(e).__name__}")
+            print(f"  [{j}] ERR {type(e).__name__}: {e}")   # ★ 带上消息（原来只有类型，排查时看不到名字 ✗）
             continue
         if rr is None:
             continue
@@ -1175,7 +1192,7 @@ def _run_l2_phase(ctx, args):
         #   · 副口径**不参与池门槛** ✗（池内门槛是池轨道的概念 ✓；副口径的价值在
         #     **全A 口径**下捞真信号 ✓ ⇒ 它只走"全A 量化口径"这条支路 ✓ 语义自洽 ✓）
         #   · ⚠ 记录 `hzn`：文档/日志要按**实际入选的口径**标注 ✗（否则两个口径的数字混在一份文档里 ✓）
-        _hzn = int(_FM.FWD)
+        _hzn = int(FWD)
         if args.dual_fwd and ok2 and not ok:
             ok = True
             _hzn = int(args.dual_fwd)

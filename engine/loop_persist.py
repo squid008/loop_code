@@ -1,19 +1,24 @@
 # -*- coding: utf-8 -*-
-"""loop_persist.py — 落盘/工具纯函数（2026-09-26 文件级拆分）
+"""loop_persist.py — 落盘 / 工具 / 库文档同步（2026-09-26 文件级拆分）
 
-★ 只放**零依赖**的纯函数（不 import loop_engine，无循环依赖）。
-  append_csv_schema_safe：CSV 加列时重写并救回旧行（§8.30 治本）
-  _real_mb：估缓存值真实钉住的内存（含 numpy 视图底座）
+★ **不 import loop_engine** ⇒ 无循环依赖（只依赖 loop_expr/loop_gen/loop_faillib/loop_paths/cost_presets）。
+  落盘：`append_csv_schema_safe`（CSV 加列重写并救回旧行 §8.30）· `_dump_strip_detail` ·
+        `_dump_pool_obs` · `_save_state`（代末原子写）· `_StateUnpickler`（读旧 state 时把 `Node` 归一）
+  库文档：`_mk_library_skeleton` · `_tag_desc` · `append_library_entries` · `_lib_sync`
+  收益流：`_cmp_lib` · `ex_max_corr` · `_pool_best` · `combine_ok` · `_gate_of`
+  工具：`_real_mb`（估缓存真实钉住的内存，含 numpy 视图底座）
 """
-import io
-import os
-import sys
 import csv
+import io
+import json
+import os
+import pickle
+import re
+import sys
+import time
 
 import numpy as np
 import pandas as pd
-import json
-import pickle
 
 from loop_expr import Node
 
@@ -413,8 +418,8 @@ def append_library_entries(evs, quiet=False):
         return 0
     try:
         old = []
-        if os.path.exists(LIB_ENTRIES):
-            with io.open(LIB_ENTRIES, encoding='utf-8') as f:
+        if os.path.exists(_P.LIB_ENTRIES):
+            with io.open(_P.LIB_ENTRIES, encoding='utf-8') as f:
                 for ln in f:
                     ln = ln.strip()
                     if not ln:
@@ -427,12 +432,12 @@ def append_library_entries(evs, quiet=False):
         add = [e for e in evs if (e.get('pool'), e.get('code')) not in seen]
         if not add:
             return 0
-        os.makedirs(os.path.dirname(LIB_ENTRIES), exist_ok=True)
-        with io.open(LIB_ENTRIES, 'a', encoding='utf-8') as f:
+        os.makedirs(os.path.dirname(_P.LIB_ENTRIES), exist_ok=True)
+        with io.open(_P.LIB_ENTRIES, 'a', encoding='utf-8') as f:
             for e in add:
                 f.write(json.dumps(e, ensure_ascii=False) + '\n')
         if not quiet:
-            print('  [入库日志] +%d 条 -> %s' % (len(add), os.path.basename(LIB_ENTRIES)))
+            print('  [入库日志] +%d 条 -> %s' % (len(add), os.path.basename(_P.LIB_ENTRIES)))
         return len(add)
     except Exception as e:                # noqa: BLE001
         print('  [入库日志] [!] 写入失败（不影响入库）: %s: %s' % (type(e).__name__, e))

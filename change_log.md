@@ -15,6 +15,67 @@
 
 ---
 
+## [1.23.1] — 2026-09-26
+
+> 主题：**修 `v1.23.0` 的 4 处 `NameError`（拆分漏 import / 用了调用方局部）
+> + 修「副口径复原成 no-op」造成的口径静默污染** —— **纯修复，恢复正常挖掘**
+
+### 真事故（v1.23.0 发版后，重启挖掘第一批就崩）
+
+| 现象 | 真因 |
+|---|---|
+| `all` 池：`NameError: name 'HERE' is not defined` | `loop_stage.py` 用了 `HERE`（引擎目录）但**没定义/没 import** ✗ |
+| `300` 池：`NameError: name 'trim_cache_mb' is not defined` | `loop_stage.py` 用了 `trim_cache_mb` 但**没 import** ✗ |
+| **L2 每个候选**都只打一行 `[j] ERR NameError`（被 `except` 吞掉） ⇒ **一个候选都入不了库** ✗✗ | `_l2_pool_tags` 里用了 **调用方 `_run_l2_phase` 的局部变量 `pool_rows`** ✗（同类：`ts_mean` 没 import、`loop_persist` 的 `LIB_ENTRIES` 没改成 `_P.`、`run_tracks._rotate_schedule` 漏了 `panel_cache` 形参） |
+| **池内指标静默改口径**（实测池门槛 `+0.254`，正确值 `+0.192`）| 文件级拆分时把 `FWD` **一律替换成 `_FM.FWD`** ✗ ⇒ 副口径块的 `finally: _FM.set_fwd(int(FWD))` 变成 `int(_FM.FWD)` ⇒ `set_fwd(20)` 之后 `_FM.FWD` **自己就是 20** ⇒ **"复原"是 no-op** ✗✗ |
+
+### 为什么没被拦住（★ 诚实记账）
+
+`v1.23.0` 的 **L3 Step 4（文件级拆分）只跑了 `py_compile` + 全量回归**，
+**漏掉了 Step 1~3 一直在用的「同 seed 复跑 + `state` 逐字段对照」** ✗。
+而全量回归**不覆盖完整 L1/L2 路径**（`_test_parallel_runner` 用 `--gen_only` 跳过 L1/L2），
+且那 4 个名字**只在特定参数/特定池下才走到** —— 典型：`HERE` 那行只在 `all` 池
+「外部池注入」时执行，而我的对照命令是 `--mine_pool=500` ⇒ **正好跳过了它** ✗。
+⇒ **教训**：**`py_compile` 只查语法、不查名字**；搬函数后必须做一次**作用域感知**的名字解析检查 ✓
+
+### 修法
+
+1. `loop_stage.py`：补 `HERE` / `from loop_cache import trim_cache, trim_cache_mb` / `from loop_ops import …, ts_mean`
+2. `loop_persist.py`：补 `import re`（`_mk_library_skeleton` 用）+ `LIB_ENTRIES` → `_P.LIB_ENTRIES`
+3. `loop_stage.py`：`pool_rows.extend(pool_rec)` **从 `_l2_pool_tags` 移回调用方** `_run_l2_phase`（那里才是它的作用域 ✓）
+4. `run_tracks.py`：`_rotate_schedule` 补 `panel_cache` 形参（**轮转模式一起就崩** ✓，生产用并行模式所以没暴露）
+5. **`loop_stage.py` 恢复模块级 `FWD`**（`FWD = _FM.FWD`）：
+   `[::FWD]` 切片与副口径 `finally` 复原**都回到它** ✓；`loop_engine.main()` 的 `--fwd` 同步块
+   **同时同步 `loop_stage.FWD`** ✓（否则 `--fwd` 只改一个模块 ✗）
+6. `loop_stage.py` 的 L2 异常打印**补上异常消息**（原来只有 `type(e).__name__` ⇒ 排查时看不到名字 ✗）
+
+### ★ 新增常驻守门 `tools/_test_undefined_names.py`（作用域感知）
+
+扫「**用了、却在本作用域链上都没绑定过**」的名字（自建，因为本机没装 `pyflakes`）：
+形参 / 赋值 / `for` / `with` / `except` / import / 嵌套 def 名 / `global`+`nonlocal` 都算绑定，
+再沿**闭包链**解析到模块级与内置名 ⇒ 四条都不满足就报 ✓
+⚠ 关键：**必须是作用域感知的** —— 第一版用「全文件绑过就算」的宽松判据，
+**抓不到「用了调用方的局部变量」**（`pool_rows` 正好被 `_run_l2_phase` 绑过 ✗）。
+⇒ 现在扫描 167 个文件、**未定义名 0 处** ✓
+
+### 验证（★ 这次是 **A/B**，不是"看起来对"）
+
+把 `engine/` 用 `git checkout 1129380`（**文件级拆分之前**）恢复，跑**完全相同**的命令
+（`--mine_pool=500 --seed=777 --n=20 --l2=3 --strip_style --style_obs --pool_obs
+--pools=300,500,1000 --dup_ex_corr=0.90 --min_pool_calmar=0.15 --pool_gate_or_all
+--min_strip_calmar=0.15 --dual_fwd=20 --min_calmar2=0.701`）：
+
+| 项 | 拆分前（`1129380`） | 拆分后（本版） |
+|---|---|---|
+| 候选 [1] 池内指标 | `300:+3.15%/Cal+0.19(市值2.42%/倾斜-0.74%) 500:+1.88%/Cal+0.11 …` | **逐字相同** ✓ |
+| 池门槛 | `过(+0.192)` | **`过(+0.192)`** ✓ |
+| 种子 / 入库 / 收益流库 / 冻结骨架 / 失败库 / 冻结记账 | 3 / 10 / 10 / 3 / 584 / 17 | **完全相同** ✓ |
+| `ERR` / `NameError` | 0 | **0** ✓ |
+
+⇒ 全量回归 **52/52** ✓（含新守门）
+
+---
+
 ## [1.23.0] — 2026-09-26
 
 > 主题：**易维护性整治上线（L1 死码清理 → L2 大函数拆分 → L3 上帝模块拆分）**

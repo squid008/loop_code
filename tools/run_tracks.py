@@ -843,7 +843,8 @@ def _parse_args():
             panel_cache, gens_per_round, min_gens_per_round, pool_tail, extra)
 
 
-def _rotate_schedule(plan, rounds, n, l2, extra, inject_spec, no_global, dry, pools):
+def _rotate_schedule(plan, rounds, n, l2, extra, inject_spec, no_global, dry, pools,
+                     panel_cache):
     """轮转主循环（rotate 模式）：逐轮遍历 plan、spawn 引擎、摘结果 + 守卫。"""
     write_ctl(running=True, round=0, rounds=rounds, phase='mine',
               enabled=[p for p, _, _ in plan] or pools, curPool=None, curGen=None)
@@ -1111,7 +1112,7 @@ def main():
     #   ★ 代数**每代现取**（`next_gen(p)` 读 journal）—— journal 是**唯一事实源**，
     #     比维护内存字典更健壮（进程重启/被杀后自动续上）✓
     stopped_by_user, ran_round, dirty = _rotate_schedule(
-        plan, rounds, n, l2, extra, inject_spec, no_global, dry, pools)
+        plan, rounds, n, l2, extra, inject_spec, no_global, dry, pools, panel_cache)
     return _finalize_schedule(stopped_by_user, ran_round, dirty, rounds, no_global, dry)
 
 

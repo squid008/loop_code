@@ -47,9 +47,17 @@ chk('副口径求值在 `args.dual_fwd` 分支里 ✓',
     re.search(r'if args\.dual_fwd and rr is not None:', stage_src) is not None)
 chk('★ 用 `_FM.set_fwd(int(args.dual_fwd))` 切（切的是 factor_miner 的全局 ✓）',
     '_FM.set_fwd(int(args.dual_fwd))' in stage_src)
-chk('★ **有 finally 复原**（`_FM.set_fwd(int(_FM.FWD))`）',
-    re.search(r'finally:\s*\n\s*#[^\n]*\n(\s*#[^\n]*\n)*\s*_FM\.set_fwd\(int\(_FM\.FWD\)\)', stage_src) is not None,
+# ★★★★★ 2026-09-26（v1.23.1 修）：复原必须回到**模块全局 `FWD`**（主口径），
+#   ⚠ **绝不能**写成 `_FM.set_fwd(int(_FM.FWD))` ✗✗ —— 那等于"复原成刚切过去的副口径"
+#   ⇒ **no-op** ⇒ 后续候选的**池内指标/`_hzn` 列**全按副口径算 ✗（实测池门槛 +0.254 vs 正解 +0.192 ✗）
+chk('★ **有 finally 复原**，且回到**模块全局 `FWD`**（不是 `_FM.FWD` ✗）',
+    re.search(r'finally:\s*\n\s*#[^\n]*\n(\s*#[^\n]*\n)*\s*_FM\.set_fwd\(int\(FWD\)\)', stage_src) is not None,
     '没有 finally ⇒ 中途异常会让后续候选全按副口径评估 ✗ 且不报错 ✓')
+chk('★★ **复原目标不是 `_FM.FWD`**（那是 no-op：`set_fwd` 已把它改成副口径 ✗✗）',
+    re.search(r'_FM\.set_fwd\(int\(_FM\.FWD\)\)', stage_src) is None,
+    '写成 `int(_FM.FWD)` ⇒ 复原变成 no-op ⇒ 池内指标静默改口径 ✗（2026-09-26 真事故 ✓）')
+chk('★★ 本模块**有**主口径全局 `FWD`（`[::FWD]` 切片 + 复原都靠它 ✓）',
+    re.search(r'^FWD = _FM\.FWD', stage_src, re.M) is not None)
 
 print('\n【3】★ 不许在**函数体内**裸写 `FWD = …`（无 global 声明 = 局部变量陷阱 ✗）')
 # ⚠ 必须用 ast 判"在不在函数里" ✗ —— 我第一版用"缩进就报"⇒ 把 `if __name__ == '__main__':`

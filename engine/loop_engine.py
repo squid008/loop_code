@@ -609,6 +609,11 @@ if __name__ == '__main__':
         _FWD_OLD = FWD
         _FM.set_fwd(int(_args.fwd))
         FWD = _FM.FWD                # ★ 本模块全局（模块级 if 内赋值 = 全局 ✓）⇒ 14 处切片跟着走 ✓
+        # ★ 2026-09-26（拆分后补）：`loop_stage` 里**也有一份主口径 `FWD`**（供 `[::FWD]` 切片 +
+        #   副口径块的 `finally` 复原 ✓）⇒ 必须**一起同步**，否则 `--fwd` 只改本模块、
+        #   阶段函数仍用旧值 ⇒ 切片与复原口径不一致 ✗
+        import loop_stage as _LS
+        _LS.FWD = _FM.FWD
         print('  ★ 调仓周期口径 = **%d 交易日**（引擎默认 %d）⇒ 期数约 418 → 约 %d ✓'
               % (FWD, _FWD_OLD, max(1, int(418 * _FWD_OLD / float(max(FWD, 1))))), flush=True)
     set_mine_pool(_args.mine_pool)   # ★必须在 run() 之前: 路径后缀 & L1 池掩码都在 run 内部生效
