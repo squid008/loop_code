@@ -488,6 +488,9 @@ md 总览 ✓ · md 明细 ✓ · **不在** JSONL ✓ · **不在** 登记表 �
   - ✅ Step 3：`run()` ctx 化拆 5 子步骤（`_run_prepare`/`_run_gen`/`_run_l1_phase`/
     `_run_l2_phase`/`_run_finalize`）—— **run() 1079 行 → 10 行纯编排**；
     同 seed=777 复跑 state 逐字段一致 + 全量回归 51/51（详见 `maintainability.md`）
+  - ✅ Step 4：文件级拆分（路径 `loop_paths` / 缓存 `loop_cache` / 面板 `loop_data` /
+    落盘 `loop_persist` / 评估 `loop_eval` / 阶段 `loop_stage`）—— **loop_engine 3917→619 行（文件 ≤800 ✓）**
+    ⚠ 剩余：`loop_stage.py` 1332 行，6 个阶段函数仍超 R1（`_run_l2_phase` 247 等），函数级收益递减建议收口
 
 ---
 

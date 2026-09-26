@@ -130,6 +130,20 @@
 >  ★ 对照方法：改前先跑一次记录 baseline state（MD5），改后恢复 state 备份同 seed 复跑，unpickle 逐字段比对
 >  （Node 对象用 `str(node)` 值比对，`==` 是身份比较会假阳性）。
 
+- [x] **Step 4：文件级拆分（文件 ≤800 达成，2026-09-26）**：
+  - [x] 路径常量 + `MINE_POOL` → `loop_paths.py`（`apply_suffix` 单一事实源）
+  - [x] 缓存 + L1 状态 → `loop_cache.py`（`_C.VCACHE`/`_C._LRU` 等，模块引用）
+  - [x] 面板构造 → `loop_data.py`；落盘 → `loop_persist.py`；评估/审查 → `loop_eval.py`
+  - [x] 库文档/收益流/保存（`_lib_sync`/`_save_state` 等 10 个）→ `loop_persist.py`
+  - [x] 9 个阶段函数 → `loop_stage.py`
+  - ✅ **`loop_engine.py` 3917 → 619 行**（只剩 `run()` 8 行编排 + import + argparse + main）
+  - ★ 值拷贝陷阱全部规避（`_P.STATE`/`_P.MINE_POOL`/`_C.VCACHE`/`_FM.FWD` 都走运行时取）
+
+> ⚠ **诚实的剩余（2026-09-26）**：`loop_stage.py` 现为 **1332 行**（9 个阶段函数），其中 6 个仍超 R1
+>  `_run_l2_phase`(247)/`_run_l1_phase`(196)/`_l1_eval`(173)/`_run_prepare`(150)/`_run_gen`(134)/`_l1_filter`(132)。
+>  这些是「深度耦合的单候选处理 + 20 个口径参数」，之前试拆 `_l2_judge` 已确认参数爆炸（13 参数）回退。
+>  ⇒ 文件级已达标，函数级若要继续硬啃，需接受「参数多/ctx 样板」的代价，收益递减，建议就此收口。
+
 ---
 
 ## 四、维护节奏
