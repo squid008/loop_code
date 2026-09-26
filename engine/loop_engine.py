@@ -90,7 +90,6 @@ except Exception:
 #   去找真信号。(QuantaAlpha 正是如此: `market: csi300` + benchmark SH000300, §8.8/§8.19)
 # 实现: 'all' = 现状(不加后缀; 现有 loop_state.pkl / loop_archive.csv 即全A轨迹的既有历史);
 #       '300'/'500' = 全新独立轨迹(文件加 _300/_500 后缀)。可选池见 engine/loop_pools.py 的 POOLS。
-L1_POOL_MASK = None       # (len(L1_ROWS), len(L1_COLS)) bool; None = 不加池约束(全A现状)
 
 
 def set_mine_pool(tag):
@@ -126,7 +125,8 @@ from loop_dims import review_expr, dim_of      # ★ L3 拆分：跨量纲审查
 from loop_expr import _fsa_stats  # ★ 文件级拆分：FSA 骨架统计
 from loop_gen import _build_fam_blacklist  # ★ 文件级拆分：结构族黑名单
 from loop_data import _build_panel_fresh, _panel_sha1  # ★ 文件级拆分：面板构造
-import loop_paths as _P  # ★ 文件级拆分：路径常量单一事实源（用 _P.STATE 运行时取，勿值拷贝）
+import loop_paths as _P
+import loop_cache as _C  # ★ 文件级拆分：路径常量单一事实源（用 _P.STATE 运行时取，勿值拷贝）
 from loop_persist import (append_csv_schema_safe, _real_mb,
                          _dump_strip_detail, _dump_pool_obs,
                          _cmp_lib, ex_max_corr, _tag_desc, _gate_of, _pool_best,
@@ -173,7 +173,7 @@ def set_mem_budget(lru_max=400, cache2_max=150, vreuse_cap_mb=800.0,
     """调「**每进程私有缓存**」的上限。
 
     ★ 为什么需要它：并行跑 N 个池时，**面板**可以靠 `--panel_cache=use` 跨进程共享，
-      但 `_LRU` / `cache2` / `VCACHE` 是**每进程私有**的（私有脏写，不能共享）⇒
+      但 `_C._LRU` / `cache2` / `_C.VCACHE` 是**每进程私有**的（私有脏写，不能共享）⇒
       它们才是"并行时的内存地板"。要把总占用压到某个数（如 ≤10 GB），
       就得按 N 把这份预算切小 ✓
     ★ 代价：缓存越小 ⇒ 越多的子树要**现场重算** ⇒ 每代变慢（时间换内存）。
@@ -182,9 +182,9 @@ def set_mem_budget(lru_max=400, cache2_max=150, vreuse_cap_mb=800.0,
       —— 实测（`ai_test/_memprof_1000.py` 外部采样 · 1000 池单代）：
         · `--n=800` 一代里，私有内存 **1 分钟到 4.9 GB、8 分钟到 14.6 GB（工作集 16.6 GB）** ✗
         · 而且是**锯齿式上台阶**（12.5 ↔ 14.8 GB 反复 ✓）⇒ 回不到基线 = **缓存在囤** ✗
-        · 根因：`LRU_MAX = 400`、`CACHE2_MAX = 150` 都是**条数** ✗，而单条的体积随**池宽**变：
+        · 根因：`_C.LRU_MAX = 400`、`_C.CACHE2_MAX = 150` 都是**条数** ✗，而单条的体积随**池宽**变：
           1000 池的 L1 子面板 = **2094 日 × 2818 股**（池并集 ✓ 实测日志 ✓）⇒ 单条 ≈ **47 MB** ✗
-          ⇒ `400 条 × 47 MB ≈ 18.8 GB` ✗✗（引擎日志里 VCACHE 早就按 MB 算了 ✓，
+          ⇒ `400 条 × 47 MB ≈ 18.8 GB` ✗✗（引擎日志里 _C.VCACHE 早就按 MB 算了 ✓，
              只有这两个缓存漏了 ✗）
         · 池越大 ⇒ 单条越大 ⇒ 越容易把机器压到换页（1000 池单代 110~172 分钟 ✗ = 嫌疑根因 ✓）
       ⇒ 修法（**只改"缓存回收"，不动任何数值口径 ✓**）：
@@ -192,55 +192,29 @@ def set_mem_budget(lru_max=400, cache2_max=150, vreuse_cap_mb=800.0,
         ② `--lru_mb / --cache2_mb`：字节预算（条数上限**保留作兜底** ✓）
         ③ `--batch_mb`：L1 批大小**按字节自适应** ✗（固定 40 个时，宽池一批就 ≈1.9 GB ✗）
     """
-    global LRU_MAX, CACHE2_MAX, _VREUSE_CAP_MB, LRU_MB, CACHE2_MB, BATCH_MB
-    LRU_MAX = max(20, int(lru_max))
-    CACHE2_MAX = max(20, int(cache2_max))
-    _VREUSE_CAP_MB = max(0.0, float(vreuse_cap_mb))
-    LRU_MB = max(50.0, float(lru_mb))
-    CACHE2_MB = max(50.0, float(cache2_mb))
-    BATCH_MB = max(100.0, float(batch_mb))
+    _C.LRU_MAX = max(20, int(lru_max))
+    _C.CACHE2_MAX = max(20, int(cache2_max))
+    _C._VREUSE_CAP_MB = max(0.0, float(vreuse_cap_mb))
+    _C.LRU_MB = max(50.0, float(lru_mb))
+    _C.CACHE2_MB = max(50.0, float(cache2_mb))
+    _C.BATCH_MB = max(100.0, float(batch_mb))
     print('[内存预算] 每进程私有缓存: LRU=%d 条 / ≤%.0f MB · cache2=%d 条 / ≤%.0f MB · '
-          'VCACHE≤%.0f MB · L1 单批≤%.0f MB (面板是否共享见 --panel_cache)'
-          % (LRU_MAX, LRU_MB, CACHE2_MAX, CACHE2_MB, _VREUSE_CAP_MB, BATCH_MB), flush=True)
-    return LRU_MAX, CACHE2_MAX, _VREUSE_CAP_MB
+          '_C.VCACHE≤%.0f MB · L1 单批≤%.0f MB (面板是否共享见 --panel_cache)'
+          % (_C.LRU_MAX, _C.LRU_MB, _C.CACHE2_MAX, _C.CACHE2_MB, _C._VREUSE_CAP_MB, _C.BATCH_MB), flush=True)
+    return _C.LRU_MAX, _C.CACHE2_MAX, _C._VREUSE_CAP_MB
 
 
-_BASE = None
-L1_STOCKS = 2000          # L1 粗筛抽样的股票数(越小越快, 但IC估计误差越大)
-L1_ROWS = None
-L1_COLS = None
-_LRU = {}                 # 跨批次复用子树求值结果(种子演化共享大量子树)
-LRU_MAX = 400             # L1 每批结束把 _LRU 裁到该条数上限(防 L1 段 OOM)
-CACHE2_MAX = 150          # 去相关/去重阶段 cache2 的子树缓存上限
-# ★★★★★ 2026-09-21（治本）：**字节预算**（条数上限管不住内存 ✗ —— 单条体积随池宽变：
-#   1000 池子面板 2094×2818 ⇒ 单条 ≈47 MB ⇒ 400 条 ≈18.8 GB ✗；实测私有内存峰值 14.6 GB ✓）
-#   ⇒ 这三条是**主控**（条数上限保留作兜底 ✓），由 `--lru_mb / --cache2_mb / --batch_mb` 调 ✓
-LRU_MB = 1200.0           # ★ 2026-09-21 收紧 2500 → 1200（A/B 实测见下 ✓）
-CACHE2_MB = 800.0         # 去相关/去重阶段 cache2 ≤ 该 MB
-BATCH_MB = 1500.0         # L1 单批候选的**数组总量**上限（批大小按它自适应 ✓）
-                          # (该段每候选只需算1次、无跨批复用, 缓存仅服务邻近候选共享,
-                          #  故宜小; 实测 gen37 该段无界累积导致内存从9G单调涨到20G+)
-# ★跨阶段复用缓存(2026-09-12): L1 已算过的因子值, 供**去相关/去重**直接取用, 免二次 eval。
-#   实测依据: 一代 52min 里 L1 占 44%、去相关+去重占 **43%**(499 个候选各重算约 2.7s),
-#   而 L2 只占 10%(evaluate_real 单次仅 ~7s) -> **重复 eval 才是最大浪费**, 不是 L2。
-#   只存"过 ic/stab 门槛"的候选, 且只存 [::FWD] 调仓日视图(419×2000 float32 ≈ 3.35MB/个);
-#   存的是**符号对齐后**的同一数组 -> 下游 rank_rows 结果逐位不变(行为等价, 非近似)。
-VCACHE = {}
-_VREUSE_MB = [0.0]        # 已占用 MB(list 便于就地累加)
-# ★ 2026-09-21 收紧 2000 → 800（A/B 实测见下 ✓）
-_VREUSE_CAP_MB = 800.0    # 上限; 超了就不再存(未命中者在去相关/去重处回退为现场 eval)
 
 
 def base_fields():
     """返回 {name: (T,S) float32} 基础字段 + 日期/列"""
-    global _BASE
-    if _BASE is not None:
-        return _BASE
+    if _C._BASE is not None:
+        return _C._BASE
     # ★★★ 2026-09-16「面板只读缓存」（`--panel_cache`，**默认 off ⇒ 与改造前逐位不变**）：
     #   面板 4.42 GB 且构造后只读 ⇒ 落成只读 memmap 后多进程共享同一批物理页（spawn 下也能省内存）。
     #   · `use`   = 必须命中；缺失/过期**直接报错**（绝不偷偷重建，更不会拿旧面板算新结果）
     #   · `build` = 现场构造一份并落盘，随后继续用（结果与 off **逐位相同**）
-    #   ⚠ 只有"面板从哪来"变了；`B_sub` / `L1_POOL_MASK` 等派生逻辑**保持逐字不变** ✓
+    #   ⚠ 只有"面板从哪来"变了；`B_sub` / `_C.L1_POOL_MASK` 等派生逻辑**保持逐字不变** ✓
     if PANEL_CACHE == 'off':
         B, dates, cols, close = _build_panel_fresh()
     else:
@@ -257,28 +231,27 @@ def base_fields():
     # ★L1 子面板: 粗筛不需要全样本(瓶颈是内存带宽, 不是计算)。
     #   时间只取 START 之后 + 截面随机抽样 -> 数据量降到 ~1/4, 实测整体提速 3~4 倍。
     #   L1 只是排序用, 抽样误差可接受; L2 精筛仍用全样本。
-    global L1_ROWS, L1_COLS, L1_POOL_MASK
-    L1_ROWS = np.where(dates >= START)[0]
+    _C.L1_ROWS = np.where(dates >= START)[0]
     if _P.MINE_POOL != 'all':
         # ★池内挖掘(§8.19): L1 列 = 池**并集**(不随机抽样 —— 必须保证任一时点的成分都在)。
         #   掩码另按 PIT 生效, 故并集稍大不影响口径。
         import loop_pools as _LP
         uni = _LP.pool_union(_P.MINE_POOL)
-        L1_COLS = np.array([i for i, c in enumerate(cols) if c in uni], dtype=np.int64)
-        if L1_COLS.size == 0:
+        _C.L1_COLS = np.array([i for i, c in enumerate(cols) if c in uni], dtype=np.int64)
+        if _C.L1_COLS.size == 0:
             raise SystemExit(f"[--mine_pool={_P.MINE_POOL}] 池并集与面板列无交集, 检查股票代码格式")
-        L1_POOL_MASK = _LP.pool_mask(_P.MINE_POOL, dates, cols)[np.ix_(L1_ROWS, L1_COLS)]
-        print(f"[--mine_pool={_P.MINE_POOL}] L1 子面板列 = 池并集 {L1_COLS.size} 只; "
-              f"当期池成分中位 {int(np.median(L1_POOL_MASK.sum(1)))} 只 "
+        _C.L1_POOL_MASK = _LP.pool_mask(_P.MINE_POOL, dates, cols)[np.ix_(_C.L1_ROWS, _C.L1_COLS)]
+        print(f"[--mine_pool={_P.MINE_POOL}] L1 子面板列 = 池并集 {_C.L1_COLS.size} 只; "
+              f"当期池成分中位 {int(np.median(_C.L1_POOL_MASK.sum(1)))} 只 "
               f"(面板共 {close.shape[1]} 列)")
     else:
-        nsub = min(close.shape[1], L1_STOCKS)
-        L1_COLS = np.sort(np.random.default_rng(20240917).choice(
+        nsub = min(close.shape[1], _C.L1_STOCKS)
+        _C.L1_COLS = np.sort(np.random.default_rng(20240917).choice(
             close.shape[1], nsub, replace=False))
-        L1_POOL_MASK = None
-    B_sub = {k: v[np.ix_(L1_ROWS, L1_COLS)] for k, v in B.items()}
-    _BASE = dict(B=B, B_sub=B_sub, dates=dates, cols=cols, close=close)
-    return _BASE
+        _C.L1_POOL_MASK = None
+    B_sub = {k: v[np.ix_(_C.L1_ROWS, _C.L1_COLS)] for k, v in B.items()}
+    _C._BASE = dict(B=B, B_sub=B_sub, dates=dates, cols=cols, close=close)
+    return _C._BASE
 
 
 
@@ -657,13 +630,13 @@ def _run_l1(U, base, fwd_ret):
     原段落: L1 批量 IC(★分批处理 + 子面板 + 跨批LRU)
     """
     Bsub = base['B_sub']
-    Usub = U[np.ix_(L1_ROWS, L1_COLS)]
-    if L1_POOL_MASK is not None:
+    Usub = U[np.ix_(_C.L1_ROWS, _C.L1_COLS)]
+    if _C.L1_POOL_MASK is not None:
         # ★池内挖掘(§8.19): L1 的 IC = **池内 IC**。这一步是"三池并行"起作用的核心 ——
         #   目标函数里不再有全A 的小盘/低流动性溢价, 风格暴露因子在 L1 就挣不到分。
-        Usub = Usub & L1_POOL_MASK
-    Rsub = fwd_ret[np.ix_(L1_ROWS, L1_COLS)]
-    print(f"L1 子面板 {len(L1_ROWS)}日 x {len(L1_COLS)}股 "
+        Usub = Usub & _C.L1_POOL_MASK
+    Rsub = fwd_ret[np.ix_(_C.L1_ROWS, _C.L1_COLS)]
+    print(f"L1 子面板 {len(_C.L1_ROWS)}日 x {len(_C.L1_COLS)}股 "
           f"(全量 {U.shape[0]}x{U.shape[1]}) -> 数据量约 1/{U.size/max(Usub.size,1):.0f}")
     return (Bsub, Rsub, Usub)
 
@@ -1163,7 +1136,7 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
         # 用子面板算相关性(快); 已知因子也取对应子面板
         Kr = {}
         for k, v in KNOWN.items():
-            vs = v[np.ix_(L1_ROWS, L1_COLS)]
+            vs = v[np.ix_(_C.L1_ROWS, _C.L1_COLS)]
             Kr[k] = rank_rows(vs[::FWD])
         # ★ 2026-09-14（§1.8）：对照集 = 自己的 bank **+ 外部池库**（`bank_ext`，只读注入）
         #   不注入的话，跑全A 时这一层"看不见池库" ⇒ 重挖。
@@ -1178,7 +1151,7 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
         n_hit = 0
         for _, r in l1.iterrows():
             # ★复用 L1 已算的 [::FWD] 值视图(命中则完全跳过 eval_expr, 结果逐位不变)
-            v0 = VCACHE.get(r['expr']) if _reuse_v else None
+            v0 = _C.VCACHE.get(r['expr']) if _reuse_v else None
             if v0 is not None:
                 n_hit += 1
             else:
@@ -1198,12 +1171,12 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
                 mx = max(mx, c if np.isfinite(c) else 0.0)
             if mx <= args.decorr:
                 keep_rows.append(r)
-            trim_cache(cache2, CACHE2_MAX)             # 去相关缓存容量控制(防OOM)
-            trim_cache_mb(cache2, CACHE2_MB)           # ★ 治本: 字节上限 ✓
+            trim_cache(cache2, _C.CACHE2_MAX)             # 去相关缓存容量控制(防OOM)
+            trim_cache_mb(cache2, _C.CACHE2_MB)           # ★ 治本: 字节上限 ✓
         print(f"去相关(|corr|<={args.decorr} vs {len(Kr)}个已知因子) 后剩 "
               f"{len(keep_rows)} 个 (原 {len(l1)})")
         print(f"  [计时] 去相关 用时 {time.time() - _t_dec:.0f}s "
-              f"(复用 L1 值 {n_hit}/{len(l1)} 个, 缓存 {_VREUSE_MB[0]:.0f}MB)", flush=True)
+              f"(复用 L1 值 {n_hit}/{len(l1)} 个, 缓存 {_C._VREUSE_MB[0]:.0f}MB)", flush=True)
         if keep_rows:
             l1 = pd.DataFrame(keep_rows)
     # 关键: 不能只按 |IC_IR| 排! 低稳定性(高换手)因子费后必亏
@@ -1231,7 +1204,7 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
     cache2 = {}
     n_hit2 = 0
     for _, r in l1.head(TOPN).iterrows():
-        vc = VCACHE.get(r['expr']) if _reuse_v else None
+        vc = _C.VCACHE.get(r['expr']) if _reuse_v else None
         if vc is not None:                              # 复用 L1 值, 免二次 eval
             v = rank_rows(vc)[samp]
             n_hit2 += 1
@@ -1253,14 +1226,14 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
             dedup.append(r)
         else:
             n_dup += 1
-        trim_cache(cache2, CACHE2_MAX)                 # 去重缓存容量控制(防OOM)
-        trim_cache_mb(cache2, CACHE2_MB)               # ★ 治本: 字节上限 ✓
+        trim_cache(cache2, _C.CACHE2_MAX)                 # 去重缓存容量控制(防OOM)
+        trim_cache_mb(cache2, _C.CACHE2_MB)               # ★ 治本: 字节上限 ✓
     print(f"\nL1 通过 {len(l1)} 个, 取Top{TOPN}近重复去重(|corr|>{args.dedup_corr:g})"
           f"拦 {n_dup} -> 剩 {len(dedup)} 个")
     print(f"  [计时] 近重复去重 用时 {time.time() - _t_dd:.0f}s "
           f"(复用 L1 值 {n_hit2}/{TOPN} 个)", flush=True)
-    VCACHE.clear()                                      # 去相关/去重用完即释放(防与 L2 叠加占内存)
-    _VREUSE_MB[0] = 0.0
+    _C.VCACHE.clear()                                      # 去相关/去重用完即释放(防与 L2 叠加占内存)
+    _C._VREUSE_MB[0] = 0.0
     l1 = pd.DataFrame(dedup) if dedup else l1.head(TOPN)
     print(l1[['expr', 'ic', 'ic_ir', 'stab']].head(15).round(4).to_string(index=False))
     return l1
@@ -1274,16 +1247,16 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
     BATCH = args.batch
     # ★★★★★ 2026-09-21（治本）：批次大小**按字节自适应** ✗ —— 固定 40 个候选时，
     #   单条面板的体积随**池宽**变化（1000 池子面板 2094×2818 ≈ 47 MB ⇒ 一批 ≈ 1.9 GB ✗）
-    #   ⇒ 取"子面板里任一字段"的真实 dtype/形状算单条 MB，再把批大小压到 `BATCH_MB` 以内 ✓
+    #   ⇒ 取"子面板里任一字段"的真实 dtype/形状算单条 MB，再把批大小压到 `_C.BATCH_MB` 以内 ✓
     try:
         _k0 = next(iter(Bsub))
         _a0 = np.asarray(Bsub[_k0])
         _per_mb = float(_a0.size) * float(_a0.dtype.itemsize) / 1048576.0
         if _per_mb > 0:
-            _cap = int(max(4, BATCH_MB / _per_mb))
+            _cap = int(max(4, _C.BATCH_MB / _per_mb))
             if BATCH > _cap:
                 print('  [内存预算] L1 批 %d → %d（单条 %.1f MB × 批 ≤ %.0f MB ✓ 治本: 宽池不再一批吃 2 GB ✗）'
-                      % (BATCH, _cap, _per_mb, BATCH_MB), flush=True)
+                      % (BATCH, _cap, _per_mb, _C.BATCH_MB), flush=True)
                 BATCH = _cap
     except Exception as _e_b:                                # noqa: BLE001
         print('  [内存预算] 批次自适应跳过（%s: %s）⇒ 沿用 %d'
@@ -1297,7 +1270,7 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
         vals, kidx = [], []
         for i, nd in enumerate(chunk):
             try:
-                v = eval_expr(nd, Bsub, _LRU)         # 子面板 + 全局LRU(跨批复用)
+                v = eval_expr(nd, Bsub, _C._LRU)         # 子面板 + 全局LRU(跨批复用)
             except Exception:
                 flib_mark(fail_lib, nd, args.gen, False, 'eval')  # 求值异常
                 continue
@@ -1315,12 +1288,12 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
             vals.append(v)
             kidx.append(b0 + i)
             # ★★★★★ 2026-09-21（治本·第二步）：**批内也裁** ✗
-            #   原来只在"**每批结束**"裁一次（下面 `trim_cache(_LRU, LRU_MAX)` ✓）
-            #   ⇒ 一批之内 `_LRU` 能一路涨到第一个峰值（实测第一批就顶到 8.9 GB ✗，
+            #   原来只在"**每批结束**"裁一次（下面 `trim_cache(_C._LRU, _C.LRU_MAX)` ✓）
+            #   ⇒ 一批之内 `_C._LRU` 能一路涨到第一个峰值（实测第一批就顶到 8.9 GB ✗，
             #     改之前更是 12.5~14.8 GB 反复 ✗）⇒ 每 8 个候选就裁一次 ✓
             #   代价：`trim_cache_mb` 只是把 `nbytes` 加起来（O(条数) ✓）⇒ 可忽略 ✓
             if i and (i % 8) == 0:
-                trim_cache_mb(_LRU, LRU_MB)
+                trim_cache_mb(_C._LRU, _C.LRU_MB)
         if not vals:
             gc.collect()
             continue
@@ -1391,20 +1364,20 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
         #  成本仅一次 memcpy(~3.35MB/个); 省下的是一次完整 eval_expr + rank_rows(~2.5s/个)。
         if _reuse_v and vals:
             for _d_, _v in zip(stats[-len(vals):], vals):
-                if _VREUSE_MB[0] >= _VREUSE_CAP_MB:
+                if _C._VREUSE_MB[0] >= _C._VREUSE_CAP_MB:
                     break
                 if _d_['ic'] > args.min_ic and _d_['stab'] > args.min_stab:
                     _arr = np.ascontiguousarray(_v[::FWD])
-                    VCACHE[_d_['expr']] = _arr
-                    _VREUSE_MB[0] += _arr.nbytes / 1e6
+                    _C.VCACHE[_d_['expr']] = _arr
+                    _C._VREUSE_MB[0] += _arr.nbytes / 1e6
         n_eval += len(vals)
         del vals, IC
         gc.collect()
-        trim_cache(_LRU, LRU_MAX)                      # LRU 容量控制(防OOM)
-        trim_cache_mb(_LRU, LRU_MB)                    # ★ 治本: 字节上限(池越宽单条越大 ✗)
+        trim_cache(_C._LRU, _C.LRU_MAX)                      # LRU 容量控制(防OOM)
+        trim_cache_mb(_C._LRU, _C.LRU_MB)                    # ★ 治本: 字节上限(池越宽单条越大 ✗)
     print(f"L1 求值完成 {n_eval} 个, 用时 {time.time()-t_l1:.0f}s "
           f"({(time.time()-t_l1)/max(n_eval,1):.2f}s/候选)")
-    _LRU.clear()                                       # L1 结束: 释放跨批子树缓存
+    _C._LRU.clear()                                       # L1 结束: 释放跨批子树缓存
     l1 = pd.DataFrame(stats)
     # ---- 风格暴露观测落盘(2026-09-11, --style_obs; 失败只告警不拖垮主流程) ----
     #  ★位置很关键: **紧跟 L1 求值**。引擎在 L1 之后有多处早退(无候选通过 / 形状门槛全灭 /
@@ -1515,8 +1488,8 @@ def _run_l1_phase(ctx, args):
                 print("  [池门槛] [!] 池不可用 -> 本代池门槛失效(放行不误杀)")
                 _pool_gate_on = False
     _reuse_v = bool(getattr(args, 'reuse_v', 1))       # 跨阶段复用 L1 值(默认开, 行为等价)
-    VCACHE.clear()
-    _VREUSE_MB[0] = 0.0
+    _C.VCACHE.clear()
+    _C._VREUSE_MB[0] = 0.0
     # ★need_shape 必须把 --style_obs / --shape_neutral 也算进来(2026-09-11 实测踩坑):
     #  否则单独开 --style_obs(默认 old 排序)时 mono/shape_pos 不计算 -> 观测文件这两列全 NaN,
     #  离线就无法复算 score_new = stab×(0.5+0.5·shape_pos), 整轮观测作废。
@@ -1546,7 +1519,7 @@ def _run_l1_phase(ctx, args):
             if _strip_style and _k in ('lncap', 'lnamt'):
                 STYLE_FULL[_k] = _sf[_k]                             # 全面板(供 L2 剥除)
             if _style_obs or _shape_neutral:
-                FEAT_S[_k] = _sf[_k][np.ix_(L1_ROWS, L1_COLS)][::FWD]    # 原始值(供中性化)
+                FEAT_S[_k] = _sf[_k][np.ix_(_C.L1_ROWS, _C.L1_COLS)][::FWD]    # 原始值(供中性化)
                 if _style_obs:
                     STYLE_S[_k] = rank_rows(FEAT_S[_k])              # 秩(供 style_expo)
         del _sf
@@ -2347,7 +2320,7 @@ if __name__ == '__main__':
                     help='去相关/去重阶段 cache2(条数)上限(默认 150 = 现状)')
     # ★★★★★ 2026-09-21（用户拍板 (A)：治"宽池工作集"）—— A/B 实测后**收紧默认值** ✓
     #   起因：把 1000 池 L1 的工作集逐项量准（`ai_test/_l1_comp.py` ✓）后发现
-    #     **两个缓存（`_LRU` + `VCACHE`）合计 ~4.4 GB = 私有峰值的约一半** ✗
+    #     **两个缓存（`_C._LRU` + `_C.VCACHE`）合计 ~4.4 GB = 私有峰值的约一半** ✗
     #     （全量面板 4.2 GB 是 memmap **共享页** ✓ 不算私有；真副本只有 B_sub ≈0.97 ✓）
     #   A/B（同一驱动命令 + `--engine_arg=` 追加 ✓ 只改这两个预算）：
     #     · 旧 2500 / 2000 ⇒ 私有峰值 **8.72 GB** · 工作集 10.60 · 单代 ≈110~120 分钟
@@ -2355,7 +2328,7 @@ if __name__ == '__main__':
     #                        工作集 9.111（−1.49 / −14%）· 单代 ≈ **94 分钟**（**没变慢** ✓）
     #   ★ 为什么**零风险**：两者都是**纯加速缓存** ⇒ 少存只会**重算**，数值/结果完全不变 ✓
     ap.add_argument('--vreuse_cap_mb', type=float, default=800.0,
-                    help='跨阶段复用缓存 VCACHE 上限 MB(默认 800; 仅 --reuse_v=1 时生效)')
+                    help='跨阶段复用缓存 _C.VCACHE 上限 MB(默认 800; 仅 --reuse_v=1 时生效)')
     # ★★★★★ 2026-09-21（治本）：**字节预算**（条数上限管不住内存 ✗ —— 见 set_mem_budget 注释 ✓）
     # ★ 2026-09-21：默认 2500 → 1200（A/B 实测：私有峰值 −12%、耗时没变差 ✓ 见上条注释）
     ap.add_argument('--lru_mb', type=float, default=1200.0,

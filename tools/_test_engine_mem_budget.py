@@ -38,6 +38,7 @@ def chk(desc, cond, hint=''):
 
 
 src = io.open(ENG, encoding='utf-8').read()
+cache_src = io.open(os.path.join(ROOT, 'engine', 'loop_cache.py'), encoding='utf-8').read()  # 缓存常量已迁 loop_cache
 
 print('【1】`trim_cache_mb()` 真的按字节裁（动态验证）')
 try:
@@ -89,11 +90,11 @@ print('\n【2】三处裁剪点都接上了（少一处就白改 ✗）')
 n_call = len(re.findall(r'^[ \t]+trim_cache_mb\(', src, re.M))
 chk('trim_cache_mb 被**调用** 4 次（_LRU 批末+批内 · cache2 去相关+去重，实 %d）' % n_call, n_call == 4)
 chk('_LRU 在**批内**也有一次（防"一批之内一路上台阶"✗）',
-    re.search(r"if i and \(i % 8\) == 0:\s*\n\s*trim_cache_mb\(_LRU, LRU_MB\)", src) is not None,
+    re.search(r"if i and \(i % 8\) == 0:\s*\n\s*trim_cache_mb\(_C\._LRU, _C\.LRU_MB\)", src) is not None,
     '实测：只靠批末裁剪，第一批就会顶到 8.9 GB ✗')
 chk('_LRU 裁剪处同时调了字节版',
-    re.search(r'trim_cache\(_LRU, LRU_MAX\)[^\n]*\n[^\n]*trim_cache_mb\(_LRU, LRU_MB\)', src) is not None)
-_n2 = len(re.findall(r'trim_cache\(cache2, CACHE2_MAX\)[^\n]*\n[^\n]*trim_cache_mb\(cache2, CACHE2_MB\)', src))
+    re.search(r'trim_cache\(_C\._LRU, _C\.LRU_MAX\)[^\n]*\n[^\n]*trim_cache_mb\(_C\._LRU, _C\.LRU_MB\)', src) is not None)
+_n2 = len(re.findall(r'trim_cache\(cache2, _C\.CACHE2_MAX\)[^\n]*\n[^\n]*trim_cache_mb\(cache2, _C\.CACHE2_MB\)', src))
 chk('两处 cache2 裁剪（去相关 + 去重）都接了字节版（实 %d 处）' % _n2, _n2 == 2,
     '两处 cache2 都要接 ✓')
 
@@ -102,8 +103,8 @@ print('\n【2c】★ 2026-09-21 A/B 后的**新默认值**（防有人改回去 
 # A/B（只改这两个预算）：私有峰值 8.72 → 7.665 GB（−12%）· 单代耗时没变差 ✓
 chk('--lru_mb 默认 = 1200', '--lru_mb\', type=float, default=1200.0' in src)
 chk('--vreuse_cap_mb 默认 = 800', '--vreuse_cap_mb\', type=float, default=800.0' in src)
-chk('模块常量 LRU_MB = 1200.0', 'LRU_MB = 1200.0' in src)
-chk('模块常量 _VREUSE_CAP_MB = 800.0', '_VREUSE_CAP_MB = 800.0' in src)
+chk('模块常量 LRU_MB = 1200.0', 'LRU_MB = 1200.0' in cache_src)
+chk('模块常量 _VREUSE_CAP_MB = 800.0', '_VREUSE_CAP_MB = 800.0' in cache_src)
 
 print('\n【3】启动参数与预算落地')
 for a in ('--lru_mb', '--cache2_mb', '--batch_mb'):
@@ -114,7 +115,7 @@ chk('main 里把三个 MB 参数传进了 set_mem_budget',
     re.search(r'set_mem_budget\(_args\.lru_max, _args\.cache2_max, _args\.vreuse_cap_mb,\s*\n?\s*'
               r'_args\.lru_mb, _args\.cache2_mb, _args\.batch_mb\)', src) is not None)
 chk('全局 LRU_MB / CACHE2_MB / BATCH_MB 有定义', all(
-    re.search(r'^%s\s*=' % k, src, re.M) for k in ('LRU_MB', 'CACHE2_MB', 'BATCH_MB')))
+    re.search(r'^%s\s*=' % k, cache_src, re.M) for k in ('LRU_MB', 'CACHE2_MB', 'BATCH_MB')))
 
 print('\n【4】L1 批大小按字节自适应（宽池不许一批 2 GB ✗）')
 chk('有 BATCH_MB / 单条 MB 的自适应代码',
