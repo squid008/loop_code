@@ -21,6 +21,8 @@ POOL_OBS = os.path.join(DOCS, 'loop_pool_obs.csv')
 JOURNAL = os.path.join(DOCS, 'loop_journal.md')
 LIBRARY = os.path.join(DOCS, 'factor_library.md')
 
+MINE_POOL = 'all'   # 当前挖掘池（set_mine_pool 运行期改）
+
 _PATH_KEYS = ('STATE', 'ARCHIVE', 'STYLE_OBS', 'STRIP_OBS', 'POOL_OBS', 'JOURNAL', 'LIBRARY')
 _ORIG_PATHS = {}
 

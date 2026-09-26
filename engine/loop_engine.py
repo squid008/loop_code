@@ -90,7 +90,6 @@ except Exception:
 #   去找真信号。(QuantaAlpha 正是如此: `market: csi300` + benchmark SH000300, §8.8/§8.19)
 # 实现: 'all' = 现状(不加后缀; 现有 loop_state.pkl / loop_archive.csv 即全A轨迹的既有历史);
 #       '300'/'500' = 全新独立轨迹(文件加 _300/_500 后缀)。可选池见 engine/loop_pools.py 的 POOLS。
-MINE_POOL = 'all'
 L1_POOL_MASK = None       # (len(L1_ROWS), len(L1_COLS)) bool; None = 不加池约束(全A现状)
 
 
@@ -103,15 +102,14 @@ def set_mine_pool(tag):
 
     tag='all' 时**完全不动**(向后兼容)。幂等(可从原始路径重复派生)。返回实际生效的 tag。
     """
-    global MINE_POOL
     if not tag or tag == 'all':
-        MINE_POOL = 'all'
+        _P.MINE_POOL = 'all'
         _P.apply_suffix('')
         return 'all'
     import loop_pools as _LP
     if tag not in _LP.POOLS:
         raise SystemExit(f"[--mine_pool] 未知池 '{tag}'; 可选: all / {sorted(_LP.POOLS)}")
-    MINE_POOL = tag
+    _P.MINE_POOL = tag
     _P.apply_suffix('_' + tag)
     return tag
 
@@ -258,16 +256,16 @@ def base_fields():
     #   L1 只是排序用, 抽样误差可接受; L2 精筛仍用全样本。
     global L1_ROWS, L1_COLS, L1_POOL_MASK
     L1_ROWS = np.where(dates >= START)[0]
-    if MINE_POOL != 'all':
+    if _P.MINE_POOL != 'all':
         # ★池内挖掘(§8.19): L1 列 = 池**并集**(不随机抽样 —— 必须保证任一时点的成分都在)。
         #   掩码另按 PIT 生效, 故并集稍大不影响口径。
         import loop_pools as _LP
-        uni = _LP.pool_union(MINE_POOL)
+        uni = _LP.pool_union(_P.MINE_POOL)
         L1_COLS = np.array([i for i, c in enumerate(cols) if c in uni], dtype=np.int64)
         if L1_COLS.size == 0:
-            raise SystemExit(f"[--mine_pool={MINE_POOL}] 池并集与面板列无交集, 检查股票代码格式")
-        L1_POOL_MASK = _LP.pool_mask(MINE_POOL, dates, cols)[np.ix_(L1_ROWS, L1_COLS)]
-        print(f"[--mine_pool={MINE_POOL}] L1 子面板列 = 池并集 {L1_COLS.size} 只; "
+            raise SystemExit(f"[--mine_pool={_P.MINE_POOL}] 池并集与面板列无交集, 检查股票代码格式")
+        L1_POOL_MASK = _LP.pool_mask(_P.MINE_POOL, dates, cols)[np.ix_(L1_ROWS, L1_COLS)]
+        print(f"[--mine_pool={_P.MINE_POOL}] L1 子面板列 = 池并集 {L1_COLS.size} 只; "
               f"当期池成分中位 {int(np.median(L1_POOL_MASK.sum(1)))} 只 "
               f"(面板共 {close.shape[1]} 列)")
     else:
@@ -765,7 +763,7 @@ def _lib_sync(gen, res, n_total, added_exprs, expr2nd, pool_tags=None, strip_gra
                 % (no, gen, expr, _sg_line2, fam, leaf_s, skel, _tg_line, _sg_line, _hz_line,
                    _src_line, cost_label(r['cost']), met))
             _ev = dict(ts=time.strftime('%Y-%m-%d %H:%M:%S'), tsSource=_src,
-                       source=_src, pool=MINE_POOL, gen=int(gen),
+                       source=_src, pool=_P.MINE_POOL, gen=int(gen),
                        code='F%02d' % no, expr=expr, family=fam, oneLiner=short,
                        ic=(float(r['ic']) if np.isfinite(r['ic']) else None),
                        annEx=(float(r['ann_ex']) if np.isfinite(r['ann_ex']) else None))
