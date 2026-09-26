@@ -124,11 +124,11 @@ try:
     sys.path.insert(0, os.path.join(ROOT, 'engine'))
     import factor_miner as _FM8
     import loop_engine as _LE8
-    _c = _LE8.run.__code__
-    chk('③ 行为：`run` 的**局部名表**里没有 `pass_filter` ✓（有 ⇒ 就是局部名 ⇒ 必然报错 ✗）',
+    _c = _LE8._run_l2_phase.__code__   # ★ L3 拆分后 pass_filter 引用在 _run_l2_phase（L2 循环/副口径）
+    chk('③ 行为：`_run_l2_phase` 的**局部名表**里没有 `pass_filter` ✓（有 ⇒ 就是局部名 ⇒ 必然报错 ✗）',
         'pass_filter' not in _c.co_varnames,
         'co_varnames 含它 = 又出现函数内绑定 ✗')
-    chk('④ 行为：`run` 以**全局名**引用它 ✓（`co_names` 里有 ✓）',
+    chk('④ 行为：`_run_l2_phase` 以**全局名**引用它 ✓（`co_names` 里有 ✓）',
         'pass_filter' in _c.co_names)
     chk('⑤ 它确实解析到 `factor_miner.pass_filter`（同一个函数对象 ✓）',
         getattr(_LE8, 'pass_filter', None) is getattr(_FM8, 'pass_filter', None),

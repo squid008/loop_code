@@ -135,7 +135,9 @@ def t_save_block_static():
     src = open(os.path.join(ENG, 'loop_engine.py'), encoding='utf-8').read()
     m = re.search(r'bank\s*=\s*bank,\s*(?:#[^\n]*\n\s*)*bank_ex\s*=\s*bank_ex,', src)
     chk(m is not None, '保存块形如 `bank=bank, ... bank_ex=bank_ex`')
-    chk('bank_ext=bank_ext' not in src and 'bank=bank + bank_ext' not in src,
+    # ★ L3 拆分后：`bank_ext=bank_ext` 会出现在 _run_prepare 的 return dict（ctx 传递，合法 ✓）
+    #   本断言只钉「保存块（pickle.dump 的 dict 字面量）」不混入 ext。
+    chk(re.search(r'pickle\.dump\(dict\([^)]*bank_ext', src) is None,
         '★ 保存块/`bank` 变量**没有**混入 `bank_ext`')
     chk('bank_ext' in src and 'bank_ex_ext' in src, '注入变量确实存在于源码（功能已实现）')
     # 对照集必须用在两处：记录 max_ex_corr + 入库拦截

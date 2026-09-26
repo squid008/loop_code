@@ -1908,6 +1908,7 @@ def _run_prepare(args):
     # ---- 结构族黑名单(QuantaAlpha 正交思想, gen31): 上代 L1 霸榜模板族 ----
     # 上代同模板族(叶子身份无关指纹)占比 >= FAM_BLOCK_THR -> 本代生成端禁产(硬闸换血);
     # top2 模板文本另注入 A角 LLM 提示词(软约束)。根治"同族霸榜 -> 0 通过"空转。
+    f = None  # ★ 死透传：_build_fam_blacklist 内覆盖 f；避免「等号两边同名（右边先读）」的静态隐患
     block_fams, f, fam_black_txt, nd = _build_fam_blacklist(args, cfg, critic, f, frozen, prev_l1, seeds)
 
     # ---- 失败模式库: 载入后按滚动窗口算出本代应排除的'坏骨架' ----
