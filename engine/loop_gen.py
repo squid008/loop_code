@@ -8,7 +8,7 @@
 """
 import numpy as np
 
-from loop_expr import Node, collect
+from loop_expr import Node, collect, root_fam
 from loop_ops import UNARY, BINARY
 from loop_fields import LEAVES, MF16, BARRA_LEAVES, FA_LEAVES
 
@@ -205,4 +205,60 @@ def perturb(node, rng):
     return node
 
 
+def _build_fam_blacklist(args, cfg, critic, f, frozen, prev_l1, seeds):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
 
+    原段落: 结构族黑名单(QuantaAlpha 正交思想, gen31): 上代 L1 霸榜模板族
+    """
+    # ★★★★ 2026-09-19 修真 BUG（同 v1.21.6 的那一类 ✗ —— 用户报"上证50还是崩了"后实测：
+    #   `pool_50_gen8_err.log` 667B traceback）：
+    #     File loop_engine.py, line 1511, in _build_fam_blacklist
+    #         return (block_fams, f, fam_black_txt, nd)
+    #     UnboundLocalError: cannot access local variable 'nd'
+    #   `nd` **只在"有上一代"分支的循环里被赋值** ✗ ⇒ **首代（prev_l1 空，如 50 池 bank=0）**
+    #   走到 return 时未绑定 ⇒ 引擎起来即崩 ✗（调度器还会"本轮立刻重试 2 次"⇒ 连崩 3 次 ✗）
+    #   ⚠ 同一批：v0.17.0 `41705f4`「P0-2 拆 run()」**加了 return** 才让这些潜伏变量暴露 ✗
+    #   （与 v1.21.6/v1.21.8 那两处**同类**，本次一并发布为 **v1.21.7** ✓）
+    #   ⇒ 默认 `None`：`nd` 在 `run()` 里只是**复用的临时变量**（L2667 被 `_fsa_stats` 覆盖 ✓），
+    #     首代给它 None 与"没有上一代"的语义一致 ✓
+    #   （另核过：循环里的 `f = root_fam(nd)` 覆盖的是**同名临时变量** `f`，`run()` 在 L2710 用
+    #     到 f 之前会重新赋值 ⇒ **无害** ✓ ⇒ 本次**不动它**，避免改变既有行为 ✗）
+    block_fams, fam_black_txt, nd = set(), '', None
+    if prev_l1 is not None and len(prev_l1):
+        fam_cnt = {}
+        for nd in list(prev_l1['node']):
+            f = root_fam(nd)
+            fam_cnt[f] = fam_cnt.get(f, 0) + 1
+        n_pv = len(prev_l1)
+        tops = sorted(fam_cnt.items(), key=lambda x: -x[1])
+        if args.fam_block_thr > 0 and tops and tops[0][1] / n_pv >= args.fam_block_thr:
+            block_fams = {tops[0][0]}
+        fam_black_txt = '；'.join(f'「{f}」({c}/{n_pv}条)' for f, c in tops[:2])
+    if block_fams:
+        print(f"  [族黑名单] 上代 L1 同模板族占比>={args.fam_block_thr:.0%} -> "
+              f"本代生成端禁产该模板族, 强制结构换血")
+    # 五维配比护栏(与 critic.suggest 出口同源): 即使旧state cfg 漂移且本轮无规则触发
+    # (如无上一代), 本代实际生效 mix 也强制回到中金规格内(变异/交叉≥10%、槽位15/20/15)
+    cfg['mix'] = critic.guard_mix(cfg.get('mix'))
+    print(f"  五维配比 mix={[round(x, 3) for x in cfg['mix']]} "
+          f"(变异/交叉自适应≥{critic.MIX_MIN:.0%}, 扰动/引导/随机=15/20/15)")
+    # B角建议落地(命令行显式指定则优先)
+    if args.decorr < 0:
+        args.decorr = cfg.get('decorr', 0.0)
+    if args.fsa_th < 0:
+        args.fsa_th = cfg.get('fsa_th', 0.0)   # 0=关闭FSA冻结
+    args.min_stab = cfg.get('min_stab', args.min_stab)
+    args.bank_skel_max = cfg.get('bank_skel_max', args.bank_skel_max)
+    print(f"  本代参数: min_stab={args.min_stab:.2f}  decorr={args.decorr:.2f}  "
+          f"fsa_th={args.fsa_th:.2f}  bank同骨架上限={args.bank_skel_max}  "
+          f"depth={cfg['depth']}")
+    # ★ 亲本策略必须**可审计**（2026-09-14, §1.3-C）：它改变的是"**从哪些亲本出发**"，
+    #   一旦候选质量变化，没有这行就**无法归因**是策略换了还是别的原因。
+    #   （写进**本代日志** + LLM 上下文；**不改 journal 格式** —— 那会打断下游解析）
+    print(f"  本代亲本策略: parent_sel={getattr(args, 'parent_sel', 'uniform')}"
+          + (f"(top_pct={getattr(args, 'parent_top_pct', 0.30):.2f})"
+             if getattr(args, 'parent_sel', 'uniform') == 'top_percent_plus_random' else '')
+          + f"  种子池={len(seeds)}个(上一代L1头部, 按score降序)")
+    if frozen:
+        print(f"  [FSA] 本代生效冻结骨架 {len(frozen)} 个(生成时禁止复用)")
+    return (block_fams, f, fam_black_txt, nd)

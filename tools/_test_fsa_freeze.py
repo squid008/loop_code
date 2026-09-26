@@ -143,6 +143,7 @@ def t_legacy_state():
 def t_static():
     print('\n[6] 常量 / 落盘 / 口径（静态钉住）')
     src = io.open(os.path.join(ROOT, 'engine', 'loop_engine.py'), encoding='utf-8').read()
+    expr_src = io.open(os.path.join(ROOT, 'engine', 'loop_expr.py'), encoding='utf-8').read()  # _fsa_stats 已迁 loop_expr
     core = io.open(os.path.join(ROOT, 'dashboard', 'api', 'app', 'sources', 'core.py'),
                    encoding='utf-8').read()
     chk('冻结期序列 = 2→4→8 封顶 · 冷却期 = %d 代' % LE.FSA_COOL_GENS,
@@ -152,12 +153,12 @@ def t_static():
     chk('★★ 记账**落盘**（`fsa_frz=fsa_frz,`）且**读得回**（`st.get(\'fsa_frz\')`）—— 缺一则跨代失效 ✗',
         'fsa_frz=fsa_frz,' in src and "st.get('fsa_frz')" in src)
     chk('★★ `frozen` 仍是**骨架字符串列表**（`frozen = sorted(cur)`）⇒ 看板 `frozen_n` 口径不变 ✓',
-        'frozen = sorted(cur)' in src and "len(st.get('frozen') or [])" in core)
+        'frozen = sorted(cur)' in expr_src and "len(st.get('frozen') or [])" in core)
     chk('日志留痕四件套齐全（新冻结次数+代数 / 续期 / 到期解冻 / 遗忘计数）',
-        all(x in src for x in ('次 ⇒ 冻结', '续期骨架', '到期解冻', '遗忘计数')))
+        all(x in expr_src for x in ('次 ⇒ 冻结', '续期骨架', '到期解冻', '遗忘计数')))
     chk('★ 顺序不变量：**先递减/解冻、再判本代是否超阈值**（否则刚好到期那代会被误判成"续期"✗）',
-        src.find('① 先递减 / 到期解冻') > 0
-        and src.find('① 先递减 / 到期解冻') < src.find('② 本代超阈值的骨架'))
+        expr_src.find('① 先递减 / 到期解冻') > 0
+        and expr_src.find('① 先递减 / 到期解冻') < expr_src.find('② 本代超阈值的骨架'))
 
 
 def main():

@@ -166,3 +166,86 @@ def root_fam(node, cut=FAM_CUT, use_sole=True):
             rec(a, d + 1) if isinstance(a, Node) else 'X' for a in nd.args) + ')'
     return rec(node, 0)
 
+
+def _fsa_stats(args, cands, frozen, fsa, l1, nd, r, s, fsa_frz=None):
+    """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
+
+    原段落: FSA 骨架统计(对齐中金: 抽象因子结构/剥离窗口参数)
+
+    ★★★ 2026-09-17 重构为**期数化 + 冷却期**（用户拍板："先按 2→4→8 代封顶 + 日志留痕，时间先暂时不管"）：
+      旧规则（本代超阈值即冻结 / 上代冻结骨架本代不再出现即解冻）⇒ 记忆**只活一代** ✗
+      ⇒ 实测 7/120 个骨架会"隔几代复发"（间隔中位 2、最大 10 代）⇒ 旧规则拦不住 ✗
+      新规则：首次 ⇒ 2 代；冷却期内复发 ⇒ 4 代；再犯 ⇒ 8 代封顶；冻结期内**没出现也保持冻结** ✓
+      记账（次数/剩余代数/冷却计数）落在 `fsa_frz`（state 新键）；`frozen` 仍是**骨架字符串列表**
+      ⇒ 看板 `frozen_n`、生成端 `has_frozen_skel`、入库闸门的口径**全都不变** ✓
+    """
+    fsa['v2'] = True
+    for nd in list(l1['node']) + [c for c in cands[:50]]:
+        for s in subtree_skels(nd):
+            fsa[s] = fsa.get(s, 0) + 1
+    # 冻结判定(滚动口径, 对齐中金"定期扫描>15%即禁复用"): 覆盖率 >= fsa_th 的骨架进入"冻结期" ✓
+    if args.fsa_th <= 0 or not len(l1):
+        return (frozen, nd, r, s)
+    book = fsa_frz if isinstance(fsa_frz, dict) else {}
+    cur = set(frozen)
+    # 兼容老 state（只有 `frozen` 列表、没有记账）：视为"刚冻结、还剩 1 代"——
+    # ⚠ 不臆造它过去的冻结次数（历史无据可查；当第 1 次 ⇒ 下次复发从 4 代起 ✓）
+    for _sk in cur:
+        book.setdefault(_sk, {'cnt': 1, 'left': 1, 'cool': 0})
+    thr = max(2, int(round(len(l1) * args.fsa_th)))
+    cov = {}
+    for _, r in l1.iterrows():
+        for s in subtree_skels(r['node']):
+            cov[s] = cov.get(s, 0) + 1
+    # ---- ① 先递减 / 到期解冻（顺序关键：**先减再判本代是否超阈值**
+    #         ⇒ 刚好到期那代若仍超阈值，就会走"复发翻倍"而不是"续期"✓）----
+    freed, forgot = [], []
+    for _sk, _b in list(book.items()):
+        if _b.get('left', 0) > 0:
+            _b['left'] = _b['left'] - 1
+            if _b['left'] <= 0:
+                cur.discard(_sk)
+                _b['cool'] = 0                       # 冷却期从头计时 ✓
+                freed.append(_sk)
+        else:
+            _b['cool'] = _b.get('cool', 0) + 1
+            if _b.get('cnt') and _b['cool'] >= FSA_COOL_GENS:
+                _b['cnt'] = 0                        # 冷却期满 ⇒ 遗忘（下次从 2 代起 ✓）
+                forgot.append(_sk)
+    # ---- ② 本代超阈值的骨架：新冻结 / 复发翻倍 / 续期 ----
+    over = sorted(s for s, c in cov.items() if c >= thr)
+    new, renew = [], []
+    for _sk in over:
+        _b = book.setdefault(_sk, {'cnt': 0, 'left': 0, 'cool': 0})
+        if _b.get('left', 0) > 0:
+            # 冻结期内又霸榜 ⇒ **续期**（回到本期数，不叠加 ✗）—— 连续霸榜就一直冻着 ✓
+            _b['left'] = max(_b['left'], fsa_period(_b.get('cnt') or 1))
+            renew.append(_sk)
+        else:
+            _b['cnt'] = (_b.get('cnt') or 0) + 1      # 复发 ⇒ 次数 +1 ⇒ 期数翻倍（2→4→8，封顶）✓
+            _b['left'] = fsa_period(_b['cnt'])
+            _b['cool'] = 0
+            cur.add(_sk)
+            new.append(_sk)
+    # 清掉"已遗忘且未冻结"的记账（防字典长草 ✓）
+    for _sk in list(book):
+        _b = book[_sk]
+        if _b.get('left', 0) <= 0 and not _b.get('cnt') and _b.get('cool', 0) >= FSA_COOL_GENS:
+            book.pop(_sk, None)
+    frozen = sorted(cur)
+    if new or renew or freed:
+        # ★ 日志留痕（用户要求）：新冻结写明**第几次 ⇒ 冻几代**；解冻写明期满与冷却规则 ✓
+        print(f"  [FSA] 覆盖>={thr}/{len(l1)}候选({args.fsa_th:.0%}): "
+              f"新冻结{len(new)} 续期{len(renew)} 到期解冻{len(freed)} "
+              f"冻结中{len(frozen)}（期数 {FSA_FREEZE_SEQ[0]}→{'→'.join(map(str, FSA_FREEZE_SEQ[1:]))} 封顶）")
+        for _sk in new[:6]:
+            print(f"     冻结骨架: {_sk}（第 {book.get(_sk, {}).get('cnt', 1)} 次 ⇒ 冻结 "
+                  f"{book.get(_sk, {}).get('left', 0)} 代）")
+        for _sk in renew[:3]:
+            print(f"     续期骨架: {_sk[:70]}（仍超阈值 ⇒ 冻结 {book.get(_sk, {}).get('left', 0)} 代）")
+        for _sk in freed[:4]:
+            print(f"     解冻骨架: {_sk[:70]}（期满 ⇒ 冷却 {FSA_COOL_GENS} 代内再犯就翻倍）")
+        if forgot:
+            print(f"     遗忘计数: {len(forgot)} 个骨架冷冻期结束（下次从 "
+                  f"{FSA_FREEZE_SEQ[0]} 代重新开始）")
+    return (frozen, nd, r, s)
