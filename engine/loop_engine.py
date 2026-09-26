@@ -2562,28 +2562,8 @@ def _run_l1_phase(ctx, args):
     return False
 
 
-def run(args):
-    ctx = _run_prepare(args)
-    (t0, rng, base, B, dates, cols, close, T, S, U, fwd_ret,
-     seeds, fsa, prev_l1, prev_l2, bank, bank_ex, bank_ext, bank_ex_ext, frozen, fsa_frz, fail_lib, cfg, _prev_pool_map, n_tested_prev, critic, diag, r, reasons, block_fams, f, fam_black_txt, nd, bad, cfg_r, loop_llm) = (
-        ctx['t0'], ctx['rng'], ctx['base'], ctx['B'], ctx['dates'], ctx['cols'], ctx['close'], ctx['T'], ctx['S'], ctx['U'], ctx['fwd_ret'],
-        ctx['seeds'], ctx['fsa'], ctx['prev_l1'], ctx['prev_l2'], ctx['bank'], ctx['bank_ex'], ctx['bank_ext'], ctx['bank_ex_ext'], ctx['frozen'], ctx['fsa_frz'], ctx['fail_lib'], ctx['cfg'], ctx['_prev_pool_map'], ctx['n_tested_prev'], ctx['critic'], ctx['diag'], ctx['r'], ctx['reasons'], ctx['block_fams'], ctx['f'], ctx['fam_black_txt'], ctx['nd'], ctx['bad'], ctx['cfg_r'], ctx['loop_llm'])
-
-    if _run_gen(ctx, args):
-        return
-    cands = ctx['cands']
-    llm_on, llm_pool, llm_hyp = ctx['llm_on'], ctx['llm_pool'], ctx['llm_hyp']
-    n_llm_call, n_llm_parse, n_llm_hit = ctx['n_llm_call'], ctx['n_llm_parse'], ctx['n_llm_hit']
-
-    # ---- L1 批量 IC(★分批处理 + 子面板 + 跨批LRU) ----
-    if _run_l1_phase(ctx, args):
-        return
-    Bsub, Rsub, Usub = ctx['Bsub'], ctx['Rsub'], ctx['Usub']
-    STYLE_FULL = ctx['STYLE_FULL']
-    l1 = ctx['l1']
-    obs_df = ctx['obs_df']
-    fam_blocked = ctx['fam_blocked']
-    jury_lines, n_jury_kill, n_jury_rev = ctx['jury_lines'], ctx['n_jury_kill'], ctx['n_jury_rev']
+def _run_l2_phase(ctx, args):
+    """L2 费后精筛 + 剥风格/池指标/收益流去重 + 落盘 -> 写回 ctx"""
     _min_pool_calmar = ctx['_min_pool_calmar']
     _min_sharpe = ctx['_min_sharpe']
     _pool_gate_mode = ctx['_pool_gate_mode']
@@ -2591,17 +2571,24 @@ def run(args):
     _pool_gate_or_all = ctx['_pool_gate_or_all']
     _pool_obs = ctx['_pool_obs']
     _pools = ctx['_pools']
+    cols = ctx['cols']
+    dates = ctx['dates']
+    l1 = ctx['l1']
+    B = ctx['B']
+    close = ctx['close']
+    STYLE_FULL = ctx['STYLE_FULL']
+    _strip_style = ctx['_strip_style']
+    fail_lib = ctx['fail_lib']
+    bank_ex = ctx['bank_ex']
+    bank_ex_ext = ctx['bank_ex_ext']
     _dup_ex_corr = ctx['_dup_ex_corr']
+    nd = ctx['nd']
     _ex_by_expr = ctx['_ex_by_expr']
-    _n_dup_ex = ctx['_n_dup_ex']
     _tag_by_expr = ctx['_tag_by_expr']
     _strip_by_expr = ctx['_strip_by_expr']
     _strip2_by_expr = ctx['_strip2_by_expr']
     _hzn2_by_expr = ctx['_hzn2_by_expr']
-    _strip_style = ctx['_strip_style']
-    frozen, nd, r, s = ctx['frozen'], ctx['nd'], ctx['r'], ctx['s']
 
-    # ---- L2 费后精筛 ----
     POOL_M, _lp, _t_l2, top = _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool_gate_or_all, _pool_obs, _pools, args, cols, dates, l1)
     # ---- 市值面板(2026-09-13, roadmap §8.28): 供"**市值加权基准**"口径 ----
     #  为什么: 组合腿是 Top10% **等权**; 基准腿现状是"池内**等权**" ⇒ 两腿同为等权 ⇒ 规模中性
@@ -2975,6 +2962,77 @@ def run(args):
     #  `pool_tag`(300好用/300+500好用/全都好用/只有全A好用) 由**离线**派生(阈值可改后重算)。
     nd, res = _dump_pool_obs(POOL_M, _pools, args, fail_lib, nd, pool_rows, rows, top)
 
+
+    ctx['POOL_M'] = POOL_M
+    ctx['_lp'] = _lp
+    ctx['_t_l2'] = _t_l2
+    ctx['top'] = top
+    ctx['rows'] = rows
+    ctx['seg_ok_list'] = seg_ok_list
+    ctx['strip_rows'] = strip_rows
+    ctx['pool_rows'] = pool_rows
+    ctx['res'] = res
+    ctx['nd'] = nd
+    ctx['_ex_by_expr'] = _ex_by_expr
+    ctx['_tag_by_expr'] = _tag_by_expr
+    ctx['_strip_by_expr'] = _strip_by_expr
+    ctx['_strip2_by_expr'] = _strip2_by_expr
+    ctx['_hzn2_by_expr'] = _hzn2_by_expr
+
+
+def run(args):
+    ctx = _run_prepare(args)
+    (t0, rng, base, B, dates, cols, close, T, S, U, fwd_ret,
+     seeds, fsa, prev_l1, prev_l2, bank, bank_ex, bank_ext, bank_ex_ext, frozen, fsa_frz, fail_lib, cfg, _prev_pool_map, n_tested_prev, critic, diag, r, reasons, block_fams, f, fam_black_txt, nd, bad, cfg_r, loop_llm) = (
+        ctx['t0'], ctx['rng'], ctx['base'], ctx['B'], ctx['dates'], ctx['cols'], ctx['close'], ctx['T'], ctx['S'], ctx['U'], ctx['fwd_ret'],
+        ctx['seeds'], ctx['fsa'], ctx['prev_l1'], ctx['prev_l2'], ctx['bank'], ctx['bank_ex'], ctx['bank_ext'], ctx['bank_ex_ext'], ctx['frozen'], ctx['fsa_frz'], ctx['fail_lib'], ctx['cfg'], ctx['_prev_pool_map'], ctx['n_tested_prev'], ctx['critic'], ctx['diag'], ctx['r'], ctx['reasons'], ctx['block_fams'], ctx['f'], ctx['fam_black_txt'], ctx['nd'], ctx['bad'], ctx['cfg_r'], ctx['loop_llm'])
+
+    if _run_gen(ctx, args):
+        return
+    cands = ctx['cands']
+    llm_on, llm_pool, llm_hyp = ctx['llm_on'], ctx['llm_pool'], ctx['llm_hyp']
+    n_llm_call, n_llm_parse, n_llm_hit = ctx['n_llm_call'], ctx['n_llm_parse'], ctx['n_llm_hit']
+
+    # ---- L1 批量 IC(★分批处理 + 子面板 + 跨批LRU) ----
+    if _run_l1_phase(ctx, args):
+        return
+    Bsub, Rsub, Usub = ctx['Bsub'], ctx['Rsub'], ctx['Usub']
+    STYLE_FULL = ctx['STYLE_FULL']
+    l1 = ctx['l1']
+    obs_df = ctx['obs_df']
+    fam_blocked = ctx['fam_blocked']
+    jury_lines, n_jury_kill, n_jury_rev = ctx['jury_lines'], ctx['n_jury_kill'], ctx['n_jury_rev']
+    _min_pool_calmar = ctx['_min_pool_calmar']
+    _min_sharpe = ctx['_min_sharpe']
+    _pool_gate_mode = ctx['_pool_gate_mode']
+    _pool_gate_on = ctx['_pool_gate_on']
+    _pool_gate_or_all = ctx['_pool_gate_or_all']
+    _pool_obs = ctx['_pool_obs']
+    _pools = ctx['_pools']
+    _dup_ex_corr = ctx['_dup_ex_corr']
+    _ex_by_expr = ctx['_ex_by_expr']
+    _n_dup_ex = ctx['_n_dup_ex']
+    _tag_by_expr = ctx['_tag_by_expr']
+    _strip_by_expr = ctx['_strip_by_expr']
+    _strip2_by_expr = ctx['_strip2_by_expr']
+    _hzn2_by_expr = ctx['_hzn2_by_expr']
+    _strip_style = ctx['_strip_style']
+    frozen, nd, r, s = ctx['frozen'], ctx['nd'], ctx['r'], ctx['s']
+
+    # ---- L2 费后精筛 ----
+    _run_l2_phase(ctx, args)
+    res = ctx['res']
+    nd = ctx['nd']
+    pool_rows = ctx['pool_rows']
+    top = ctx['top']
+    seg_ok_list = ctx['seg_ok_list']
+    _ex_by_expr = ctx['_ex_by_expr']
+    _n_dup_ex = ctx['_n_dup_ex']
+    _tag_by_expr = ctx['_tag_by_expr']
+    _strip_by_expr = ctx['_strip_by_expr']
+    _strip2_by_expr = ctx['_strip2_by_expr']
+    _hzn2_by_expr = ctx['_hzn2_by_expr']
+
     # ---- B角: 诊断本代 + 给出下一代策略 + 写日志 ----
     critic, diag, res_c = _critic_diagnose(args, fam_blocked, l1, pool_rows, res, seg_ok_list)
     # ---- 风格暴露诊断聚合(2026-09-11, --style_obs): 落盘已在 L1 求值后完成, 此处只做分组聚合 ----
@@ -2990,6 +3048,7 @@ def run(args):
 
     # ---- 保存状态 ----
     k = None  # ★ 死透传（_save_state 不读 k）；生成循环 `k=str(node)` 的兜底赋值已随 _run_gen 移走
+    v = None  # ★ 死透传（_save_state 不读 v）；L2 循环 `v=eval_expr` 的兜底赋值已随 _run_l2_phase 移走
     _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v, fsa_frz,
                 _strip2_by_expr, _hzn2_by_expr)
 
