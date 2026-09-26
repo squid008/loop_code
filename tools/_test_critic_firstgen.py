@@ -93,7 +93,7 @@ chk('首代返回 (block_fams=空集, panel 原样返回, 文本空, nd=None)',
 
 print()
 print('[3] 静态守门：初始化必须写在 `if prev_l1 is not None` **之前**')
-src = io.open(os.path.join(ROOT, 'engine', 'loop_engine.py'), encoding='utf-8').read()
+src = io.open(os.path.join(ROOT, 'engine', 'loop_eval.py'), encoding='utf-8').read()  # _critic_review_prev 已迁 loop_eval
 i = src.index('def _critic_review_prev(')
 j = src.index('\ndef ', i + 1)
 seg = src[i:j]

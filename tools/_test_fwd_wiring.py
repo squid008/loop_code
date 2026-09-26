@@ -98,10 +98,11 @@ except Exception as e:                                           # noqa: BLE001
     chk('能做 ast 结构检查', False, '%s: %s' % (type(e).__name__, str(e)[:90]))
 
 print('\n【3】`factor_stability` 的 def 时固化陷阱')
+_eval_src = io.open(os.path.join(ROOT, 'engine', 'loop_eval.py'), encoding='utf-8').read()  # factor_stability 已迁 loop_eval
 chk('签名里 `fwd=None`（不是 `fwd=FWD` ✗）',
-    re.search(r'def factor_stability\(V, dates=None, start=START, fwd=None\)', src) is not None)
-chk('函数内取**当前**全局（`fwd = FWD if fwd is None else fwd` ✓）',
-    'fwd = FWD if fwd is None else fwd' in src)
+    re.search(r'def factor_stability\(V, dates=None, start=START, fwd=None\)', _eval_src) is not None)
+chk('函数内取**当前**全局（`fwd = _FM.FWD if fwd is None else fwd` ✓）',
+    'fwd = _FM.FWD if fwd is None else fwd' in _eval_src)
 
 print('\n【4】动态数值验证（切片真的跟随运行期全局 ✓）')
 try:
