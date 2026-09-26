@@ -20,6 +20,7 @@ STRIP_OBS = os.path.join(DOCS, 'loop_strip_style.csv')
 POOL_OBS = os.path.join(DOCS, 'loop_pool_obs.csv')
 JOURNAL = os.path.join(DOCS, 'loop_journal.md')
 LIBRARY = os.path.join(DOCS, 'factor_library.md')
+LIB_ENTRIES = os.path.join(DOCS, 'library_entries.jsonl')
 
 MINE_POOL = 'all'   # 当前挖掘池（set_mine_pool 运行期改）
 

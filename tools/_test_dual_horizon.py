@@ -30,6 +30,8 @@ def chk(desc, cond, hint=''):
 
 
 src = io.open(ENG, encoding='utf-8').read()
+persist_src = io.open(os.path.join(ROOT, 'engine', 'loop_persist.py'),
+                      encoding='utf-8').read()  # _save_state 已迁 loop_persist
 
 print('【1】命令行入口（默认关 ⇒ 行为不变 ✓）')
 chk('有 `--dual_fwd`（默认 0 = 关 ✓）',
@@ -79,15 +81,15 @@ chk('★ archive 副口径列是**条件写入**（`if args.dual_fwd else {}` �
 
 print('\n【6】★ 文档按口径分组落（`_save_state` 收下两个字典 ✓ 否则延迟 NameError ✗）')
 chk('`_save_state` 签名新增 `_strip2_by_expr=None, _hzn2_by_expr=None` ✓',
-    re.search(r'_strip2_by_expr=None, _hzn2_by_expr=None\):', src) is not None)
+    re.search(r'_strip2_by_expr=None, _hzn2_by_expr=None\):', persist_src) is not None)
 chk('调用点**真的传了**这两个字典 ✓',
     re.search(r'_strip2_by_expr, _hzn2_by_expr\)', src) is not None)
-_m2 = re.search(r'strip_grades=_strip2_by_expr,[\s\S]{0,160}?horizon=int\(args\.dual_fwd\)\)', src)
+_m2 = re.search(r'strip_grades=_strip2_by_expr,[\s\S]{0,160}?horizon=int\(args\.dual_fwd\)\)', persist_src)
 chk('★ 副口径组用 `horizon=int(args.dual_fwd)` 落文档 ✓（且与 `_strip2_by_expr` 同一次调用 ✓）',
     _m2 is not None,
     '两处必须同一次 `_lib_sync` 调用 ⇒ 否则文档里写的是**另一个口径**的剥风格数字 ✗')
 chk('主口径组仍**不带** horizon（默认 5 日 ⇒ 历史写法不变 ✓）',
-    re.search(r'pool_tags=_tag_by_expr, strip_grades=_strip_by_expr\)', src) is not None)
+    re.search(r'pool_tags=_tag_by_expr, strip_grades=_strip_by_expr\)', persist_src) is not None)
 
 print('\n【8】★★ 2026-09-22 修：`pass_filter` 不得有**函数内绑定**（病根 ✗ —— 出过真 bug ✓）')
 #   实录（2026-09-22 14:25 用户那次跑，两池都命中 ✓）：

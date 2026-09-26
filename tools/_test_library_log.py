@@ -103,7 +103,7 @@ def main():
         '否则一次重跑就会把真时间抹掉 ✗')
     chk("派生行（backfill）**每次重算**（首版把 60 条算成同一时间，必须能自我纠正 ✓）",
         'have = keep' in src and 'md_mtime' in src and 'is_last_batch' in src)
-    src_eng = io.open(os.path.join(ROOT, 'engine', 'loop_engine.py'), encoding='utf-8').read()
+    src_eng = io.open(os.path.join(ROOT, 'engine', 'loop_persist.py'), encoding='utf-8').read()  # append_library_entries 已迁 loop_persist
     chk('★ 引擎入库时**真的**写了这条日志（`append_library_entries` 在 `_lib_sync` 里被调用 ✓）',
         'def append_library_entries(' in src_eng
         and re.search(r'append_library_entries\(evs\)', src_eng) is not None)

@@ -26,7 +26,7 @@ import sys
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BF = io.open(os.path.join(ROOT, 'tools', 'build_facs.py'), encoding='utf-8').read()
-ENG = io.open(os.path.join(ROOT, 'engine', 'loop_engine.py'), encoding='utf-8').read()
+ENG = io.open(os.path.join(ROOT, 'engine', 'loop_persist.py'), encoding='utf-8').read()  # 入库日志已迁 loop_persist
 J = os.path.join(ROOT, 'docs', 'library_entries.jsonl')
 
 FAIL = []

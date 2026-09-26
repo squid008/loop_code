@@ -134,8 +134,8 @@ def main():
         t = io.open(p, encoding='utf-8', errors='replace').read()
         chk('**`sign`**' in t, 'crosspool 视图的**表头含 `sign` 列**')
         chk(t.count('未记录') >= 0 and '不臆造' in t, 'crosspool 说明里声明「缺失不臆造」')
-    src_le = io.open(os.path.join(ROOT, 'engine', 'loop_engine.py'),
-                     encoding='utf-8').read()
+    src_le = io.open(os.path.join(ROOT, 'engine', 'loop_persist.py'),
+                     encoding='utf-8').read()  # _lib_sync 已迁 loop_persist
     chk('符号 `sign`' in src_le or '符号 \\`sign\\`' in src_le,
         '★ `loop_engine._lib_sync` 会给**新入库**因子写 `sign` 行（+ 不改表格列）')
 
