@@ -15,6 +15,94 @@
 
 ---
 
+## [1.23.0] — 2026-09-26
+
+> 主题：**易维护性整治上线（L1 死码清理 → L2 大函数拆分 → L3 上帝模块拆分）**
+> —— **纯结构改动，引擎行为逐字不变**（每步都用「同 seed 复跑 + `state` 逐字段对照」守住）
+
+### 背景
+
+2026-09-25 全项目体检结论：**「纪律/测试 A 级、结构 C 级的高质量单体」** —— 八维评分综合 **≈6.4/10**，
+短板全在**结构**（单点巨人 `loop_engine.py` 3917 行 · `run()` 单个函数 1079 行 · 加 1 个算子要同步 10 处）。
+本次按 `docs/maintainability.md` 的 **R1~R8** 规则分三轮整治（**未验收不进下一步**）。
+
+### L1 死代码清理（净删约 856 行）
+
+- `factor_miner.py` 删 6 个零引用旧实现（`ts_decay` / `evaluate_dual` / `fmt_dual` /
+  `run_round_real` / `load_lib` / `save_lib`）
+- `loop_engine.py` 删 6 个死 pandas 老算子（`ts_std` / `ts_sum` / `ts_rank` / `ts_corr` / `ts_max` / `ts_min`，−28 行）
+  ★ 死/活判定以 `ops_registry.py` 为**唯一事实源**（`ts_delay`/`ts_delta` 绑 `'le'` ⇒ 活；`ts_mean` 被去相关闸门直接调 ⇒ 活）
+- 删 `engine/ml_common.py`（共享数据层，live 代码无人 import）+ 5 个归档研究脚本
+  ★ **教训**：删任何"疑似死码"前，`grep` 要**连 `history/` 归档一起搜**（`_audit_deadcode` 只扫 `engine/tools/standard`）
+
+### L2 次级大函数拆分（行为不变）
+
+| 函数 | 前 | 后 | 做法 |
+|---|---|---|---|
+| `run_tracks.main` | 433 | **76** | 抽 `_parse_args`(191) + `_rotate_schedule` / `_finalize_schedule` |
+| `factor_curves.main` | 370 | **42** | 抽 7 个纯函数 + 模块级 `_path` |
+| `combo_constrain.run` | 369 | **10** | 抽 `_parse_args`/`_load_and_prep`/`_simulate`/`_report` |
+| `combo_build.main` | 304 | **40** | 抽 7 个纯函数（顺带删死 import `datetime`）|
+| `parallel_runner.run` | 390 | **344** | 抽 `_setup_parallel`/`_cleanup_parallel`（调度状态机保留）|
+| `loop_critic.suggest` | 308 | **207** | 抽 `_init_sug`/`_apply_rules`/`_finalize_sug`（闭包网 ctx 化留第二步）|
+
+### L3 上帝模块拆分（★ 本次大头）
+
+- **Step 1**：`Node` + `collect` → `engine/loop_expr.py`（顺带根治「一份代码里并存两个 `Node` 类」，82 个 `import loop_engine as LE` 全透明）
+- **Step 2**：拆段落模块 —— `loop_dims`（跨量纲审查）· `loop_faillib`（失败模式库）·
+  `loop_ops`（算子表接线）· `loop_gen`（亲本选择/变异/交叉）· `loop_llm_guide`（LLM 引导解析）+ 骨架/结构族并入 `loop_expr`
+- **Step 3**：`run()` **ctx 化**拆 5 个子步骤（`_run_prepare` / `_run_gen` / `_run_l1_phase` / `_run_l2_phase` / `_run_finalize`）
+  ⇒ **`run()` 1079 → 10 行**纯编排
+- **Step 4**：文件级拆分 ⇒ `loop_paths`（路径常量 + `MINE_POOL`）· `loop_cache`（缓存 + L1 状态）·
+  `loop_data`（面板构造）· `loop_persist`（落盘 + 库文档同步）· `loop_eval`（评估/审查/生成辅助）·
+  `loop_stage`（9 个阶段函数）⇒ **`loop_engine.py` 3917 → 619 行**（只剩 `run()` 8 行编排 + import + argparse + main）
+
+**成果**：**`>1500 行巨型文件 1 → 0 个`** · **`>300 行函数 6 → 2 个`**；
+引擎拆成 **12 个单一事实源模块**，依赖**严格单向（无环）**：
+`loop_engine` → `loop_stage` →（`loop_eval`/`loop_persist`/`loop_data`/`loop_cache`/`loop_paths`/`loop_gen`/`loop_dims`/`loop_faillib`/`loop_llm_guide`）→ `loop_expr`/`loop_ops`。
+
+### 验证（★ 每步都做，不是最后补的）
+
+- 每步 `py_compile` + **同 `seed=777` 复跑 + `state` 逐字段对照**
+  （`bank` / `seeds` / `cfg` / `fail_lib` / `fsa` / `last_l1` / `last_l2` 全 OK；
+  ★ 对照方法：`Node` 用 `str(node)` **值比对** —— `==` 是身份比较会**假阳性**）
+- 全量回归 **51/51**（含端到端真跑）；`_audit_deadcode` 的「彻底无引用」除动态注册例外已清零
+
+### 顺带修的既有隐患（只有完整跑 `run()` 才暴露，`--gen_only` 冒烟覆盖不到）
+
+- `loop_llm` 未绑定（`--llm_guide=off` 时崩）· `_agg_style_diag` 死透传 `_k` 未绑定
+- 4 个死透传兜底（`k` / `v` / `_v` / `f`）—— ctx 化后它们的兜底赋值点移走了，显式给 `None`
+- **3 个「值拷贝陷阱」全部规避**：`_P.STATE` / `_P.MINE_POOL` / `_C.VCACHE` / `_FM.FWD` 一律
+  **模块引用运行时取**（`import X as _P` + `_P.X`），**不再 `from X import CONST`**
+  （同 `FWD` / `LLM_MAX_SIZE` 踩过的坑：`from` 是 import 时值拷贝，运行期改不到）
+
+### 重打分（八维 · 2026-09-26 发版时重评；口径 = 八项**简单平均**，与 09-15 基线同口径）
+
+| 维度 | 09-15 | **09-26** | 依据 |
+|---|---|---|---|
+| 功能性 | 8 | **8** | 行为逐字不变，功能未增减 |
+| 可测试性 | 8 | **9** | 51 条守门 + 每步 seed 对照法 + 模块可独立 `py_compile`/单测 |
+| 工程纪律 | 9 | **9** | 一功能一提交 + 编码自检（0 U+FFFD）+ 台账 |
+| 性能 | 6 | **6** | 未做性能优化（重构要求行为不变）|
+| 可读性 | 6 | **8** | God function 消失、`run()` 8 行、模块单一职责；⚠ 扣分项见下 |
+| 可移植性 | 5 | **7** | 路径全 `__file__` 派生 + `loop_paths` 单一来源 |
+| 文档 | 5 | **6** | 规则 + 台账 + README 同步；`change_log` 偏流水 |
+| 可维护性 | 4 | **8** | 3917→619 行 · 12 模块 · 依赖单向 · R1~R8 落地；⚠ 扣分项见下 |
+| **综合** | **6.4** | **7.6** | 结构短板补齐（8 项简单平均：61/8 = 7.625）|
+
+⚠ **诚实的剩余（扣分项，不假装满分）**：`loop_stage.py` 现为 **1332 行** ——
+① **违 R2**（新文件应 ≤800）；② 其中 **6 个函数仍超 R1**（`_run_l2_phase` 248 · `_run_l1_phase` 197 ·
+`_l1_eval` 173 · `_run_prepare` 150 · `_run_gen` 134 · `_l1_filter` 132）。
+它们是「深度耦合的单候选处理 + 20 个口径参数」，抽纯函数会**参数爆炸**
+（试拆 `_l2_judge` 已确认 13 参数 ⇒ **回退**）。
+⇒ **`loop_engine.py` 文件级达标（≤800 ✓），函数级收益递减，本轮在此收口** ✓
+
+### 规则落地
+
+- 新增 `docs/maintainability.md`（**R1~R8 唯一规则源** + 违规台账 + 执行方案 L0~L3）
+
+---
+
 ## [1.22.4] — 2026-09-25
 
 > 主题：**修「本轮启动过、又被停掉」的池会永久排队（且本轮永不收口）**

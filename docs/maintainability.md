@@ -51,16 +51,16 @@
 
 ---
 
-## 二、现状违规台账（2026-09-25 体检实测）
+## 二、现状违规台账（2026-09-25 体检基线 · ★ 最右列 = 2026-09-26 整治结果）
 
-| 违规 | 位置 | 量级 |
-|---|---|---|
-| 上帝模块 | `engine/loop_engine.py` | **3917 行** / 98 顶层定义 / 14 段职责 / `run()` **1079 行** |
-| 次级大函数 | `run_tracks.main` 447 · `parallel_runner.run` 390 · `factor_curves.main` 370 · `combo_constrain.run` 369 · `loop_critic.suggest` 308 · `combo_build.main` 304 | 6 个 >300 行 |
-| 双实现残留 | `loop_engine.py` 里 `ts_std/ts_sum/ts_rank/ts_corr/ts_delay/ts_delta` 的 pandas 老实现（零调用，被 `fastops` 取代） | 待清 |
-| 死代码 | `factor_miner.py`：`ts_decay/evaluate_dual/fmt_dual/run_round_real/load_lib/save_lib`（旧双口径+旧 lib 读写） | 本轮清 |
-| 重复常量 | `strategies/all00/01/03/04.py`：`MIN_LIST_DAYS/USE_PANIC_LEV/PANIC_DD` 各 ×6 | 研究留档，冻结 |
-| 孤儿研究代码 | `strategies/` 14 个 .py / 4022 行，0 生产引用 | 研究留档，不动 |
+| 违规 | 位置（09-25 基线） | 量级 | 09-26 整治结果 |
+|---|---|---|---|
+| 上帝模块 | `loop_engine.py` | **3917 行** / 98 顶层定义 / `run()` **1079 行** | ✅ **已拆**：`loop_engine.py` **619 行**（`run()` 8 行）· 拆出 **12 个**单一职责模块 |
+| 次级大函数 | `run_tracks.main` 447 · `parallel_runner.run` 390 · `factor_curves.main` 370 · `combo_constrain.run` 369 · `loop_critic.suggest` 308 · `combo_build.main` 304 | 6 个 >300 行 | ✅ **已拆**：76 / 344 / 42 / 10 / 207 / 40 ⇒ **`>300 行函数 6 → 2`**（余 `parallel_runner.run` 342 · `horizon_admit_write.main` 303）|
+| 双实现残留 | `loop_engine.py` 里 `ts_std/ts_sum/ts_rank/ts_corr/ts_delay/ts_delta` 的 pandas 老实现（零调用，被 `fastops` 取代） | 待清 | ✅ **已清**（L1-②：删 6 个死 pandas 算子，−28 行）|
+| 死代码 | `factor_miner.py`：`ts_decay/evaluate_dual/fmt_dual/run_round_real/load_lib/save_lib`（旧双口径+旧 lib 读写） | 本轮清 | ✅ **已清**（L1-①）＋ `ml_common.py` + 5 个归档研究脚本 |
+| 重复常量 | `strategies/` 下的 all00/all01/all03/all04 四个策略脚本：`MIN_LIST_DAYS/USE_PANIC_LEV/PANIC_DD` 各 ×6 | 研究留档，冻结 | ⚪ **冻结不动**（用户拍板，不抽）|
+| 孤儿研究代码 | `strategies/` 14 个 .py / 4022 行，0 生产引用 | 研究留档，不动 | ⚪ 研究留档，不动 |
 
 ---
 
@@ -73,11 +73,11 @@
 - [x] `factor_miner.py` 删 6 个零引用旧实现（`ts_decay`/`evaluate_dual`/`fmt_dual`/`run_round_real`/`load_lib`/`save_lib`）—— 全量回归 50/50 ✓
 - [x] **L1-② 完成（用户拍板选 a）**：删 `loop_engine.py` 6 个死 pandas 老算子
   （`ts_std/ts_sum/ts_rank/ts_corr/ts_max/ts_min`，−28 行）+ 3 个归档研究脚本
-  （`history/research/round1.py`/`round2.py`/`bench_ops.py`，均 git 追踪、已坏/失效）
+  （`history/research/` 下的 round1 / round2 / bench_ops 三个脚本，均 git 追踪、已坏/失效；**已删**）
   ★ 死/活判定以 `ops_registry.py` 唯一事实源为准：`ts_delay`/`ts_delta` 绑 `('le', ...)` → 走本文件
   pandas 版（**活，保留**）；`ts_mean` 被去相关闸门 L2819 直接调用（**活，保留**）；其余 6 个绑
   `('fo', ...)` → 走 fastops ⇒ pandas 版**零引用**（`ts_max/min` 只被死 `ts_rank` 调用）⇒ 删 ✓
-- [x] **L1-③ 完成**：删 `engine/ml_common.py`（ML验证 & 双重同伴效应的共享数据层，live 代码无人 import）
+- [x] **L1-③ 完成**：删 `ml_common.py`（原在 `engine/` 下；ML验证 & 双重同伴效应的共享数据层，live 代码无人 import）
   + 2 个归档研究脚本（`peer_effect.py`/`verify_neutral.py`）。★ 背景：广发「双重同伴效应」是 2026-09-08
   Round18 已**验证失败**（申万 31 互斥行业下 peer_avg 无 alpha）并放弃的方向，与 A/B 角挖因子无关 ✓
 - ⏸ **剩余极小死码（价值≈0，暂不删）**：`loop_pools.pool_masks`（1 行 wrapper）/ `loop_watch.now_s`（1 行）/
@@ -150,3 +150,48 @@
 
 - **每次体检**（`python tools/_audit_full.py` + `_audit_codebase.py` + `_audit_deadcode.py`）对照本文台账；
 - 违规项**只减不增**；新增违规 = 当次改动不合格，回退重写。
+
+---
+
+## 五、重打分（八维 · 2026-09-26 发版时重评 · v1.23.0）
+
+> 口径 = 八项**简单平均**（与 2026-09-15 基线同口径，便于逐项对比）。
+> 体检工具：`tools/_audit_codebase.py` / `_audit_deadcode.py` / `_audit_coupling.py`。
+
+| 维度 | 09-15 | **09-26** | 依据（实测） |
+|---|---|---|---|
+| 功能性 | 8 | **8** | 行为**逐字不变**（同 seed=777 复跑 + `state` 逐字段对照全 OK）⇒ 功能未增减 |
+| 可测试性 | 8 | **9** | 守门 **51 条** + 每步「seed 复跑 + 逐字段对照」法 + 模块可独立 `py_compile`/单测 |
+| 工程纪律 | 9 | **9** | 一功能一提交 + 中文提交编码自检（0 U+FFFD）+ 台账同步 |
+| 性能 | 6 | **6** | **未做性能优化**（重构要求行为不变 ⇒ 不敢顺手改数值路径）|
+| 可读性 | 6 | **8** | God function 消失 · `run()` **8 行** · 模块单一职责；⚠ 扣分见下 |
+| 可移植性 | 5 | **7** | 路径全 `__file__` 派生 + `loop_paths` 路径常量单一来源 |
+| 文档 | 5 | **6** | 本文规则 + 台账 + README 版本表同步；`change_log.md`（522 KB）仍偏流水 |
+| 可维护性 | 4 | **8** | **3917 → 619 行** · 12 个单一事实源模块 · 依赖严格单向 · R1~R8 落地 |
+| **综合** | **6.4** | **7.6** | 61 / 8 = 7.625 |
+
+### 硬指标对照（`_audit_codebase.py` 实测）
+
+| 指标 | 09-15 基线 | **09-26** |
+|---|---|---|
+| `>1500 行巨型文件` | **1**（`loop_engine.py` 3917）| **0** ✓ |
+| `>300 行函数` | **6** | **2**（`parallel_runner.run` 342 · `horizon_admit_write.main` 303）|
+| 最长函数 | `run()` **1079** 行 | `parallel_runner.run()` **342** 行 |
+| `engine/` 总行数 | — | **10833**（47 文件；最大 `loop_stage.py` 1332）|
+| `loop_engine.py` | **3917** 行 / 98 顶层定义 | **619** 行 / 1 个函数（`run()` 8 行）|
+
+### ⚠ 诚实的剩余（扣分项 · 不假装满分）
+
+这两条正是上表「可读性 8」「可维护性 8」没给到 9 的原因：
+
+1. **`loop_stage.py` = 1332 行 ⇒ 违 R2**（R2 明写「新文件 ≤ 800 行」；`loop_engine.py` 那条「唯一允许超标的遗产文件」不适用于新文件 ✗）；
+2. **其中 6 个函数仍超 R1**（≤120）：`_run_l2_phase` **248** · `_run_l1_phase` **197** · `_l1_eval` **173** ·
+   `_run_prepare` **150** · `_run_gen` **134** · `_l1_filter` **132**。
+
+**为什么停在这里**：这 6 个都是「**深度耦合的单候选处理 + 20 个口径参数**」——
+抽**纯函数**会参数爆炸（试拆 `_l2_judge` 已确认要 **13 个参数 + 11 个 ctx 解包** ⇒ **已回退并在提交信息里留痕**）；
+抽 **ctx 子函数**则样板爆炸（~22 行解包/回存换 ~130 行正文）。**收益为负**，故本轮**主动收口** ✓
+
+> ⇒ **结论**：**文件级已达标**（`loop_engine.py` ≤800 ✓，巨型文件归零 ✓），
+> **函数级在 `loop_stage.py` 内收益递减**，若要继续硬啃需先想清「用什么替代 20 个口径参数」（如 dataclass/配置对象），
+> 否则只是把「上帝函数」换成「上帝参数表」✗
