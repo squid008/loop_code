@@ -1932,12 +1932,20 @@ def _run_prepare(args):
         loop_llm=loop_llm)
 
 
-def run(args):
-    ctx = _run_prepare(args)
-    (t0, rng, base, B, dates, cols, close, T, S, U, fwd_ret,
-     seeds, fsa, prev_l1, prev_l2, bank, bank_ex, bank_ext, bank_ex_ext, frozen, fsa_frz, fail_lib, cfg, _prev_pool_map, n_tested_prev, critic, diag, r, reasons, block_fams, f, fam_black_txt, nd, bad, cfg_r, loop_llm) = (
-        ctx['t0'], ctx['rng'], ctx['base'], ctx['B'], ctx['dates'], ctx['cols'], ctx['close'], ctx['T'], ctx['S'], ctx['U'], ctx['fwd_ret'],
-        ctx['seeds'], ctx['fsa'], ctx['prev_l1'], ctx['prev_l2'], ctx['bank'], ctx['bank_ex'], ctx['bank_ext'], ctx['bank_ex_ext'], ctx['frozen'], ctx['fsa_frz'], ctx['fail_lib'], ctx['cfg'], ctx['_prev_pool_map'], ctx['n_tested_prev'], ctx['critic'], ctx['diag'], ctx['r'], ctx['reasons'], ctx['block_fams'], ctx['f'], ctx['fam_black_txt'], ctx['nd'], ctx['bad'], ctx['cfg_r'], ctx['loop_llm'])
+def _run_gen(ctx, args):
+    """生成候选（按 B角五维配比 + LLM 引导 + 守卫链）-> 写回 ctx；gen_only 返回 True"""
+    cfg = ctx['cfg']
+    seeds = ctx['seeds']
+    loop_llm = ctx['loop_llm']
+    rng = ctx['rng']
+    cfg_r = ctx['cfg_r']
+    bank = ctx['bank']
+    frozen = ctx['frozen']
+    fail_lib = ctx['fail_lib']
+    fam_black_txt = ctx['fam_black_txt']
+    bad = ctx['bad']
+    block_fams = ctx['block_fams']
+    t0 = ctx['t0']
 
     # ---- 生成候选(按B角给的五维配比) ----
     # ★gen13修复: cut为累积上界, 判重/分支原来写成 cut[i] 相加 -> 数值>1恒真,
@@ -2048,7 +2056,31 @@ def run(args):
               + (f" | hyp: {llm_hyp[:110]}" if llm_hyp else ""))
     if getattr(args, 'gen_only', False):
         print("[gen_only] 仅验证候选生成产量, 停在此处(不跑L1/L2/不写状态)")
+        return True
+
+
+    ctx['cands'] = cands
+    ctx['llm_on'] = llm_on
+    ctx['llm_pool'] = llm_pool
+    ctx['llm_hyp'] = llm_hyp
+    ctx['n_llm_call'] = n_llm_call
+    ctx['n_llm_parse'] = n_llm_parse
+    ctx['n_llm_hit'] = n_llm_hit
+    return False
+
+
+def run(args):
+    ctx = _run_prepare(args)
+    (t0, rng, base, B, dates, cols, close, T, S, U, fwd_ret,
+     seeds, fsa, prev_l1, prev_l2, bank, bank_ex, bank_ext, bank_ex_ext, frozen, fsa_frz, fail_lib, cfg, _prev_pool_map, n_tested_prev, critic, diag, r, reasons, block_fams, f, fam_black_txt, nd, bad, cfg_r, loop_llm) = (
+        ctx['t0'], ctx['rng'], ctx['base'], ctx['B'], ctx['dates'], ctx['cols'], ctx['close'], ctx['T'], ctx['S'], ctx['U'], ctx['fwd_ret'],
+        ctx['seeds'], ctx['fsa'], ctx['prev_l1'], ctx['prev_l2'], ctx['bank'], ctx['bank_ex'], ctx['bank_ext'], ctx['bank_ex_ext'], ctx['frozen'], ctx['fsa_frz'], ctx['fail_lib'], ctx['cfg'], ctx['_prev_pool_map'], ctx['n_tested_prev'], ctx['critic'], ctx['diag'], ctx['r'], ctx['reasons'], ctx['block_fams'], ctx['f'], ctx['fam_black_txt'], ctx['nd'], ctx['bad'], ctx['cfg_r'], ctx['loop_llm'])
+
+    if _run_gen(ctx, args):
         return
+    cands = ctx['cands']
+    llm_on, llm_pool, llm_hyp = ctx['llm_on'], ctx['llm_pool'], ctx['llm_hyp']
+    n_llm_call, n_llm_parse, n_llm_hit = ctx['n_llm_call'], ctx['n_llm_parse'], ctx['n_llm_hit']
 
     # ---- L1 批量 IC(★分批处理 + 子面板 + 跨批LRU) ----
     Bsub, Rsub, Usub = _run_l1(U, base, fwd_ret)
@@ -2880,6 +2912,7 @@ def run(args):
     _v = _critic_llm_review(_v, args, critic, diag, l1, next_cfg, reasons, res_c)
 
     # ---- 保存状态 ----
+    k = None  # ★ 死透传（_save_state 不读 k）；生成循环 `k=str(node)` 的兜底赋值已随 _run_gen 移走
     _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_expr, _v, args, bank, bank_ex, bank_ex_ext, cands, fail_lib, frozen, fsa, k, l1, n_tested_prev, nd, next_cfg, pool_rows, res, s, t0, top, v, fsa_frz,
                 _strip2_by_expr, _hzn2_by_expr)
 
