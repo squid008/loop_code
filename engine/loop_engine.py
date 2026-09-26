@@ -2359,6 +2359,99 @@ def _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style,
     return strip_rec, rr2, strip2, ok2
 
 
+def _l2_pool_tags(j, nd, fac, dates, cols, close, args, POOL_M, MCAP, _pools, _lp,
+                  rr, strip_rec, strip2, pool_rec, _tag_by_expr, _strip_by_expr, _strip2_by_expr):
+    """单候选池内指标 + 池标签/剥风格档派生（就地改 pool_rec / *_by_expr）"""
+    if POOL_M and rr is not None:
+        for _tg, _M in POOL_M.items():
+            try:
+                _vp = np.where(_M, fac.values, np.nan)
+                _fp = cs_rank(pd.DataFrame(_vp, index=dates, columns=cols))
+                _rp = evaluate_real(_fp, close, f"{nd}#pool{_tg}",
+                                    cost=args.cost, window=args.window,
+                                    mcap=MCAP,   # ★同时给「市值加权基准」(§8.28)
+                                    with_daily=True)   # ★池门槛/池标签也吃日频(§1.19)
+                if _rp is not None:
+                    pool_rec.append(dict(
+                        gen=args.gen, expr=str(nd), pool=_tg,
+                        # ★ `pools_scope`(2026-09-14, §1.5)：记录**当次 `--pools` 集合** ——
+                        #   否则"只在两池测过"会被误读成"池内无效"（跨批次比标签会错）。
+                        #   以后任何时候都能还原"这行标签是在哪些池上算的"。
+                        pools_scope=','.join(_pools),
+                        ic=_rp['ic'], ic_ir=_rp['ic_ir'], calmar=_rp['calmar'],
+                        ann_ex=_rp['ann_ex'], dd=_rp['dd'],
+                        # ★ 日频口径（§1.19）：池门槛/池标签用这几个
+                        dd_d=_rp.get('dd_d'), calmar_d=_rp.get('calmar_d'),
+                        sharpe=_rp['sharpe'], turn=_rp.get('turn', np.nan),
+                        # 市值加权基准口径(§8.28): calmar_cw ≈ 对真实指数的超额
+                        #  tilt = ann_ex_cw - ann_ex = 「池内规模倾斜」贡献(越大越可疑)
+                        ann_ex_cw=_rp.get('ann_ex_cw', np.nan),
+                        calmar_cw=_rp.get('calmar_cw', np.nan),
+                        dd_cw=_rp.get('dd_cw', np.nan),
+                        sharpe_cw=_rp.get('sharpe_cw', np.nan),
+                        tilt=_rp.get('tilt', np.nan)))
+                del _fp
+            except Exception as e_p:
+                print(f"  [{j}] 池 {_tg} 计算失败(不影响主流程): "
+                      f"{type(e_p).__name__}: {e_p}")
+        pool_rows.extend(pool_rec)
+        # ★ 池标签(2026-09-13, §8.42): 规则取自 `loop_pools.derive_tag`(**单一事实源**,
+        #   与 `standard/pool_tags.py` 派生 docs/pool_tags.csv 同口径)。
+        #   用户诉求:「一眼看出这个因子是全A+哪个池好用、还是只有全A好用」。
+        try:
+            # ★★ 2026-09-14（§1.18 用户拍板 B + §1.19 用户拍板 ③）：
+            #   ① **修判据不对称** —— 原来「全A 要 calmar>=0.30、池内**只要超额>0**」
+            #      ⇒ `all3`（"所有池都通过 = 真 alpha"）名不副实（实测 F10_1000 误标）。
+            #   ② **口径统一到日频** —— 期频漏掉持有期内回撤，回撤被低估（折比中位 0.928）。
+            #      日频缺失时**回退期频**（旧数据/未开 with_daily 时不炸、不误杀）。
+            def _cal_d(_d):
+                """取日频 Calmar，缺失则回退期频（**回退要留痕**在 CSV 列里可辨）。"""
+                _v = _d.get('calmar_d')
+                return _v if (_v is not None and np.isfinite(_v)) else _d.get('calmar')
+            _okp = {q['pool']: bool(np.isfinite(q['ann_ex'])
+                                    and q['ann_ex'] > _lp.TAG_POOL_FLOOR
+                                    and np.isfinite(_cal_d(q))
+                                    and _cal_d(q) >= _lp.TAG_POOL_FLOOR_CAL)
+                    for q in pool_rec}
+            _oka = bool(np.isfinite(rr['ann_ex']) and rr['ann_ex'] > 0
+                        and np.isfinite(_cal_d(rr))
+                        and _cal_d(rr) >= _lp.TAG_CAL_MIN)
+            _tag_by_expr[str(nd)] = _lp.derive_tag(_oka, _okp, _pools)
+            # ★ 剥风格档（**并列**记录，不改池标签语义）—— 分档规则在
+            #   `loop_pools.strip_grade`（单一事实源，脚本与引擎共用一套）。
+            #   ⚠ 传**日频**口径 + 日频回撤（§1.19 ③：A 档 = 日频 calmar>=0.30 且 dd_d>-0.20）
+            if strip_rec is not None:
+                _sg_k, _sg_t = _lp.strip_grade(strip_rec.get('strip_calmar_d'),
+                                               strip_rec.get('strip_ann_ex'),
+                                               strip_rec.get('strip_dd_d'))
+                # 元组：档位 / 说明 / 期频剥后 Calmar / 剥后超额 / **日频剥后 Calmar** / **日频剥后回撤**
+                #   ★ 后两项 2026-09-14（§1.19）新增 —— 判据已改日频 ⇒ 文档要能看见它。
+                _strip_by_expr[str(nd)] = (_sg_k, _sg_t,
+                                           strip_rec.get('strip_calmar'),
+                                           strip_rec.get('strip_ann_ex'),
+                                           strip_rec.get('strip_calmar_d'),
+                                           strip_rec.get('strip_dd_d'))
+            # ★ 2026-09-22（v1.21.29 · (乙)）：**副口径**的剥风格档 + 记录 ✓
+            #   ⚠ 只有**副口径入选**的因子才需要它 ✓（主口径入选者用上面那份 ✓）
+            if args.dual_fwd and strip2 is not None:
+                try:
+                    _sg2_k, _sg2_t = _lp.strip_grade(strip2.get('strip_calmar_d'),
+                                                     strip2.get('strip_ann_ex'),
+                                                     strip2.get('strip_dd_d'))
+                    _strip2_by_expr[str(nd)] = (_sg2_k, _sg2_t,
+                                                strip2.get('strip_calmar'),
+                                                strip2.get('strip_ann_ex'),
+                                                strip2.get('strip_calmar_d'),
+                                                strip2.get('strip_dd_d'))
+                except Exception as e_s2:
+                    print(f"  [{j}] 副口径剥风格档失败(不影响主流程): "
+                          f"{type(e_s2).__name__}: {e_s2}")
+        except Exception as e_t:
+            print(f"  [{j}] 池标签派生失败(不影响主流程): {type(e_t).__name__}: {e_t}")
+
+    return pool_rec
+
+
 def _run_l2_phase(ctx, args):
     """L2 费后精筛 + 剥风格/池指标/收益流去重 + 落盘 -> 写回 ctx"""
     _min_pool_calmar = ctx['_min_pool_calmar']
@@ -2431,92 +2524,7 @@ def _run_l2_phase(ctx, args):
             #    因子池外置 NaN -> cs_rank(逐行只在池内有效值上排名) -> 同一套费后回测。
             #  ⚠ evaluate_real 选股是 `fac.loc[d][U].dropna()` ⇒ 池外 NaN 自动被排除;
             #    且"池等权"基准随之变成**同池等权**(与 standard_test 口径一致, 不是全A等权)。
-            if POOL_M and rr is not None:
-                for _tg, _M in POOL_M.items():
-                    try:
-                        _vp = np.where(_M, fac.values, np.nan)
-                        _fp = cs_rank(pd.DataFrame(_vp, index=dates, columns=cols))
-                        _rp = evaluate_real(_fp, close, f"{nd}#pool{_tg}",
-                                            cost=args.cost, window=args.window,
-                                            mcap=MCAP,   # ★同时给「市值加权基准」(§8.28)
-                                            with_daily=True)   # ★池门槛/池标签也吃日频(§1.19)
-                        if _rp is not None:
-                            pool_rec.append(dict(
-                                gen=args.gen, expr=str(nd), pool=_tg,
-                                # ★ `pools_scope`(2026-09-14, §1.5)：记录**当次 `--pools` 集合** ——
-                                #   否则"只在两池测过"会被误读成"池内无效"（跨批次比标签会错）。
-                                #   以后任何时候都能还原"这行标签是在哪些池上算的"。
-                                pools_scope=','.join(_pools),
-                                ic=_rp['ic'], ic_ir=_rp['ic_ir'], calmar=_rp['calmar'],
-                                ann_ex=_rp['ann_ex'], dd=_rp['dd'],
-                                # ★ 日频口径（§1.19）：池门槛/池标签用这几个
-                                dd_d=_rp.get('dd_d'), calmar_d=_rp.get('calmar_d'),
-                                sharpe=_rp['sharpe'], turn=_rp.get('turn', np.nan),
-                                # 市值加权基准口径(§8.28): calmar_cw ≈ 对真实指数的超额
-                                #  tilt = ann_ex_cw - ann_ex = 「池内规模倾斜」贡献(越大越可疑)
-                                ann_ex_cw=_rp.get('ann_ex_cw', np.nan),
-                                calmar_cw=_rp.get('calmar_cw', np.nan),
-                                dd_cw=_rp.get('dd_cw', np.nan),
-                                sharpe_cw=_rp.get('sharpe_cw', np.nan),
-                                tilt=_rp.get('tilt', np.nan)))
-                        del _fp
-                    except Exception as e_p:
-                        print(f"  [{j}] 池 {_tg} 计算失败(不影响主流程): "
-                              f"{type(e_p).__name__}: {e_p}")
-                pool_rows.extend(pool_rec)
-                # ★ 池标签(2026-09-13, §8.42): 规则取自 `loop_pools.derive_tag`(**单一事实源**,
-                #   与 `standard/pool_tags.py` 派生 docs/pool_tags.csv 同口径)。
-                #   用户诉求:「一眼看出这个因子是全A+哪个池好用、还是只有全A好用」。
-                try:
-                    # ★★ 2026-09-14（§1.18 用户拍板 B + §1.19 用户拍板 ③）：
-                    #   ① **修判据不对称** —— 原来「全A 要 calmar>=0.30、池内**只要超额>0**」
-                    #      ⇒ `all3`（"所有池都通过 = 真 alpha"）名不副实（实测 F10_1000 误标）。
-                    #   ② **口径统一到日频** —— 期频漏掉持有期内回撤，回撤被低估（折比中位 0.928）。
-                    #      日频缺失时**回退期频**（旧数据/未开 with_daily 时不炸、不误杀）。
-                    def _cal_d(_d):
-                        """取日频 Calmar，缺失则回退期频（**回退要留痕**在 CSV 列里可辨）。"""
-                        _v = _d.get('calmar_d')
-                        return _v if (_v is not None and np.isfinite(_v)) else _d.get('calmar')
-                    _okp = {q['pool']: bool(np.isfinite(q['ann_ex'])
-                                            and q['ann_ex'] > _lp.TAG_POOL_FLOOR
-                                            and np.isfinite(_cal_d(q))
-                                            and _cal_d(q) >= _lp.TAG_POOL_FLOOR_CAL)
-                            for q in pool_rec}
-                    _oka = bool(np.isfinite(rr['ann_ex']) and rr['ann_ex'] > 0
-                                and np.isfinite(_cal_d(rr))
-                                and _cal_d(rr) >= _lp.TAG_CAL_MIN)
-                    _tag_by_expr[str(nd)] = _lp.derive_tag(_oka, _okp, _pools)
-                    # ★ 剥风格档（**并列**记录，不改池标签语义）—— 分档规则在
-                    #   `loop_pools.strip_grade`（单一事实源，脚本与引擎共用一套）。
-                    #   ⚠ 传**日频**口径 + 日频回撤（§1.19 ③：A 档 = 日频 calmar>=0.30 且 dd_d>-0.20）
-                    if strip_rec is not None:
-                        _sg_k, _sg_t = _lp.strip_grade(strip_rec.get('strip_calmar_d'),
-                                                       strip_rec.get('strip_ann_ex'),
-                                                       strip_rec.get('strip_dd_d'))
-                        # 元组：档位 / 说明 / 期频剥后 Calmar / 剥后超额 / **日频剥后 Calmar** / **日频剥后回撤**
-                        #   ★ 后两项 2026-09-14（§1.19）新增 —— 判据已改日频 ⇒ 文档要能看见它。
-                        _strip_by_expr[str(nd)] = (_sg_k, _sg_t,
-                                                   strip_rec.get('strip_calmar'),
-                                                   strip_rec.get('strip_ann_ex'),
-                                                   strip_rec.get('strip_calmar_d'),
-                                                   strip_rec.get('strip_dd_d'))
-                    # ★ 2026-09-22（v1.21.29 · (乙)）：**副口径**的剥风格档 + 记录 ✓
-                    #   ⚠ 只有**副口径入选**的因子才需要它 ✓（主口径入选者用上面那份 ✓）
-                    if args.dual_fwd and strip2 is not None:
-                        try:
-                            _sg2_k, _sg2_t = _lp.strip_grade(strip2.get('strip_calmar_d'),
-                                                             strip2.get('strip_ann_ex'),
-                                                             strip2.get('strip_dd_d'))
-                            _strip2_by_expr[str(nd)] = (_sg2_k, _sg2_t,
-                                                        strip2.get('strip_calmar'),
-                                                        strip2.get('strip_ann_ex'),
-                                                        strip2.get('strip_calmar_d'),
-                                                        strip2.get('strip_dd_d'))
-                        except Exception as e_s2:
-                            print(f"  [{j}] 副口径剥风格档失败(不影响主流程): "
-                                  f"{type(e_s2).__name__}: {e_s2}")
-                except Exception as e_t:
-                    print(f"  [{j}] 池标签派生失败(不影响主流程): {type(e_t).__name__}: {e_t}")
+            pool_rec = _l2_pool_tags(j, nd, fac, dates, cols, close, args, POOL_M, MCAP, _pools, _lp, rr, strip_rec, strip2, pool_rec, _tag_by_expr, _strip_by_expr, _strip2_by_expr)
             del f
             gc.collect()
         except Exception as e:
