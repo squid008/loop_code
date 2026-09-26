@@ -220,6 +220,40 @@ def _write_ctl(**kw):
     return _with_ctl_lock(_do)
 
 
+# ---------------------------------------------------------------- 崩溃徽标
+def clear_crashes(pools=None):
+    """★ 2026-09-26：**撤掉"启动即崩"徽标**（`pools=None` ⇒ 撤全部；返回被撤的池名表）✓
+
+    ★ 为什么需要 —— 用户实测："我全部停止了，然后看到俩池子现在都是启动即崩的状态，
+      这跟以前好像不一样？以前应该是回到已停止的状态才对吧"
+      徽标的语义是「**此刻**启动即崩」（见 `tools/parallel_runner.py` 2026-09-20 的说明 ✓），
+      但它**只有一个撤销触发点：跑通一代（`rc=0` 且 stderr 为空）** ✗ ——
+      而「**被用户停掉**」是 `rc=1` ⇒ 走 `if rc != 0` 分支、`killed=True`
+      ⇒ **既不写也不撤** ✗✗ ⇒ 一次真崩留下的徽标会**永远挂着** ✓
+      （实测时间线 `ai_test/_tracks/_engine_exits.log`：
+        22:22 `all`/`300` **真崩**（v1.23.0 的 `NameError`）⇒ 写徽标 ✓
+        23:42 两池各跑 **24.9 分钟、err=0、被用户停** ⇒ 徽标**没被撤** ⇒ 卡片写着
+              "已停止"却顶着红字「启动即崩 ×1」（**自相矛盾** ✗））
+
+    ★ 修法：**停止 = 用户的明确动作、该池已回到空闲** ⇒ 徽标"此刻已不成立" ⇒ 一并撤掉 ✓
+      ⚠ 保护**不减弱**：真·必崩的池下次启动还会崩 ⇒ 一分钟内徽标自动回来 ✓
+      所以这里**撤的是"过期证据"，不是"关掉报警"** ✓
+    """
+    try:
+        _cr = dict(ctl().get('crashes') or {})
+    except Exception:                                          # noqa: BLE001
+        return []
+    _hit = [k for k in _cr if pools is None or k in pools]
+    if not _hit:
+        return []
+    _new = {k: v for k, v in _cr.items() if k not in _hit}
+    try:
+        _write_ctl(crashes=_new)
+    except Exception:                                          # noqa: BLE001
+        return []                                              # 撤不掉也不能影响"停止"本身 ✓
+    return _hit
+
+
 # ---------------------------------------------------------------- 资源 / 进程
 def avail_gb():
     try:
@@ -690,6 +724,9 @@ def stop(pool=None, **kw):
         c = ctl()
         st = sorted(set(list(c.get('stopped') or []) + [pool]))
         _write_ctl(stopped=st)
+        # ★ 2026-09-26：停止 ⇒ 撤掉该池**过期的**"启动即崩"徽标 ✓
+        #   （徽标 = "此刻启动即崩"；它已回到空闲，"此刻"不再成立 ✗ 见 `clear_crashes` ✓）
+        clear_crashes([pool])
         killed = []
         # ★★★ 2026-09-16 兜底（当时用户实测"停止了全A，它还在跑"）：命令行归属可能失配
         #   （如旧进程没传 `--mine_pool`）⇒ 需要第二路来源。**但 2026-09-19 修**：
@@ -734,6 +771,8 @@ def stop(pool=None, **kw):
     # ★★ 只设 `stopAll`，**不动 `stopped`** —— 否则"全部停止 → 再启动"会**丢掉用户的剔除配置** ✗
     #   （"一键启动全部"时若想重置，由 `start(reset_stopped=True)` 显式做 ✓）
     _write_ctl(stopAll=True)
+    # ★ 2026-09-26：全部停 ⇒ 撤掉**所有**过期的"启动即崩"徽标 ✓（理由同 `clear_crashes` ✓）
+    clear_crashes()
     killed = []
     for p in engines():
         r = subprocess.run(['taskkill', '/PID', str(p['pid']), '/T', '/F'],
