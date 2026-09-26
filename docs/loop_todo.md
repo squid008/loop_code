@@ -481,11 +481,13 @@ md 总览 ✓ · md 明细 ✓ · **不在** JSONL ✓ · **不在** 登记表 �
   - ⏳ `loop_critic.suggest` **308→207 行**（抽 `_init_sug`/`_apply_rules`/`_finalize_sug`；闭包网 ctx 化留第二步）
   - ✅ `parallel_runner.run` **390→~344 行**（抽 `_setup_parallel`/`_cleanup_parallel`；主循环调度状态机保留）
   （`strategies/` 重复常量 → **你已拍板「冻结不动」** ✓）
-- ⏳ L3 `loop_engine` 模块化 + `run()` ctx 化（进行中，需与实盘对照）：
+- ✅ L3 `loop_engine` 模块化 + `run()` ctx 化（**全部完成**）：
   - ✅ Step 1：抽 `Node`+`collect` 到 `loop_expr.py`（顺带根治「两份 Node」）
   - ✅ Step 2：抽跨量纲 `loop_dims` / 骨架族 `loop_expr` / 失败库 `loop_faillib` /
-    算子表 `loop_ops` / 亲本选择 `loop_gen` / LLM 引导 `loop_llm_guide`（**全部完成，loop_engine 3917→3314**）
-  - ⏸ Step 3：`run()` ctx 化 **暂缓**（变量重命名级重构 + L1/L2/写盘段无测试覆盖，留待你在场配实盘对照）
+    算子表 `loop_ops` / 亲本选择 `loop_gen` / LLM 引导 `loop_llm_guide`（loop_engine 3917→3314）
+  - ✅ Step 3：`run()` ctx 化拆 5 子步骤（`_run_prepare`/`_run_gen`/`_run_l1_phase`/
+    `_run_l2_phase`/`_run_finalize`）—— **run() 1079 行 → 10 行纯编排**；
+    同 seed=777 复跑 state 逐字段一致 + 全量回归 51/51（详见 `maintainability.md`）
 
 ---
 

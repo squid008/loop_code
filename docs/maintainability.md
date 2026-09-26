@@ -115,14 +115,20 @@
   - [x] **Step 2b-3b**：抽亲本选择 + `DEFAULT_CFG`（`pick_leaf`/`rand_expr`/`mutate`/`pick_parent`…）到 `loop_gen.py`
   - [x] **Step 2b-3c**：抽 LLM 引导（`tokenize_expr`/`parse_expr`/`llm_fetch`）到 `loop_llm_guide.py`
     ★ `LLM_MAX_SIZE` 留 loop_engine（运行期可改，避免「值拷贝」漏掉 tools 的临时放开）
-- ⏸ **Step 3：`run()` ctx 化，拆子步骤 —— 暂缓**（见下）
+- [x] **Step 3：`run()` ctx 化，拆 5 个子步骤（全部完成，2026-09-26 用户在场配实盘对照）**：
+  - [x] **Step 3a**：抽准备阶段（初始化+数据+载入 state+审查/黑名单/失败库/随机探索）到 `_run_prepare(args)` 返回 ctx
+  - [x] **Step 3b**：抽生成阶段（B角五维配比+LLM引导+守卫链+gen_only）到 `_run_gen(ctx, args)`
+  - [x] **Step 3c**：抽 L1 阶段（批量 IC+形状/去相关/去重/族配额/FSA/jury）到 `_run_l1_phase(ctx, args)`
+  - [x] **Step 3d**：抽 L2 阶段（费后精筛+剥风格/池指标/收益流去重+落盘）到 `_run_l2_phase(ctx, args)`
+  - [x] **Step 3e**：抽保存/诊断阶段到 `_run_finalize(ctx, args)`，run() 收敛为 **10 行纯编排**（原 1079 行）
+  - ★ 顺带修 2 个既有 bug（`loop_llm` 未绑定 / `_agg_style_diag` 死透传 `_k`）+ 4 个死透传兜底（`k/v/_v/f`）
 - 验收：每步守门 + 全量回归 + **与实盘挖掘结果对照**（同一代 seed 复跑，产出必须一致）
 
-> ⚠ **Step 3 暂缓的诚实原因（2026-09-26）**：`run()` 仍是 ~1134 行的主循环状态机。
->  ctx 化 = 把几十个状态变量（含 `r`/`node` 等**同名不同义**的）收进 ctx dict，是「变量重命名」级重构，
->  风险显著高于前面的「段落搬移」；且 `run()` 的 **L1/L2/写盘段无任何测试覆盖**（`--gen_only` 跳过它们），
->  无人值守做 = 既无测试网、又无法与实盘 seed 复跑对照 ⇒ 风险不可控。
->  ⇒ 留待**用户在场**时做：配「同 seed 复跑产出逐位一致」的对照 + 生成段用 `smoke_gen_only.py` 冒烟。
+> ✅ **Step 3 完成（2026-09-26 用户在场）**：用户在场配了「同 seed=777 复跑 + state 逐字段对照」。
+>  全程 5 步每步 `py_compile` + 同 seed 复跑 + `_cmp_state` 逐字段比对（bank/seeds/cfg/fail_lib/fsa/
+>  last_l1/last_l2 全 OK），最终全量回归 **51/51**。`run()` 由 **1079 行 → 10 行**纯编排。
+>  ★ 对照方法：改前先跑一次记录 baseline state（MD5），改后恢复 state 备份同 seed 复跑，unpickle 逐字段比对
+>  （Node 对象用 `str(node)` 值比对，`==` 是身份比较会假阳性）。
 
 ---
 
