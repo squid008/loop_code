@@ -50,6 +50,44 @@ import loop_paths as _P
 HERE = os.path.dirname(os.path.abspath(__file__))   # engine/ 目录（与 loop_engine.py 同目录）
 
 
+# ★★★ 以下是本函数**函数体内**的设计说明（S3a 只搬位置、一字未改 ✓）
+#   规则：连续 ≥3 行的论述块上移；贴行注释留在代码旁（保局部性 ✓）
+    # ★ 收益流库(2026-09-13, roadmap §8.34): {表达式: 每期费后超额 Series} —— 收益流去重的对照集。
+    #   缺它的旧 state 也能跑(只与"本次运行新入库的"比), 但要立即见效请先跑
+    #   `tools/backfill_bank_ex.py` 补齐历史。
+    # ★★ 外部池库对照集（2026-09-14, `loop_todo §1.8`）—— **只读，绝不写回 state / 因子库**。
+    #   为什么需要：`--decorr`/`--dup_ex_corr` 的对照集原本只是"**本轨道自己的 bank**"
+    #   ⇒ 跑全A 时它不知道池库挖到了什么 ⇒ 把同一批重挖一遍（实测收益流 |相关| 中位 0.767、>0.7 占 82%）。
+    #   ★ 与 `bank`/`bank_ex` 的区别：那两个是**本轨道的产出**（会持久化 + 进 `docs/factor_library*.md`）；
+    #     这两个只是"**告诉我这些已经挖过了**"的对照来源。
+    # ★ n_tested 的基准必须在**写盘之前**取好(2026-09-12 修 —— 这是一个崩在整代末尾的隐蔽 bug):
+    #   原写法 `n_tested=st.get('n_tested',0)+len(cands) if os.path.exists(_P.STATE) else len(cands)`
+    #   的三元条件是在 `with open(_P.STATE,'wb')` **之后**求值的 —— 而那一步已经把文件创建出来了
+    #   ⇒ 条件**恒为 True**; 全新轨迹(无既有 state)时 `st` 从未绑定 ⇒ UnboundLocalError
+    #   ⇒ 崩在**整代最后一行**(30 分钟计算白做, 且 state 被 0 字节覆盖)。
+    #   实录: `--mine_pool=300` 首次全新轨迹即崩(loop_state_300.pkl 被创建为 0 字节)。
+    # ★ 上一代的「池口径」传感器数据（2026-09-14, §1.1 修法②）：代首要**重审上一代**，
+    #   而池结果不在 `last_l2` 里（那是全A 口径的表）⇒ 必须随 state 一起存。
+    #   ⚠ 无 state 时必须能保持为 None（否则 `st` 未绑定 -> UnboundLocalError，
+    #     这正是 §8.23 那个"崩在整代最后一行"的同类坑）。
+            # ★★★★★ 2026-09-25：走**归一** Unpickler —— 把历史上误存的 `loop_engine.Node`
+            #   也还原成本模块的 `Node`（详见**文件末尾** `__main__` 块的注册处 / `_StateUnpickler`）✓
+            #   ⚠ 不加这一句：`bank`/`seeds`/`last_l1` 里的那批"第二份"Node 会让
+            #     `skeleton`/`collect`/`key` 全部失效（骨架去重与 FSA 对它们形同虚设）✗
+        # ★★★ 外部池库注入对照集（2026-09-14, `loop_todo §1.8`）----
+        #   问题：`--decorr` / `--dup_ex_corr` 的对照集是**各自轨道自己的 bank**
+        #   ⇒ 跑全A 时它**根本不知道池库挖到了什么** ⇒ 会把同一批重挖一遍。
+        #   实测（`tools/check_pool_vs_allA.py`）：池因子 vs 全A 库(41) 的收益流最大 |相关|
+        #   **中位 0.767**，>0.7 占 **82%**，而 `--dup_ex_corr=0.90` 只挡得住 18%
+        #   ⇒ **不做注入 ≈ 把 82% 的算力花在重挖上**。
+        #   ★ 语义：外部池库只能"**告诉我这些已经挖过了**"，**不能算我的产出**
+        #     ⇒ 单独存 `bank_ext`/`bank_ex_ext`，**绝不写回自己的 state / 因子库** ✓
+    # ---- 结构族黑名单(QuantaAlpha 正交思想, gen31): 上代 L1 霸榜模板族 ----
+    # 上代同模板族(叶子身份无关指纹)占比 >= FAM_BLOCK_THR -> 本代生成端禁产(硬闸换血);
+    # top2 模板文本另注入 A角 LLM 提示词(软约束)。根治"同族霸榜 -> 0 通过"空转。
+    # ---- 随机探索: 数据驱动特征分布引导(中金"随机探索15%=数据驱动分布, 防局部最优") ----
+    # 证据分布 = 历代入库因子 + 上一代 L1 通过候选 的叶子/算子族频率;
+    # 随机位按该分布抽样(探索有苗头方向的新组合), 无证据时退化为 cfg 权重(均匀)。
 def _run_prepare(args):
     """准备阶段：初始化 + 数据准备 + 载入上一代 state + 审查/黑名单/失败库/随机探索 -> ctx"""
     t0 = time.time()
@@ -75,15 +113,7 @@ def _run_prepare(args):
 
     # 载入上一代: 种子 + B角建议
     seeds, fsa, prev_l1, prev_l2, bank = [], {}, None, None, []
-    # ★ 收益流库(2026-09-13, roadmap §8.34): {表达式: 每期费后超额 Series} —— 收益流去重的对照集。
-    #   缺它的旧 state 也能跑(只与"本次运行新入库的"比), 但要立即见效请先跑
-    #   `tools/backfill_bank_ex.py` 补齐历史。
     bank_ex = {}
-    # ★★ 外部池库对照集（2026-09-14, `loop_todo §1.8`）—— **只读，绝不写回 state / 因子库**。
-    #   为什么需要：`--decorr`/`--dup_ex_corr` 的对照集原本只是"**本轨道自己的 bank**"
-    #   ⇒ 跑全A 时它不知道池库挖到了什么 ⇒ 把同一批重挖一遍（实测收益流 |相关| 中位 0.767、>0.7 占 82%）。
-    #   ★ 与 `bank`/`bank_ex` 的区别：那两个是**本轨道的产出**（会持久化 + 进 `docs/factor_library*.md`）；
-    #     这两个只是"**告诉我这些已经挖过了**"的对照来源。
     bank_ext, bank_ex_ext = [], {}
     _inject_tags = [x.strip() for x in
                     str(getattr(args, 'inject_pools', '') or '').split(',') if x.strip()]
@@ -93,24 +123,10 @@ def _run_prepare(args):
     fsa_frz = {}
     fail_lib = {}              # 失败模式库(骨架级成败滚动统计, 中金: 生成阶段排除)
     cfg = dict(DEFAULT_CFG)
-    # ★ n_tested 的基准必须在**写盘之前**取好(2026-09-12 修 —— 这是一个崩在整代末尾的隐蔽 bug):
-    #   原写法 `n_tested=st.get('n_tested',0)+len(cands) if os.path.exists(_P.STATE) else len(cands)`
-    #   的三元条件是在 `with open(_P.STATE,'wb')` **之后**求值的 —— 而那一步已经把文件创建出来了
-    #   ⇒ 条件**恒为 True**; 全新轨迹(无既有 state)时 `st` 从未绑定 ⇒ UnboundLocalError
-    #   ⇒ 崩在**整代最后一行**(30 分钟计算白做, 且 state 被 0 字节覆盖)。
-    #   实录: `--mine_pool=300` 首次全新轨迹即崩(loop_state_300.pkl 被创建为 0 字节)。
     n_tested_prev = 0
-    # ★ 上一代的「池口径」传感器数据（2026-09-14, §1.1 修法②）：代首要**重审上一代**，
-    #   而池结果不在 `last_l2` 里（那是全A 口径的表）⇒ 必须随 state 一起存。
-    #   ⚠ 无 state 时必须能保持为 None（否则 `st` 未绑定 -> UnboundLocalError，
-    #     这正是 §8.23 那个"崩在整代最后一行"的同类坑）。
     _prev_pool_map = None
     if os.path.exists(_P.STATE):
         with open(_P.STATE, 'rb') as f:
-            # ★★★★★ 2026-09-25：走**归一** Unpickler —— 把历史上误存的 `loop_engine.Node`
-            #   也还原成本模块的 `Node`（详见**文件末尾** `__main__` 块的注册处 / `_StateUnpickler`）✓
-            #   ⚠ 不加这一句：`bank`/`seeds`/`last_l1` 里的那批"第二份"Node 会让
-            #     `skeleton`/`collect`/`key` 全部失效（骨架去重与 FSA 对它们形同虚设）✗
             st = _StateUnpickler(f).load()
         n_tested_prev = st.get('n_tested', 0)
         seeds = st.get('seeds', [])
@@ -132,14 +148,6 @@ def _run_prepare(args):
         print(f"载入上一代种子 {len(seeds)} 个, 入库因子 {len(bank)} 个, "
               f"冻结骨架 {len(frozen)} 个, 失败库 {len(fail_lib)} 条, "
               f"已测 {st.get('n_tested', 0)} 个候选")
-        # ★★★ 外部池库注入对照集（2026-09-14, `loop_todo §1.8`）----
-        #   问题：`--decorr` / `--dup_ex_corr` 的对照集是**各自轨道自己的 bank**
-        #   ⇒ 跑全A 时它**根本不知道池库挖到了什么** ⇒ 会把同一批重挖一遍。
-        #   实测（`tools/check_pool_vs_allA.py`）：池因子 vs 全A 库(41) 的收益流最大 |相关|
-        #   **中位 0.767**，>0.7 占 **82%**，而 `--dup_ex_corr=0.90` 只挡得住 18%
-        #   ⇒ **不做注入 ≈ 把 82% 的算力花在重挖上**。
-        #   ★ 语义：外部池库只能"**告诉我这些已经挖过了**"，**不能算我的产出**
-        #     ⇒ 单独存 `bank_ext`/`bank_ex_ext`，**绝不写回自己的 state / 因子库** ✓
         if _inject_tags:
             _n_bi, _n_be, _srcs = 0, 0, []
             for _tp in _inject_tags:
@@ -175,18 +183,12 @@ def _run_prepare(args):
 
     # ---- B角: 先审查上一代, 再据此定本代搜索策略 ----
     cfg, critic, diag, r, reasons = _critic_review_prev(_prev_pool_map, args, cfg, prev_l1, prev_l2)
-    # ---- 结构族黑名单(QuantaAlpha 正交思想, gen31): 上代 L1 霸榜模板族 ----
-    # 上代同模板族(叶子身份无关指纹)占比 >= FAM_BLOCK_THR -> 本代生成端禁产(硬闸换血);
-    # top2 模板文本另注入 A角 LLM 提示词(软约束)。根治"同族霸榜 -> 0 通过"空转。
     f = None  # ★ 死透传：_build_fam_blacklist 内覆盖 f；避免「等号两边同名（右边先读）」的静态隐患
     block_fams, f, fam_black_txt, nd = _build_fam_blacklist(args, cfg, critic, f, frozen, prev_l1, seeds)
 
     # ---- 失败模式库: 载入后按滚动窗口算出本代应排除的'坏骨架' ----
     bad = _load_fail_lib(args, cfg, fail_lib)
 
-    # ---- 随机探索: 数据驱动特征分布引导(中金"随机探索15%=数据驱动分布, 防局部最优") ----
-    # 证据分布 = 历代入库因子 + 上一代 L1 通过候选 的叶子/算子族频率;
-    # 随机位按该分布抽样(探索有苗头方向的新组合), 无证据时退化为 cfg 权重(均匀)。
     cfg_r = _rand_explore(bank, cfg, prev_l1)
 
 
@@ -203,6 +205,16 @@ def _run_prepare(args):
         loop_llm=loop_llm)
 
 
+# ★★★ 以下是本函数**函数体内**的设计说明（S3a 只搬位置、一字未改 ✓）
+#   规则：连续 ≥2 行的论述块上移；贴行注释留在代码旁（保局部性 ✓）
+    # ---- 生成候选(按B角给的五维配比) ----
+    # ★gen13修复: cut为累积上界, 判重/分支原来写成 cut[i] 相加 -> 数值>1恒真,
+    # 使 r<cut0+cut1+cut2 永远成立: guided(引导族)与rand(纯随机)从不会被执行,
+    # 代代只在seeds内打转 -> 重复爆炸。 现改回 r<cut[2](seed三操作) / r<cut[3](引导) / 否则随机。
+    # ---- 生成侧 LLM 引导(A角子代理, 中金"生成预算~20%语义引导"): ----
+    # 引导位 r∈[cut2,cut3) 的候选来源 = LLM 解析池; 池空且调用未超限则按需补一次;
+    # 无 key/超时/解析失败/超限 -> 回退本地 guided_expr。LLM 候选与规则候选走
+    # 同一条守卫链(跨量纲/失败库/FSA/判重), 不产生旁路。
 def _run_gen(ctx, args):
     """生成候选（按 B角五维配比 + LLM 引导 + 守卫链）-> 写回 ctx；gen_only 返回 True"""
     cfg = ctx['cfg']
@@ -218,15 +230,7 @@ def _run_gen(ctx, args):
     block_fams = ctx['block_fams']
     t0 = ctx['t0']
 
-    # ---- 生成候选(按B角给的五维配比) ----
-    # ★gen13修复: cut为累积上界, 判重/分支原来写成 cut[i] 相加 -> 数值>1恒真,
-    # 使 r<cut0+cut1+cut2 永远成立: guided(引导族)与rand(纯随机)从不会被执行,
-    # 代代只在seeds内打转 -> 重复爆炸。 现改回 r<cut[2](seed三操作) / r<cut[3](引导) / 否则随机。
     _psel, _ptop, cut, m = _gen_candidates(args, cfg, seeds)
-    # ---- 生成侧 LLM 引导(A角子代理, 中金"生成预算~20%语义引导"): ----
-    # 引导位 r∈[cut2,cut3) 的候选来源 = LLM 解析池; 池空且调用未超限则按需补一次;
-    # 无 key/超时/解析失败/超限 -> 回退本地 guided_expr。LLM 候选与规则候选走
-    # 同一条守卫链(跨量纲/失败库/FSA/判重), 不产生旁路。
     llm_on = (getattr(args, 'llm_guide', 'auto') != 'off')
     llm_pool, llm_hyp = [], ''
     n_llm_call = n_llm_parse = n_llm_hit = 0
