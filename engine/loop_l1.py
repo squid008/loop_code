@@ -425,6 +425,61 @@ def _run_l1_phase(ctx, args):
     # ---- 形状量(十档单调性)所需的调仓日抽样视图: 只算一次 ----
     # rank_rows 逐行独立 => rank_rows(F)[::FWD] ≡ rank_rows(F[::FWD])，抽样与不抽样等价(更快)
     Rsub_s, Usub_s = Rsub[::_S.FWD], Usub[::_S.FWD]
+    # ★ S3b-2：口径装配已抽成 `_l1_calib(ctx, args, Rsub_s)` ✓（值写进 ctx ✓）
+    FEAT_S, STYLE_S, _min_mono, _reuse_v, _score_mode, _shape_neutral, _style_obs, need_shape = _l1_calib(ctx, args, Rsub_s)
+    Rsub_s_n = None
+    if _style_obs or _shape_neutral:
+        try:
+            Rsub_s_n = neutralize_rows(Rsub_s, [FEAT_S['lncap'], FEAT_S['lnamt']], min_n=50)
+            print(f"  [形状] 已算风格中性收益(对 lncap/lnamt 逐期回归残差) -> "
+                  f"{'★参与选择(--shape_neutral)' if _shape_neutral else '仅观测(shape_pos_n)'}")
+        except Exception as e:
+            Rsub_s_n = None
+            print(f"  [形状] 中性收益失败(仅缺中性化能力): {type(e).__name__}: {e}")
+    # 主形状量用哪套收益(原始 / 中性化)
+    R_SHAPE = Rsub_s_n if (_shape_neutral and Rsub_s_n is not None) else Rsub_s
+    l1, obs_df = _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape,
+                           _style_obs, _reuse_v, STYLE_S, R_SHAPE, Usub_s, Rsub_s_n)
+    l1 = _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mode)
+    if l1 is None:
+        return True
+    fam_blocked, l1 = _apply_fam_quota(args, l1)
+
+    s = None                           # 首代没有"亲本节点"这个遗留值 ⇒ None（下游不读 ✓）
+    frozen, nd, r, s = _fsa_stats(args, cands, frozen, fsa, l1, nd, r, s, fsa_frz)
+
+    jury_lines, l1, n_jury_kill, n_jury_rev = _jury_deep_review(args, l1, loop_llm, rng)
+
+
+    ctx['Bsub'] = Bsub
+    ctx['Rsub'] = Rsub
+    ctx['Usub'] = Usub
+    ctx['l1'] = l1
+    ctx['obs_df'] = obs_df
+    ctx['fam_blocked'] = fam_blocked
+    ctx['jury_lines'] = jury_lines
+    ctx['n_jury_kill'] = n_jury_kill
+    ctx['n_jury_rev'] = n_jury_rev
+    ctx['frozen'] = frozen
+    ctx['nd'] = nd
+    ctx['r'] = r
+    ctx['s'] = s
+    return False
+
+
+def _l1_calib(ctx, args, Rsub_s):
+    """L1 的**口径装配**（剥风格/池门槛/收益流字典/风格面板）-> 写进 ctx，回传 2 个值 ✓
+
+    ★ S3b-2（2026-09-27）：从 `_run_l1_phase` **原样搬出**（R1：函数 ≤120 行 ✗）。
+      签名只有 3 个参数（不是"参数爆炸" ✗）：**值都在 `ctx` / `args` 里** ✓
+      （`B` 取 `ctx['B']` ✓；`Rsub_s` 是本函数唯一需要的"非 ctx"输入 ✓）。
+      原来散在 `_run_l1_phase` 尾部的 ctx 回写行也一并搬进来 ✓（避免"回写引用局部名" ✗）。
+
+    :return: **`FEAT_S`, `STYLE_S`, `_min_mono`, `_reuse_v`, `_score_mode`, `_shape_neutral`, `_style_obs`, `need_shape`** —— ★ 这份清单由 AST **机器算出** ✓（不人工挑 ✗）：
+             「块内被赋值的名字」∩「搬走后仍被读的名字」，并排除已搬进来的回写行 ✓
+             （上一版人工挑成 2 个 ⇒ 漏了一个 ⇒ 真实一代崩 ✗，见 change_log ✓）
+    """
+    B = ctx['B']
     _min_mono = float(getattr(args, 'min_mono', 0.0) or 0.0)      # 缺字段=关闭(默认行为)
     _score_mode = getattr(args, 'score_mode', 'old') or 'old'
     _style_obs = bool(getattr(args, 'style_obs', False))
@@ -499,40 +554,7 @@ def _run_l1_phase(ctx, args):
             print(f"  [剥风格] L2 将记录剥 lncap+lnamt 后的 IC/超额/Calmar -> {_P.STRIP_OBS}"
                   + (f"; **入库门槛 strip_calmar>{args.min_strip_calmar:g}**"
                      if args.min_strip_calmar > 0 else "; 仅记录不设门槛(默认)"))
-    Rsub_s_n = None
-    if _style_obs or _shape_neutral:
-        try:
-            Rsub_s_n = neutralize_rows(Rsub_s, [FEAT_S['lncap'], FEAT_S['lnamt']], min_n=50)
-            print(f"  [形状] 已算风格中性收益(对 lncap/lnamt 逐期回归残差) -> "
-                  f"{'★参与选择(--shape_neutral)' if _shape_neutral else '仅观测(shape_pos_n)'}")
-        except Exception as e:
-            Rsub_s_n = None
-            print(f"  [形状] 中性收益失败(仅缺中性化能力): {type(e).__name__}: {e}")
-    # 主形状量用哪套收益(原始 / 中性化)
-    R_SHAPE = Rsub_s_n if (_shape_neutral and Rsub_s_n is not None) else Rsub_s
-    l1, obs_df = _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape,
-                           _style_obs, _reuse_v, STYLE_S, R_SHAPE, Usub_s, Rsub_s_n)
-    l1 = _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mode)
-    if l1 is None:
-        return True
-    fam_blocked, l1 = _apply_fam_quota(args, l1)
-
-    s = None                           # 首代没有"亲本节点"这个遗留值 ⇒ None（下游不读 ✓）
-    frozen, nd, r, s = _fsa_stats(args, cands, frozen, fsa, l1, nd, r, s, fsa_frz)
-
-    jury_lines, l1, n_jury_kill, n_jury_rev = _jury_deep_review(args, l1, loop_llm, rng)
-
-
-    ctx['Bsub'] = Bsub
-    ctx['Rsub'] = Rsub
-    ctx['Usub'] = Usub
     ctx['STYLE_FULL'] = STYLE_FULL
-    ctx['l1'] = l1
-    ctx['obs_df'] = obs_df
-    ctx['fam_blocked'] = fam_blocked
-    ctx['jury_lines'] = jury_lines
-    ctx['n_jury_kill'] = n_jury_kill
-    ctx['n_jury_rev'] = n_jury_rev
     ctx['_min_pool_calmar'] = _min_pool_calmar
     ctx['_min_sharpe'] = _min_sharpe
     ctx['_pool_gate_mode'] = _pool_gate_mode
@@ -548,8 +570,4 @@ def _run_l1_phase(ctx, args):
     ctx['_strip_by_expr'] = _strip_by_expr
     ctx['_strip2_by_expr'] = _strip2_by_expr
     ctx['_hzn2_by_expr'] = _hzn2_by_expr
-    ctx['frozen'] = frozen
-    ctx['nd'] = nd
-    ctx['r'] = r
-    ctx['s'] = s
-    return False
+    return FEAT_S, STYLE_S, _min_mono, _reuse_v, _score_mode, _shape_neutral, _style_obs, need_shape
