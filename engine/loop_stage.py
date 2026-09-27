@@ -285,28 +285,18 @@ def _run_gen(ctx, args):
                     node = guided_expr(rng, cfg)
             else:
                 node = rand_expr(rng, depth=rng.choice(cfg['depth']), cfg=cfg_r)
-        # 跨量纲审查(中金: 跨量纲运算拒绝): close+volume 之类荒谬组合直接重抽
-        if args.dim_review > 0 and review_expr(node):
+        # ★ S3b：守卫链已抽成 `_gen_guard(ctx, args, node, rand_only)` ✓（值全从 ctx 取 ✓）
+        node, _skip = _gen_guard(ctx, args, node, rand_only)
+        if _skip == 'dim':
             n_skip_dim += 1
             continue
-        # 失败模式库: 多次全败的坏骨架 -> 生成阶段自动排除(中金)
-        if args.fail_rate > 0 and bad and has_frozen_skel(node, bad):
+        if _skip == 'bad':
             n_skip_bad += 1
             continue
-        # FSA: 含已冻结骨架的候选禁止复用(中金"冻结骨架不再生成"); 至多重试2次随机探索
-        if args.fsa_th > 0 and frozen and has_frozen_skel(node, frozen):
-            for _ in range(2):
-                n2 = rand_expr(rng, depth=rng.choice(cfg['depth']), cfg=cfg_r)
-                if args.dim_review > 0 and review_expr(n2):
-                    continue
-                if not has_frozen_skel(n2, frozen):
-                    node = n2
-                    break
-            else:
-                n_skip_fsa += 1
-                continue
-        # 结构族黑名单闸(gen31): 命中上代垄断模板族 -> 重抽(rand_only 兜底豁免防死锁)
-        if not rand_only and block_fams and root_fam(node) in block_fams:
+        if _skip == 'fsa':
+            n_skip_fsa += 1
+            continue
+        if _skip == 'fam':
             n_skip_fam += 1
             continue
         k = str(node)
@@ -332,8 +322,11 @@ def _run_gen(ctx, args):
     if getattr(args, 'gen_only', False):
         print("[gen_only] 仅验证候选生成产量, 停在此处(不跑L1/L2/不写状态)")
         return True
-
-
+    # ★ 回写 ctx（**原样保留** ✓）——
+    #   ⚠ S3b 第一次改时，**我把 `_gen_guard` 插在了这里**（以为函数到此结束 ✗），
+    #   于是这 8 行被新函数"吸走"（落到它的 `return` 之后 ⇒ 死代码 ✗）
+    #   ⇒ `ctx['cands']` 再没被写 ⇒ 真实一代立刻 `KeyError: 'cands'` ✗✗
+    #   ⇒ A/B 第一次跑就报出来 ✓（这正是"真动代码必须跑 A/B"的理由 ✓）
     ctx['cands'] = cands
     ctx['llm_on'] = llm_on
     ctx['llm_pool'] = llm_pool
@@ -342,6 +335,47 @@ def _run_gen(ctx, args):
     ctx['n_llm_parse'] = n_llm_parse
     ctx['n_llm_hit'] = n_llm_hit
     return False
+
+
+def _gen_guard(ctx, args, node, rand_only):
+    """生成阶段的**守卫链**（跨量纲 / 失败库 / FSA / 族黑名单）-> `(node, skip)` ✓
+
+    ★ S3b（2026-09-27）：从 `_run_gen` 的循环体里**原文搬出**（R1：6 个函数超 120 行 ✗）。
+      为什么签名只有 4 个参数（而不是 §七 之前担心的"参数爆炸" ✗）：
+      **值全在 `ctx` 里**（`rng`/`cfg`/`cfg_r`/`frozen`/`bad`/`block_fams` 都是 ctx 的键 ✓）
+      ⇒ 改传 ctx 即可 ✓ —— 当年"13~18 个参数"是因为把 **ctx 里的东西拆开传**了 ✗
+
+    :return: `(node, skip)`；`skip` ∈ {None, 'dim', 'bad', 'fsa', 'fam'} ——
+             调用方据此给对应计数器 +1 并 `continue` ✓
+             （⚠ FSA 那支会**改 `node`**（重试 2 次随机探索 ✓），故 node 必须回传 ✓）
+    """
+    frozen = ctx['frozen']
+    bad = ctx['bad']
+    block_fams = ctx['block_fams']
+    rng = ctx['rng']
+    cfg = ctx['cfg']
+    cfg_r = ctx['cfg_r']
+    # 跨量纲审查(中金: 跨量纲运算拒绝): close+volume 之类荒谬组合直接重抽
+    if args.dim_review > 0 and review_expr(node):
+        return node, 'dim'
+    # 失败模式库: 多次全败的坏骨架 -> 生成阶段自动排除(中金)
+    if args.fail_rate > 0 and bad and has_frozen_skel(node, bad):
+        return node, 'bad'
+    # FSA: 含已冻结骨架的候选禁止复用(中金"冻结骨架不再生成"); 至多重试2次随机探索
+    if args.fsa_th > 0 and frozen and has_frozen_skel(node, frozen):
+        for _ in range(2):
+            n2 = rand_expr(rng, depth=rng.choice(cfg['depth']), cfg=cfg_r)
+            if args.dim_review > 0 and review_expr(n2):
+                continue
+            if not has_frozen_skel(n2, frozen):
+                node = n2
+                break
+        else:
+            return node, 'fsa'
+    # 结构族黑名单闸(gen31): 命中上代垄断模板族 -> 重抽(rand_only 兜底豁免防死锁)
+    if not rand_only and block_fams and root_fam(node) in block_fams:
+        return node, 'fam'
+    return node, None
 
 
 def _run_finalize(ctx, args):
