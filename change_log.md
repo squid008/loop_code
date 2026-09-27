@@ -5,7 +5,8 @@
 **MAJOR**（不兼容改动）· **MINOR**（向后兼容的功能新增）· **PATCH**（向后兼容的修复）。
 
 > ★ **归档约定（2026-09-27 起）**：本文件**只保留最近 15 个版本**，
-> 更早的条目整段搬到 [`change_log_archive.md`](change_log_archive.md)（**原文一字未改** ✓）。
+> 更早的条目整段搬到 [`history/change_log_archive.md`](history/change_log_archive.md)（**原文一字未改** ✓；
+> 2026-09-28 从仓库根目录挪进 `history/` ✓ —— 根目录只留活跃文件，历史归 `history/` ✓）。
 > 为什么：本文件曾长到 **549 KB / 7683 行 / 154 个版本** ⇒ 查最近改动得先翻过一年份的历史 ✗
 > （八维评分里「文档」扣分的正是这一条 ✓）。新增条目照旧写在**最上方** ✓。
 
@@ -1287,4 +1288,4 @@ os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # = 项目根（�
 
 ---
 
-> 更早的版本（v1.21.42 及以前）已归档到 [`change_log_archive.md`](change_log_archive.md)。
+> 更早的版本（v1.21.42 及以前）已归档到 [`history/change_log_archive.md`](history/change_log_archive.md)。
