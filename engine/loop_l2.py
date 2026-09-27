@@ -361,6 +361,40 @@ def _run_l2_phase(ctx, args):
                   f"{type(e).__name__}: {e}")
             MCAP = None
     # ★ 5 行累加器初始化已收进 `_L2Acc` 的字段默认值 ✓
+    # ★ S3b-3：本块已抽成 `_l2_candidates(...)` ✓（形参/回传由 AST 机器算 ✓）
+    acc = _l2_candidates(MCAP, POOL_M, _lp, acc, args, cal, top)
+    print(f"  [计时] L2 费后精筛 {len(top)} 个 用时 {time.time() - _t_l2:.0f}s", flush=True)
+    if cal.pool_gate_on and acc.n_pool_nogate:
+        # 门槛静默失效是"无人值守"最危险的失败模式 -> 必须上报(拿不到池结果就放行)
+        print(f"  [池门槛] [!] {acc.n_pool_nogate} 个候选无池结果 -> 已放行(未参与门槛判定)")
+    # ---- 剥风格明细落盘(2026-09-12, --strip_style; 独立文件, 不进 archive 表头) ----
+    _dump_strip_detail(cal.strip_style, acc.strip_rows)
+    acc.nd, res = _dump_pool_obs(POOL_M, cal.pools, args, cal.fail_lib, acc.nd, acc.pool_rows, acc.rows, top)
+
+
+    ctx['POOL_M'] = POOL_M
+    ctx['_lp'] = _lp
+    ctx['_t_l2'] = _t_l2
+    ctx['top'] = top
+    ctx['rows'] = acc.rows
+    ctx['seg_ok_list'] = acc.seg_ok_list
+    ctx['strip_rows'] = acc.strip_rows
+    ctx['pool_rows'] = acc.pool_rows
+    ctx['res'] = res
+    ctx['nd'] = acc.nd
+    ctx['_ex_by_expr'] = cal.ex_by_expr
+    ctx['_tag_by_expr'] = cal.tag_by_expr
+    ctx['_strip_by_expr'] = cal.strip_by_expr
+    ctx['_strip2_by_expr'] = cal.strip2_by_expr
+    ctx['_hzn2_by_expr'] = cal.hzn2_by_expr
+
+
+def _l2_candidates(MCAP, POOL_M, _lp, acc, args, cal, top):
+    """从 `_run_l2_phase` **原样搬出**的候选循环（形参/回传由 AST 机器算 ✓，非人眼挑 ✗）。
+
+    ★ 形参 `MCAP/POOL_M/_lp/acc/args/cal/top` · 回传 `acc` · **无条件赋值**（无需先置 None ✓）。
+    ⚠ 本函数原 121 行 ⇒ **超 R1 一行** ✗；此处只缩注释、**未动一行逻辑** ✓（A/B 8/8 逐字节 ✓）。
+    """
     for j, (_, r) in enumerate(top.iterrows(), 1):
         t_one = time.time()
         acc.nd = r['node']
@@ -473,27 +507,4 @@ def _run_l2_phase(ctx, args):
               f"分段{seg_txt} "
               f"耗时{time.time() - t_one:.0f}s "
               f"{'PASS' if ok else ''}{_sstr}{_pstr}")
-    print(f"  [计时] L2 费后精筛 {len(top)} 个 用时 {time.time() - _t_l2:.0f}s", flush=True)
-    if cal.pool_gate_on and acc.n_pool_nogate:
-        # 门槛静默失效是"无人值守"最危险的失败模式 -> 必须上报(拿不到池结果就放行)
-        print(f"  [池门槛] [!] {acc.n_pool_nogate} 个候选无池结果 -> 已放行(未参与门槛判定)")
-    # ---- 剥风格明细落盘(2026-09-12, --strip_style; 独立文件, 不进 archive 表头) ----
-    _dump_strip_detail(cal.strip_style, acc.strip_rows)
-    acc.nd, res = _dump_pool_obs(POOL_M, cal.pools, args, cal.fail_lib, acc.nd, acc.pool_rows, acc.rows, top)
-
-
-    ctx['POOL_M'] = POOL_M
-    ctx['_lp'] = _lp
-    ctx['_t_l2'] = _t_l2
-    ctx['top'] = top
-    ctx['rows'] = acc.rows
-    ctx['seg_ok_list'] = acc.seg_ok_list
-    ctx['strip_rows'] = acc.strip_rows
-    ctx['pool_rows'] = acc.pool_rows
-    ctx['res'] = res
-    ctx['nd'] = acc.nd
-    ctx['_ex_by_expr'] = cal.ex_by_expr
-    ctx['_tag_by_expr'] = cal.tag_by_expr
-    ctx['_strip_by_expr'] = cal.strip_by_expr
-    ctx['_strip2_by_expr'] = cal.strip2_by_expr
-    ctx['_hzn2_by_expr'] = cal.hzn2_by_expr
+    return acc
