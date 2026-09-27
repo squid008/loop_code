@@ -34,6 +34,11 @@ persist_src = io.open(os.path.join(ROOT, 'engine', 'loop_persist.py'),
                       encoding='utf-8').read()  # _save_state 已迁 loop_persist
 stage_src = io.open(os.path.join(ROOT, 'engine', 'loop_stage.py'),
                     encoding='utf-8').read()  # _run_finalize 已迁 loop_stage
+# ★ 2026-09-27（函数级拆分 S1）：L2 组（`_run_l2_phase`/`_l2_strip_dual`/`_l2_pool_tags`）
+#   已从 `loop_stage.py` 搬到 **`loop_l2.py`** ⇒ 断言 L2 行为的 pattern 必须看新文件 ✓
+#   ⚠ 唯一**留在** loop_stage 的是主口径全局 `FWD`（**只准一处定义** ✓，见 §七 7.4 ✓）
+l2_src = io.open(os.path.join(ROOT, 'engine', 'loop_l2.py'),
+                 encoding='utf-8').read()
 
 print('【1】命令行入口（默认关 ⇒ 行为不变 ✓）')
 chk('有 `--dual_fwd`（默认 0 = 关 ✓）',
@@ -44,18 +49,24 @@ chk('有副口径门槛 `--min_calmar2` / `--min_sharpe2` / `--min_ic2`',
 
 print('\n【2】★ 全局口径切换：切了必须复原（否则静默污染后续候选 ✗）')
 chk('副口径求值在 `args.dual_fwd` 分支里 ✓',
-    re.search(r'if args\.dual_fwd and rr is not None:', stage_src) is not None)
+    re.search(r'if args\.dual_fwd and rr is not None:', l2_src) is not None)
 chk('★ 用 `_FM.set_fwd(int(args.dual_fwd))` 切（切的是 factor_miner 的全局 ✓）',
-    '_FM.set_fwd(int(args.dual_fwd))' in stage_src)
+    '_FM.set_fwd(int(args.dual_fwd))' in l2_src)
 # ★★★★★ 2026-09-26（v1.23.1 修）：复原必须回到**模块全局 `FWD`**（主口径），
 #   ⚠ **绝不能**写成 `_FM.set_fwd(int(_FM.FWD))` ✗✗ —— 那等于"复原成刚切过去的副口径"
 #   ⇒ **no-op** ⇒ 后续候选的**池内指标/`_hzn` 列**全按副口径算 ✗（实测池门槛 +0.254 vs 正解 +0.192 ✗）
-chk('★ **有 finally 复原**，且回到**模块全局 `FWD`**（不是 `_FM.FWD` ✗）',
-    re.search(r'finally:\s*\n\s*#[^\n]*\n(\s*#[^\n]*\n)*\s*_FM\.set_fwd\(int\(FWD\)\)', stage_src) is not None,
-    '没有 finally ⇒ 中途异常会让后续候选全按副口径评估 ✗ 且不报错 ✓')
+chk('★ **有 finally 复原**，且回到**主口径快照 `FWD`**（不是 `_FM.FWD` ✗）',
+    re.search(r'finally:\s*\n\s*#[^\n]*\n(\s*#[^\n]*\n)*\s*_FM\.set_fwd\(int\(_S\.FWD\)\)', l2_src) is not None,
+    '没有 finally ⇒ 中途异常会让后续候选全按副口径评估 ✗ 且不报错 ✓；'
+    '★ 拆分后 `FWD` 仍只准在 loop_stage.py 定义一处 ⇒ 这里读的是 `_S.FWD` ✓')
 chk('★★ **复原目标不是 `_FM.FWD`**（那是 no-op：`set_fwd` 已把它改成副口径 ✗✗）',
-    re.search(r'_FM\.set_fwd\(int\(_FM\.FWD\)\)', stage_src) is None,
+    re.search(r'_FM\.set_fwd\(int\(_FM\.FWD\)\)', l2_src) is None,
     '写成 `int(_FM.FWD)` ⇒ 复原变成 no-op ⇒ 池内指标静默改口径 ✗（2026-09-26 真事故 ✓）')
+chk('★★ 拆分后 `loop_l2.py` **不许自己再定义一份 `FWD`**（重复定义 ⇒ `--fwd` 只同步一处 ⇒ 静默失效 ✗）',
+    re.search(r'^FWD\s*=', l2_src, re.M) is None,
+    '`FWD` 只准在 loop_stage.py 定义 ✓（复用 `_S.FWD` 运行时读 ✓）')
+chk('★ `loop_l2.py` **运行时读** `_S.FWD`（`import loop_stage as _S` ✓，不是值拷贝 ✗）',
+    re.search(r'^import loop_stage as _S', l2_src, re.M) is not None)
 chk('★★ 本模块**有**主口径全局 `FWD`（`[::FWD]` 切片 + 复原都靠它 ✓）',
     re.search(r'^FWD = _FM\.FWD', stage_src, re.M) is not None)
 
@@ -65,7 +76,7 @@ print('\n【3】★ 不许在**函数体内**裸写 `FWD = …`（无 global 声
 _bad = []
 try:
     import ast
-    _tree = ast.parse(stage_src)
+    _tree = ast.parse(stage_src + '\n' + l2_src)   # ★ 两个文件都要查（L2 组已搬走 ✓）
     for _fn in [n for n in ast.walk(_tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
         _glob = {g for st in ast.walk(_fn) if isinstance(st, ast.Global) for g in st.names}
         for _st in ast.walk(_fn):
@@ -80,13 +91,13 @@ chk('函数体内没有 `FWD = …` 赋值（有 `global FWD` 声明的除外 �
 
 print('\n【4】★ `ok2/rr2/strip2` 必须在 try 之前初始化（异常路径不留 NameError ✗）')
 chk('循环内有 `rr2, strip2, ok2 = None, None, False` 预置 ✓',
-    re.search(r'rr2, strip2, ok2 = None, None, False', stage_src) is not None)
+    re.search(r'rr2, strip2, ok2 = None, None, False', l2_src) is not None)
 
 print('\n【5】★ 合并语义 + archive 加列"只在开启时"')
 chk('★ 双口径合并 = **任一通过即入库**（`if args.dual_fwd and ok2 and not ok:` ✓）',
-    re.search(r'if args\.dual_fwd and ok2 and not ok:', stage_src) is not None)
+    re.search(r'if args\.dual_fwd and ok2 and not ok:', l2_src) is not None)
 chk('★ archive 副口径列是**条件写入**（`if args.dual_fwd else {}` ✓）',
-    re.search(r'passed2=bool\(ok2\)\) if args\.dual_fwd else \{\}', stage_src) is not None,
+    re.search(r'passed2=bool\(ok2\)\) if args\.dual_fwd else \{\}', l2_src) is not None,
     '无条件加列 ⇒ 关着也改表头 ⇒ 与改造前不再逐字一致 ✗')
 
 print('\n【6】★ 文档按口径分组落（`_save_state` 收下两个字典 ✓ 否则延迟 NameError ✗）')

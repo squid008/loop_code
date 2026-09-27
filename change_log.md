@@ -20,6 +20,39 @@
 
 ---
 
+## [1.25.1] — 2026-09-27
+
+> 主题：**函数级拆分 S1 —— L2 组搬出 `loop_stage.py`**（可读性/可维护性 → 9 的第 1 步）
+> ⚠ **引擎行为逐字未变**（下述 A/B 实证 ✓）
+
+* **搬迁**：`_run_l2_phase` / `_l2_strip_dual` / `_l2_pool_tags`（**436 行**）→ 新文件 **`engine/loop_l2.py`** ✓
+  ⇒ `loop_stage.py` **1349 → 909 行**（R2 还差一步：L1 组待搬 ⇒ 目标 ≤800 ✓）
+* **怎么搬的**（避免手抄改行为 ✗）：脚本 `ai_test/_split_l2.py` 按 **AST 行范围**切片、**原文搬运** ✓，
+  只做两件可控的事：① 按"用了哪些名字"**挑 import**（23 → 12 条 ✓ 不留死 import）
+  ② `FWD` → **`_S.FWD`**（★ `FWD` 是主口径快照，**仍只准在 `loop_stage.py` 定义一处** ✓；
+     `loop_l2.py` 用 `import loop_stage as _S` **运行时读** ✓ —— **禁止**值拷贝 ✗）
+  ★ 写盘前有护栏：**任何模块级名字没被覆盖 ⇒ 拒绝写盘** ✓（本次报告"无 ✓"）
+* **同步点**（`maintainability.md §七 7.4` 预告的三个 ✓，本次命中 1 个守门）：
+  `loop_engine.py` 的 import 行改成 `from loop_l2 import (...)` ✓（**仍在 loop_engine 层 re-export**，
+  因为多个守门按 `loop_engine._run_l2_phase.__code__` 做断言 ✓）；
+  `tools/_test_dual_horizon.py` 的 L2 pattern 改看 `loop_l2.py` ✓，并**新增两条防退化断言**：
+  ① `loop_l2.py` **不许自己再定义 `FWD`** ✗ ② 必须**运行时读** `_S.FWD` ✓
+
+### ★★ 验证（本项目的铁律：名字解析 + 同 seed A/B，两条都跑 ✓）
+
+* `_test_undefined_names.py` **0 处** ✓ · `py_compile` ✓
+* 受影响守门 **7/7 全过**：`_test_dual_horizon` · `_test_fsa_freeze` · `_test_node_single` ·
+  `_test_inject_pools` · `_test_engine_mem_budget` · `_test_undefined_names` · `_test_version_sync` ✓
+* ★★ **同 seed A/B（`tools/ab_generation.py`）**：改前 `_ab/base2` ←→ 搬运后 `_ab/s1`
+  ⇒ **8 个产物逐字节相同 + stdout 逐行相同（0 差异）** ✓✓
+  （`state` 走逐字段比 ✓；对照工具此前已自证可信 ✓）
+* 轨迹已还原并**逐字节校验** ✓（池 50 未被污染 ✓）
+
+> **下一步（S2）**：同法搬 L1 组（`_run_l1_phase`/`_l1_eval`/`_l1_filter`，504 行）→ `engine/loop_l1.py`
+> ⇒ `loop_stage.py` ≈ 405 行（R2 达标 ✓）；随后 S3 = 按注释段落把那 6 个函数切到 ≤120 行（R1 ✓）。
+
+---
+
 ## [1.25.0] — 2026-09-27
 
 > 主题：**把「同 seed A/B」落成一条命令**（并**自证可信**）· 端到端守门去重 · **函数级整治方案定稿**

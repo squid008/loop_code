@@ -111,9 +111,13 @@ from loop_paths import set_mine_pool  # ★ 文件级拆分
 import loop_cache as _C  # ★ 文件级拆分：路径常量单一事实源（用 _P.STATE 运行时取，勿值拷贝）
 from loop_cache import (set_panel_cache, set_mem_budget, trim_cache,
                         trim_cache_mb)  # ★ 文件级拆分：缓存工具 re-export
-from loop_stage import (_run_prepare, _run_gen, _run_l1_phase, _run_l2_phase,
-                       _run_finalize, _l1_eval, _l1_filter, _l2_strip_dual,
-                       _l2_pool_tags)  # ★ 文件级拆分：阶段函数
+from loop_stage import (_run_prepare, _run_gen, _run_l1_phase,
+                       _run_finalize, _l1_eval, _l1_filter)  # ★ 阶段函数
+# ★ 2026-09-27（函数级拆分 S1）：**L2 组搬到 `loop_l2.py`**（R2：loop_stage 1349 → 909）
+#   ⚠ 仍在 `loop_engine` 这一层**re-export** —— `tools/_test_dual_horizon.py` 等按
+#     `loop_engine._run_l2_phase.__code__` 做断言 ⇒ 换名/挪位置必须同步改守门（见 §七 7.4 ✓）
+from loop_l2 import (_run_l2_phase, _l2_strip_dual,
+                    _l2_pool_tags)  # ★ 函数级拆分：L2 阶段
 from loop_eval import (style_features, _jscalar, node_to_dict, node_from_dict,
                       fam_quota_rows, factor_stability, seg_verify, batch_ic,
                       _critic_review_prev, _load_fail_lib, _rand_explore,
