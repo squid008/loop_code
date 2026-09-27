@@ -39,7 +39,9 @@ def chk(desc, cond, hint=''):
 
 src = io.open(ENG, encoding='utf-8').read()
 cache_src = io.open(os.path.join(ROOT, 'engine', 'loop_cache.py'), encoding='utf-8').read()  # 缓存常量已迁 loop_cache
-stage_src = io.open(os.path.join(ROOT, 'engine', 'loop_stage.py'), encoding='utf-8').read()  # L1 批自适应已迁 loop_stage
+# ★ 2026-09-27（函数级拆分 S2）：L1 组（`_run_l1_phase`/`_l1_eval`/`_l1_filter`）已搬到
+#   **`loop_l1.py`** ⇒ 本文件全部 `stage_src` 断言都看它 ✓（这些 pattern 全是 L1 的 ✓）
+stage_src = io.open(os.path.join(ROOT, 'engine', 'loop_l1.py'), encoding='utf-8').read()  # L1 批自适应已迁 loop_l1
 
 print('【1】`trim_cache_mb()` 真的按字节裁（动态验证）')
 try:

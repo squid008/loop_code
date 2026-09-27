@@ -134,7 +134,11 @@ def t_save_block_static():
     print('\n[4] 静态断言：state 保存块**只写 bank / bank_ex**（防将来并入 ext）')
     src = open(os.path.join(ENG, 'loop_engine.py'), encoding='utf-8').read()
     psrc = open(os.path.join(ENG, 'loop_persist.py'), encoding='utf-8').read()  # _save_state 已迁 loop_persist
-    stgsrc = open(os.path.join(ENG, 'loop_stage.py'), encoding='utf-8').read()  # _run_prepare/_run_l2 已迁 loop_stage
+    # ★ 2026-09-27（函数级拆分 S1/S2）：阶段函数已按 L1/L2 拆到 `loop_l1.py` / `loop_l2.py` ✗
+    #   ⇒ 本文件按"**阶段层整体**"搜（三份拼起来 ✓），否则 pattern 会随搬迁而静默找不着 ✗
+    stgsrc = ''
+    for _f in ('loop_stage.py', 'loop_l1.py', 'loop_l2.py'):
+        stgsrc += open(os.path.join(ENG, _f), encoding='utf-8').read() + '\n'
     both = src + '\n' + psrc + '\n' + stgsrc
     m = re.search(r'bank\s*=\s*bank,\s*(?:#[^\n]*\n\s*)*bank_ex\s*=\s*bank_ex,', both)
     chk(m is not None, '保存块形如 `bank=bank, ... bank_ex=bank_ex`')

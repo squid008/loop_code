@@ -39,6 +39,8 @@ stage_src = io.open(os.path.join(ROOT, 'engine', 'loop_stage.py'),
 #   ⚠ 唯一**留在** loop_stage 的是主口径全局 `FWD`（**只准一处定义** ✓，见 §七 7.4 ✓）
 l2_src = io.open(os.path.join(ROOT, 'engine', 'loop_l2.py'),
                  encoding='utf-8').read()
+l1_src = io.open(os.path.join(ROOT, 'engine', 'loop_l1.py'),
+                 encoding='utf-8').read()   # ★ S2：L1 组也搬走了（下面的 AST 检查要覆盖它 ✓）
 
 print('【1】命令行入口（默认关 ⇒ 行为不变 ✓）')
 chk('有 `--dual_fwd`（默认 0 = 关 ✓）',
@@ -76,7 +78,7 @@ print('\n【3】★ 不许在**函数体内**裸写 `FWD = …`（无 global 声
 _bad = []
 try:
     import ast
-    _tree = ast.parse(stage_src + '\n' + l2_src)   # ★ 两个文件都要查（L2 组已搬走 ✓）
+    _tree = ast.parse(stage_src + '\n' + l2_src + '\n' + l1_src)   # ★ 三个文件都要查（L1/L2 组已搬走 ✓）
     for _fn in [n for n in ast.walk(_tree) if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
         _glob = {g for st in ast.walk(_fn) if isinstance(st, ast.Global) for g in st.names}
         for _st in ast.walk(_fn):
