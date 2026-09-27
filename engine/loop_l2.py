@@ -27,6 +27,7 @@ from loop_persist import (_dump_strip_detail, _dump_pool_obs, _save_state, _cmp_
                           _gate_of, _pool_best, combine_ok, append_csv_schema_safe,
                           _StateUnpickler)
 from cost_presets import cost_label
+import dataclasses
 
 
 def _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style, rr):
@@ -290,68 +291,97 @@ def _l2_pool_tags(j, nd, fac, dates, cols, close, args, POOL_M, MCAP, _pools, _l
     #  为什么长表: 池集合由 --pools 决定, 宽表(ic_300/ic_500...)一旦换池集合就会
     #  在追加时表头错位(与 loop_archive.csv 同一个坑)。长表 = (gen,expr,pool) 三键, schema 恒定。
     #  `pool_tag`(300好用/300+500好用/全都好用/只有全A好用) 由**离线**派生(阈值可改后重算)。
+
+
+# ======================================================== B 方案（2026-09-27 · 用户拍板）
+# ★ 为什么：`_run_l2_phase` 开头原本 24 行 `x = ctx['y']` ✗ ⇒ 表达 `ctx` 口径全靠隐式局部名 ✗，
+#   而 R1 要求函数 ≤120 行 ⇒ 抽块时会变成「30 个形参的上帝参数表」✗（文档自己警告过的形态 ✗）。
+#   ⇒ 先把**只读口径**与**本代累积**分成两个有名字、有边界的对象 ✓，再抽块 ⇒ 形参 3 个 ✓。
+# ★ 名字对应只有**一个来源**：`_L2IN_MAP`（键 == 旧局部名 == 当时的 ctx 键 ✓，逐字来自源码 ✓）。
+_L2IN_MAP = {'_min_pool_calmar': 'min_pool_calmar', '_min_sharpe': 'min_sharpe', '_pool_gate_mode': 'pool_gate_mode', '_pool_gate_on': 'pool_gate_on', '_pool_gate_or_all': 'pool_gate_or_all', '_pool_obs': 'pool_obs', '_pools': 'pools', 'cols': 'cols', 'dates': 'dates', 'l1': 'l1', 'B': 'B', 'close': 'close', 'STYLE_FULL': 'STYLE_FULL', '_strip_style': 'strip_style', 'fail_lib': 'fail_lib', 'bank_ex': 'bank_ex', 'bank_ex_ext': 'bank_ex_ext', '_dup_ex_corr': 'dup_ex_corr', '_ex_by_expr': 'ex_by_expr', '_tag_by_expr': 'tag_by_expr', '_strip_by_expr': 'strip_by_expr', '_strip2_by_expr': 'strip2_by_expr', '_hzn2_by_expr': 'hzn2_by_expr'}
+
+
+@dataclasses.dataclass(frozen=True)
+class _L2In:
+    """L2 阶段**只读**口径/数据（`frozen=True` ⇒ 手误写它**立刻抛错** ✓，这是它存在的理由之一 ✓）。"""
+    min_pool_calmar: object
+    min_sharpe: object
+    pool_gate_mode: object
+    pool_gate_on: object
+    pool_gate_or_all: object
+    pool_obs: object
+    pools: object
+    cols: object
+    dates: object
+    l1: object
+    B: object
+    close: object
+    STYLE_FULL: object
+    strip_style: object
+    fail_lib: object
+    bank_ex: object
+    bank_ex_ext: object
+    dup_ex_corr: object
+    ex_by_expr: object
+    tag_by_expr: object
+    strip_by_expr: object
+    strip2_by_expr: object
+    hzn2_by_expr: object
+
+    @classmethod
+    def of(cls, ctx):
+        """按 `_L2IN_MAP` 取（**不猜**同名键 ✗）；缺键 ⇒ 立刻 KeyError ✓。"""
+        return cls(**{f: ctx[k] for k, f in _L2IN_MAP.items()})
+
+
+@dataclasses.dataclass
+class _L2Acc:
+    """本代**累积结果**（可变 ✓）。`rows/seg_ok_list/strip_rows/pool_rows/n_pool_nogate`
+    由本阶段新建 ⇒ 用默认工厂 ✓；`nd` 从 ctx 继承 ✓ 且会被 `_dump_pool_obs` 重绑 ⇒ **不能进 frozen** ✗。"""
+    rows: list = dataclasses.field(default_factory=list)
+    seg_ok_list: list = dataclasses.field(default_factory=list)
+    strip_rows: list = dataclasses.field(default_factory=list)
+    pool_rows: list = dataclasses.field(default_factory=list)
+    n_pool_nogate: int = 0
+    nd: object = None
+
+
 def _run_l2_phase(ctx, args):
     """L2 费后精筛 + 剥风格/池指标/收益流去重 + 落盘 -> 写回 ctx"""
-    _min_pool_calmar = ctx['_min_pool_calmar']
-    _min_sharpe = ctx['_min_sharpe']
-    _pool_gate_mode = ctx['_pool_gate_mode']
-    _pool_gate_on = ctx['_pool_gate_on']
-    _pool_gate_or_all = ctx['_pool_gate_or_all']
-    _pool_obs = ctx['_pool_obs']
-    _pools = ctx['_pools']
-    cols = ctx['cols']
-    dates = ctx['dates']
-    l1 = ctx['l1']
-    B = ctx['B']
-    close = ctx['close']
-    STYLE_FULL = ctx['STYLE_FULL']
-    _strip_style = ctx['_strip_style']
-    fail_lib = ctx['fail_lib']
-    bank_ex = ctx['bank_ex']
-    bank_ex_ext = ctx['bank_ex_ext']
-    _dup_ex_corr = ctx['_dup_ex_corr']
-    nd = ctx['nd']
-    _ex_by_expr = ctx['_ex_by_expr']
-    _tag_by_expr = ctx['_tag_by_expr']
-    _strip_by_expr = ctx['_strip_by_expr']
-    _strip2_by_expr = ctx['_strip2_by_expr']
-    _hzn2_by_expr = ctx['_hzn2_by_expr']
+    cal = _L2In.of(ctx)   # ★ 只读口径（23 项 ✓）
+    acc = _L2Acc(nd=ctx['nd'])   # ★ 本代累积（含 nd ✓）
 
-    POOL_M, _lp, _t_l2, top = _run_l2(_min_pool_calmar, _min_sharpe, _pool_gate_mode, _pool_gate_on, _pool_gate_or_all, _pool_obs, _pools, args, cols, dates, l1)
+    POOL_M, _lp, _t_l2, top = _run_l2(cal.min_pool_calmar, cal.min_sharpe, cal.pool_gate_mode, cal.pool_gate_on, cal.pool_gate_or_all, cal.pool_obs, cal.pools, args, cal.cols, cal.dates, cal.l1)
     MCAP = None
     if POOL_M:
         try:
-            MCAP = np.where(B['mktcap'] > 0, B['mktcap'].astype('float64'), np.nan)
+            MCAP = np.where(cal.B['mktcap'] > 0, cal.B['mktcap'].astype('float64'), np.nan)
         except Exception as e:
             print(f"  [池指标] [!] 市值加权基准不可用(只影响该列, 主流程不受影响): "
                   f"{type(e).__name__}: {e}")
             MCAP = None
-    rows = []
-    seg_ok_list = []   # 与 rows 同步, 供 critic 统计 seg_kill(不入 archive 表头)
-    strip_rows = []    # 剥风格明细(2026-09-12, --strip_style) -> 独立文件, 不进 archive 表头
-    pool_rows = []     # 池内明细(2026-09-12, --pool_obs) -> 独立文件(长表), 理由同上
-    n_pool_nogate = 0  # 池门槛「无池结果 -> 放行不误杀」的次数(代末上报, 防静默失效)
+    # ★ 5 行累加器初始化已收进 `_L2Acc` 的字段默认值 ✓
     for j, (_, r) in enumerate(top.iterrows(), 1):
         t_one = time.time()
-        nd = r['node']
+        acc.nd = r['node']
         strip_rec = None
         # ★★★★ 2026-09-22（v1.21.29 · (乙) 双口径）：副口径的备用值 —— **必须在 `try` 之前初始化** ✗
         #   （求值中途异常时会跳到 except ⇒ 若不预置就是 `NameError` ✓ 本项目反复踩的坑 ✓）
         rr2, strip2, ok2 = None, None, False
         pool_rec = []      # 本候选的各池结果(供池门槛用; 同时 extend 进 pool_rows)
         try:
-            v = eval_expr(nd, B, {})
+            v = eval_expr(acc.nd, cal.B, {})
             if r['sign'] < 0:
                 v = -v
-            fac = pd.DataFrame(v, index=dates, columns=cols)
+            fac = pd.DataFrame(v, index=cal.dates, columns=cal.cols)
             f = cs_rank(fac.astype('float64'))
-            rr = evaluate_real(f, close, str(nd), cost=args.cost,
+            rr = evaluate_real(f, cal.close, str(acc.nd), cost=args.cost,
                                window=args.window, with_ex=True, with_daily=True)
-            strip_rec, rr2, strip2, ok2 = _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style, rr)
-            pool_rec = _l2_pool_tags(j, nd, fac, dates, cols, close, args, POOL_M, MCAP, _pools, _lp, rr, strip_rec, strip2, pool_rec, _tag_by_expr, _strip_by_expr, _strip2_by_expr)
+            strip_rec, rr2, strip2, ok2 = _l2_strip_dual(j, acc.nd, f, cal.dates, cal.cols, cal.close, args, cal.STYLE_FULL, cal.strip_style, rr)
+            pool_rec = _l2_pool_tags(j, acc.nd, fac, cal.dates, cal.cols, cal.close, args, POOL_M, MCAP, cal.pools, _lp, rr, strip_rec, strip2, pool_rec, cal.tag_by_expr, cal.strip_by_expr, cal.strip2_by_expr)
             # ★ 池内明细(长表) 落 `pool_rows` —— 原在 `_l2_pool_tags` 里（那是**调用方局部** ✗），
             #   2026-09-26 移回调用方；`POOL_M` 关或 `rr is None` 时 `pool_rec` 本就是空表 ⇒ 逐字等价 ✓
-            pool_rows.extend(pool_rec)
+            acc.pool_rows.extend(pool_rec)
             del f
             gc.collect()
         except Exception as e:
@@ -361,7 +391,7 @@ def _run_l2_phase(ctx, args):
             continue
         yr = rr['yr']
         ok, _ = pass_filter(rr, args.min_ic)
-        _ok_q = (rr['calmar'] > args.min_calmar and rr['sharpe'] > _min_sharpe)
+        _ok_q = (rr['calmar'] > args.min_calmar and rr['sharpe'] > cal.min_sharpe)
         _ok_prev = ok          # 快照: 仅含 pass_filter(尚未并入 _ok_q) —— OR 语义重建的**基底**
         ok = ok and _ok_q
         _ok_hard = True
@@ -372,31 +402,31 @@ def _run_l2_phase(ctx, args):
             ok = ok and seg_ok
             _ok_q = _ok_q and seg_ok        # 分段也算「全A 量化口径」的一部分(供 OR 用)
             _ok_hard = _ok_hard and seg_ok  # ★ 同时记进硬门槛(§1.17: OR 不该撤掉它)
-        if _strip_style and args.min_strip_calmar > 0 and strip_rec is not None:
+        if cal.strip_style and args.min_strip_calmar > 0 and strip_rec is not None:
             _pass_strip = bool(strip_rec['strip_calmar'] > args.min_strip_calmar)
             ok = ok and _pass_strip
             _ok_hard = _ok_hard and _pass_strip   # ★ 同时记进硬门槛(§1.17: OR 不该撤掉它)
         _pok = None
-        if _pool_gate_on:
+        if cal.pool_gate_on:
             _pok, _pv = pool_gate_ok([q.get('calmar') for q in pool_rec],
-                                     _min_pool_calmar, _pool_gate_mode)
+                                     cal.min_pool_calmar, cal.pool_gate_mode)
             if _pok is None:                 # 无从判定 -> 放行不误杀, 但计数上报
-                n_pool_nogate += 1
+                acc.n_pool_nogate += 1
         ok = combine_ok(_ok_prev, _ok_q, _pok, _ok_hard,
-                        bool(_pool_gate_on), bool(_pool_gate_or_all))
+                        bool(cal.pool_gate_on), bool(cal.pool_gate_or_all))
         _hzn = int(_S.FWD)
         if args.dual_fwd and ok2 and not ok:
             ok = True
             _hzn = int(args.dual_fwd)
-            _hzn2_by_expr[str(nd)] = _hzn
+            cal.hzn2_by_expr[str(acc.nd)] = _hzn
         _mec, _mew = None, None
         _ex = rr.get('ex') if isinstance(rr, dict) else None
-        if _dup_ex_corr > 0 and _ex is not None:
-            _mec, _mew = ex_max_corr(_ex, _cmp_lib(bank_ex, bank_ex_ext))   # ★ 含外部池库(§1.8)
+        if cal.dup_ex_corr > 0 and _ex is not None:
+            _mec, _mew = ex_max_corr(_ex, _cmp_lib(cal.bank_ex, cal.bank_ex_ext))   # ★ 含外部池库(§1.8)
         if _ex is not None:
-            _ex_by_expr[str(nd)] = _ex
-        leaf_s, cat_s = leaf_parts(nd)
-        rows.append(dict(expr=str(nd), cat=cat_s, leaf=leaf_s,
+            cal.ex_by_expr[str(acc.nd)] = _ex
+        leaf_s, cat_s = leaf_parts(acc.nd)
+        acc.rows.append(dict(expr=str(acc.nd), cat=cat_s, leaf=leaf_s,
                          window=args.window, cost=args.cost,
                          ic=rr['ic'], ic_ir=rr['ic_ir'],
                          ann_ex=rr['ann_ex'], dd=rr['dd'], calmar=rr['calmar'],
@@ -414,9 +444,9 @@ def _run_l2_phase(ctx, args):
                                 sharpe2=(rr2['sharpe'] if rr2 is not None else np.nan),
                                 turn2=(rr2.get('turn', np.nan) if rr2 is not None else np.nan),
                                 passed2=bool(ok2)) if args.dual_fwd else {})))
-        seg_ok_list.append(seg_ok)
+        acc.seg_ok_list.append(seg_ok)
         if strip_rec is not None:
-            strip_rows.append(strip_rec)
+            acc.strip_rows.append(strip_rec)
         _sstr = ''
         if strip_rec is not None:
             _sstr = (f" | 剥风格 IC={strip_rec['strip_ic']:+.4f} "
@@ -430,9 +460,9 @@ def _run_l2_phase(ctx, args):
                 + (f"(市值{q['ann_ex_cw']*100:+.2f}%/倾斜{q['tilt']*100:+.2f}%)"
                    if np.isfinite(q.get('tilt', np.nan)) else '')
                 for q in pool_rec)
-            if _pool_gate_on:
+            if cal.pool_gate_on:
                 _pok_, _pv_ = pool_gate_ok([q.get('calmar') for q in pool_rec],
-                                           _min_pool_calmar, _pool_gate_mode)
+                                           cal.min_pool_calmar, cal.pool_gate_mode)
                 if _pv_ is not None:
                     _pstr += f" [池门槛{'过' if _pok_ else '拦'}({_pv_:+.3f})]"
         print(f"  [{j}] IC={rr['ic']:+.4f} 费后超额={rr['ann_ex']*100:+6.2f}% "
@@ -444,26 +474,26 @@ def _run_l2_phase(ctx, args):
               f"耗时{time.time() - t_one:.0f}s "
               f"{'PASS' if ok else ''}{_sstr}{_pstr}")
     print(f"  [计时] L2 费后精筛 {len(top)} 个 用时 {time.time() - _t_l2:.0f}s", flush=True)
-    if _pool_gate_on and n_pool_nogate:
+    if cal.pool_gate_on and acc.n_pool_nogate:
         # 门槛静默失效是"无人值守"最危险的失败模式 -> 必须上报(拿不到池结果就放行)
-        print(f"  [池门槛] [!] {n_pool_nogate} 个候选无池结果 -> 已放行(未参与门槛判定)")
+        print(f"  [池门槛] [!] {acc.n_pool_nogate} 个候选无池结果 -> 已放行(未参与门槛判定)")
     # ---- 剥风格明细落盘(2026-09-12, --strip_style; 独立文件, 不进 archive 表头) ----
-    _dump_strip_detail(_strip_style, strip_rows)
-    nd, res = _dump_pool_obs(POOL_M, _pools, args, fail_lib, nd, pool_rows, rows, top)
+    _dump_strip_detail(cal.strip_style, acc.strip_rows)
+    acc.nd, res = _dump_pool_obs(POOL_M, cal.pools, args, cal.fail_lib, acc.nd, acc.pool_rows, acc.rows, top)
 
 
     ctx['POOL_M'] = POOL_M
     ctx['_lp'] = _lp
     ctx['_t_l2'] = _t_l2
     ctx['top'] = top
-    ctx['rows'] = rows
-    ctx['seg_ok_list'] = seg_ok_list
-    ctx['strip_rows'] = strip_rows
-    ctx['pool_rows'] = pool_rows
+    ctx['rows'] = acc.rows
+    ctx['seg_ok_list'] = acc.seg_ok_list
+    ctx['strip_rows'] = acc.strip_rows
+    ctx['pool_rows'] = acc.pool_rows
     ctx['res'] = res
-    ctx['nd'] = nd
-    ctx['_ex_by_expr'] = _ex_by_expr
-    ctx['_tag_by_expr'] = _tag_by_expr
-    ctx['_strip_by_expr'] = _strip_by_expr
-    ctx['_strip2_by_expr'] = _strip2_by_expr
-    ctx['_hzn2_by_expr'] = _hzn2_by_expr
+    ctx['nd'] = acc.nd
+    ctx['_ex_by_expr'] = cal.ex_by_expr
+    ctx['_tag_by_expr'] = cal.tag_by_expr
+    ctx['_strip_by_expr'] = cal.strip_by_expr
+    ctx['_strip2_by_expr'] = cal.strip2_by_expr
+    ctx['_hzn2_by_expr'] = cal.hzn2_by_expr
