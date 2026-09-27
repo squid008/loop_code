@@ -177,14 +177,34 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
     print(l1[['expr', 'ic', 'ic_ir', 'stab']].head(15).round(4).to_string(index=False))
     return l1
 
+# ★★★ 以下是本函数**函数体内**的设计说明（S3a 只搬位置、一字未改 ✓）
+#   规则：连续 ≥3 行的论述块上移；贴行注释留在代码旁（保局部性 ✓）
+    # ★★★★★ 2026-09-21（治本）：批次大小**按字节自适应** ✗ —— 固定 40 个候选时，
+    #   单条面板的体积随**池宽**变化（1000 池子面板 2094×2818 ≈ 47 MB ⇒ 一批 ≈ 1.9 GB ✗）
+    #   ⇒ 取"子面板里任一字段"的真实 dtype/形状算单条 MB，再把批大小压到 `_C.BATCH_MB` 以内 ✓
+            # ★★★★★ 2026-09-21（治本·第二步）：**批内也裁** ✗
+            #   原来只在"**每批结束**"裁一次（下面 `trim_cache(_C._LRU, _C.LRU_MAX)` ✓）
+            #   ⇒ 一批之内 `_C._LRU` 能一路涨到第一个峰值（实测第一批就顶到 8.9 GB ✗，
+            #     改之前更是 12.5~14.8 GB 反复 ✗）⇒ 每 8 个候选就裁一次 ✓
+            #   代价：`trim_cache_mb` 只是把 `nbytes` 加起来（O(条数) ✓）⇒ 可忽略 ✓
+        # 形状量: 仅在需要时算(默认 --min_mono 0 + score_mode old -> 零额外开销)
+        # 防御: 单个候选形状计算异常不应拖垮整代(引擎常无人值守), 记 None 即等同"无形状值"
+        # 形状量 / 风格暴露: 仅在需要时算(默认 --min_mono 0 + score_mode old + 无 --style_obs
+        # -> 零额外开销)。防御: 单个候选异常不应拖垮整代(引擎常无人值守), 记 None 即等同"无值"
+        # ---- 跨阶段复用 L1 值(2026-09-12): 只存**过 ic/stab 门槛**候选的 [::FWD] 视图。
+        #  存的是符号对齐后的同一数组 -> 去相关/去重的 rank_rows 结果逐位不变(行为等价)。
+        #  成本仅一次 memcpy(~3.35MB/个); 省下的是一次完整 eval_expr + rank_rows(~2.5s/个)。
+    # ---- 风格暴露观测落盘(2026-09-11, --style_obs; 失败只告警不拖垮主流程) ----
+    #  ★位置很关键: **紧跟 L1 求值**。引擎在 L1 之后有多处早退(无候选通过 / 形状门槛全灭 /
+    #   去相关全灭), 若放到代末则这些代的样本全丢(试点已实测: n=40 时 17->10 后仍可能全灭)。
+    #  观测样本 = 本代**被求值的全部候选**(含未过门槛者), 这正是离线配对比较需要的总体。
+    #  每行 = 一个候选: ic/ic_ir/stab/mono/shape_pos + 4 项风格暴露(见 roadmap §8.4)。
+    #  是否进 L2 / 是否通过 L2: 用 (gen, expr) 与 docs/loop_archive.csv 离线 join 即可。
 def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
              _reuse_v, STYLE_S, R_SHAPE, Usub_s, Rsub_s_n):
     """L1 批量求值 + 形状量/风格暴露 + 风格观测落盘 + 失败库记录 -> (l1, obs_df)"""
     stats = []
     BATCH = args.batch
-    # ★★★★★ 2026-09-21（治本）：批次大小**按字节自适应** ✗ —— 固定 40 个候选时，
-    #   单条面板的体积随**池宽**变化（1000 池子面板 2094×2818 ≈ 47 MB ⇒ 一批 ≈ 1.9 GB ✗）
-    #   ⇒ 取"子面板里任一字段"的真实 dtype/形状算单条 MB，再把批大小压到 `_C.BATCH_MB` 以内 ✓
     try:
         _k0 = next(iter(Bsub))
         _a0 = np.asarray(Bsub[_k0])
@@ -224,11 +244,6 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
                 continue
             vals.append(v)
             kidx.append(b0 + i)
-            # ★★★★★ 2026-09-21（治本·第二步）：**批内也裁** ✗
-            #   原来只在"**每批结束**"裁一次（下面 `trim_cache(_C._LRU, _C.LRU_MAX)` ✓）
-            #   ⇒ 一批之内 `_C._LRU` 能一路涨到第一个峰值（实测第一批就顶到 8.9 GB ✗，
-            #     改之前更是 12.5~14.8 GB 反复 ✗）⇒ 每 8 个候选就裁一次 ✓
-            #   代价：`trim_cache_mb` 只是把 `nbytes` 加起来（O(条数) ✓）⇒ 可忽略 ✓
             if i and (i % 8) == 0:
                 trim_cache_mb(_C._LRU, _C.LRU_MB)
         if not vals:
@@ -240,10 +255,6 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
         vals = [(-v if s < 0 else v) for v, s in zip(vals, sign)]
         mu, ir = np.abs(mu), np.abs(ir)
         stab = [factor_stability(v, None) for v in vals]
-        # 形状量: 仅在需要时算(默认 --min_mono 0 + score_mode old -> 零额外开销)
-        # 防御: 单个候选形状计算异常不应拖垮整代(引擎常无人值守), 记 None 即等同"无形状值"
-        # 形状量 / 风格暴露: 仅在需要时算(默认 --min_mono 0 + score_mode old + 无 --style_obs
-        # -> 零额外开销)。防御: 单个候选异常不应拖垮整代(引擎常无人值守), 记 None 即等同"无值"
         shp, sty, shn = [], [], []
         for v in vals:
             if not need_shape and not _style_obs:
@@ -296,9 +307,6 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
                 for _k in STYLE_KEYS:
                     d['st_' + _k] = sy[_k]
             stats.append(d)
-        # ---- 跨阶段复用 L1 值(2026-09-12): 只存**过 ic/stab 门槛**候选的 [::FWD] 视图。
-        #  存的是符号对齐后的同一数组 -> 去相关/去重的 rank_rows 结果逐位不变(行为等价)。
-        #  成本仅一次 memcpy(~3.35MB/个); 省下的是一次完整 eval_expr + rank_rows(~2.5s/个)。
         if _reuse_v and vals:
             for _d_, _v in zip(stats[-len(vals):], vals):
                 if _C._VREUSE_MB[0] >= _C._VREUSE_CAP_MB:
@@ -316,12 +324,6 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
           f"({(time.time()-t_l1)/max(n_eval,1):.2f}s/候选)")
     _C._LRU.clear()                                       # L1 结束: 释放跨批子树缓存
     l1 = pd.DataFrame(stats)
-    # ---- 风格暴露观测落盘(2026-09-11, --style_obs; 失败只告警不拖垮主流程) ----
-    #  ★位置很关键: **紧跟 L1 求值**。引擎在 L1 之后有多处早退(无候选通过 / 形状门槛全灭 /
-    #   去相关全灭), 若放到代末则这些代的样本全丢(试点已实测: n=40 时 17->10 后仍可能全灭)。
-    #  观测样本 = 本代**被求值的全部候选**(含未过门槛者), 这正是离线配对比较需要的总体。
-    #  每行 = 一个候选: ic/ic_ir/stab/mono/shape_pos + 4 项风格暴露(见 roadmap §8.4)。
-    #  是否进 L2 / 是否通过 L2: 用 (gen, expr) 与 docs/loop_archive.csv 离线 join 即可。
     obs_df = None
     if _style_obs and stats:
         try:
@@ -352,6 +354,55 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
 
     return l1, obs_df
 
+# ★★★ 以下是本函数**函数体内**的设计说明（S3a 只搬位置、一字未改 ✓）
+#   规则：连续 ≥3 行的论述块上移；贴行注释留在代码旁（保局部性 ✓）
+    # 池内指标(2026-09-12, 见 docs/log/2026-09.md §8.9 B+B′): L2 在**池内**重跑回测,
+    # 用于给入库因子打「300好用/300+500好用/全都好用/只有全A好用」标签, 供将来因子库 PG 筛选。
+    # ★关键: L2 用的是**全量面板**(5384列), 池股天然都在里面 -> **不需要扩 L1 子面板列**
+    #  (那是 L1 层池感知才需要的代价: 随机2000 ∪ 池union2701 ≈ 3700 列 = +85% 成本)。
+    # ★ 池门槛与全A 口径改 **OR** 语义(2026-09-13, §8.26; 默认关=保持原 AND 行为)。
+    #   依据: 池内有效与全A 有效基本不同源(300 池"池内有效但全A无效"31 个 vs "都有效"15 个)
+    #   ⇒ 对"只在池内有效"的因子, AND 等于自相矛盾。组合标定: OR 保留量约为 AND 的 8 倍。
+    # ★need_shape 必须把 --style_obs / --shape_neutral 也算进来(2026-09-11 实测踩坑):
+    #  否则单独开 --style_obs(默认 old 排序)时 mono/shape_pos 不计算 -> 观测文件这两列全 NaN,
+    #  离线就无法复算 score_new = stab×(0.5+0.5·shape_pos), 整轮观测作废。
+    #  这**不改变选择压力**(need_shape 只管"算不算"), 只是让观测/中性化自足。
+    # ---- 风格暴露观测(2026-09-11, --style_obs 默认关) ----
+    #  口径 = standard_test【3】风格归因的四项特征定义; 取 **L1 子面板 + [::FWD] 调仓日视图**
+    #  (与 decile_shape 同视图 -> 两者共用一次 rank_rows); 快, 但只是"相对比较用代理",
+    #  绝对值以 standard_test 全量报告为准。用途: 验证批1 是否让因子更往低换手/低成交额挤。
+    # ★ L2 剥风格需要**全面板**风格值(§8.13): 与 L1 子面板版共用一次 `style_features`
+    #  (该函数两次 rolling 较贵 -> 一代只算一次)。只在 --strip_style 时保留全量
+    #  (lncap+lnamt 各 71MB) —— 不用时零额外开销。
+    # ★风格中性收益: 把远期收益对 lncap/lnamt 逐期回归取残差。两种用途——
+    #   ① --style_obs:     只落观测(记 shape_pos_n), 供**离线**配对比较 old/new/new_n
+    #   ② --shape_neutral: 作为**主形状量**的收益入参 -> shape_pos 即"风格中性后的档位单调性",
+    #                       直接进入 --min_mono 与 l1_score(new)。§8.5.1 判定 ✅ 后的行动①。
+    # ---- 结构族配额(QuantaAlpha 冗余检测移植, gen31) ----
+    # 数值去重(|corr|>dedup_corr) 只拦"数值近重复"; FSA 冻结只拦"完整串复用"。同族"外层模板
+    # 固定、内层微调"的候选(score 各异、公共结构巨大)会继续挤满 L2 名额与下代种子池, 费后全灭 ->
+    # 每模板族最多放 fam_quota 条进 L2/种子池(保结构多样性), FSA/下代种子池因此天然跨族。
+    # gen51: 族指纹增补"单叶变换"维度(floor_sole_leaf) -> max(<某叶单目变换>, <地板>) 的
+    # "同叶不同壳"代理候选归为同族, 由配额拦重复(防 F23 型"leverage 套壳+地板"反复重发现)。
+    # ---- FSA 骨架统计(对齐中金: 抽象因子结构/剥离窗口参数) ----
+    # 观察样本 = 本代L1通过者 + 前50候选; 统计对象 = 非叶子结构骨架(剥掉窗口数字)
+    # ★★★★ 2026-09-19 修真 BUG（同 v1.21.6/1.21.7 那一类，第三个 ✗ —— 抢读崩溃日志才拿到 traceback ✗）：
+    #     File loop_engine.py, line 2679, in run
+    #         frozen, nd, r, s = _fsa_stats(args, cands, frozen, fsa, l1, nd, r, s, fsa_frz)
+    #     UnboundLocalError: cannot access local variable 's'
+    #   ⇒ **等号两边同名**：右边要读的 `s` 此刻还没绑定，左边才刚给它赋值 ✗
+    #   ★ 为什么首代才会塌：`s` 唯一的"真"赋值在 `s = pick_parent(rng, seeds, …)`，
+    #     而那一句在 `if seeds and r < cut[2]:` 里 ⇒ **首代没有种子（50 池 bank=0）⇒ 走不到** ✗
+    #     （另一处 `for v, s in zip(...)` 是**推导式自己的作用域**，绑不到外面的 s ✗）
+    #   （本处与前一处的修复合并在 **v1.21.7** 一起发布 ✓）
+    #   ★ 已核实这两处 `r`/`s` 都是**死透传**：`_fsa_stats` 内部只把 `s` 当自己的循环变量、
+    #     最后原样吐回 ✓；`_save_state` 里的 `s` 也是**局部**（函数内自己 `s = skeleton(nd)`）⇒
+    #     传进去的参数**从来没被读过** ✓ ⇒ 给安全初值即可，**语义零变化** ✓
+    #   （`r` 不必管：它在 L2163 由 `_critic_review_prev` **无条件**赋值 ✓；只有 `s` 会漏 ✗）
+    # ---- 中金【审查】环节: B角候选级 LLM 精判(硬滤后抽5深判, 与生成侧隔离防自证) ----
+    # 硬规则已在上方先滤(IC/稳定/去相关/去重/跨量纲/FSA) -> 剩余候选随机抽 --jury_n 个,
+    # 由审查侧 Sub-agent LLM(loop_llm.jury_verdict)判经济含义/过拟合边界/已知族嫌疑,
+    # verdict=KILL 者剔除出 L2 费后回测; 无 key/调用失败一律放行不误杀(无人值守铁律)。
 def _run_l1_phase(ctx, args):
     """L1 批量 IC + 过滤（形状/去相关/去重/族配额/FSA/jury）-> 写回 ctx；早退返回 True"""
     U = ctx['U']
@@ -381,18 +432,11 @@ def _run_l1_phase(ctx, args):
     # 剥风格入库判据(2026-09-12, 见 docs/log/2026-09.md §8.13): L2 记录(可选门槛)
     # 把因子对 lncap+lnamt 秩中性化后重跑回测 —— 判"超额是否只是市值/成交额风格暴露"。
     _strip_style = bool(getattr(args, 'strip_style', False))
-    # 池内指标(2026-09-12, 见 docs/log/2026-09.md §8.9 B+B′): L2 在**池内**重跑回测,
-    # 用于给入库因子打「300好用/300+500好用/全都好用/只有全A好用」标签, 供将来因子库 PG 筛选。
-    # ★关键: L2 用的是**全量面板**(5384列), 池股天然都在里面 -> **不需要扩 L1 子面板列**
-    #  (那是 L1 层池感知才需要的代价: 随机2000 ∪ 池union2701 ≈ 3700 列 = +85% 成本)。
     _min_pool_calmar = float(getattr(args, 'min_pool_calmar', -1.0))
     _pool_gate_mode = getattr(args, 'pool_gate_mode', 'any') or 'any'
     # ★ 全A 口径的夏普门槛(2026-09-13, §8.26): 原先是**硬编码 0.5**;
     #   默认 0.5 = 行为完全不变(向后兼容)。与 --pool_gate_or_all 配合才有意义。
     _min_sharpe = float(getattr(args, 'min_sharpe', 0.5))
-    # ★ 池门槛与全A 口径改 **OR** 语义(2026-09-13, §8.26; 默认关=保持原 AND 行为)。
-    #   依据: 池内有效与全A 有效基本不同源(300 池"池内有效但全A无效"31 个 vs "都有效"15 个)
-    #   ⇒ 对"只在池内有效"的因子, AND 等于自相矛盾。组合标定: OR 保留量约为 AND 的 8 倍。
     _pool_gate_or_all = bool(getattr(args, 'pool_gate_or_all', False))
     # ★ 收益流去重阈值(2026-09-13, roadmap §8.34; 0=关)。见 loop_engine.ex_max_corr 的 docstring。
     _dup_ex_corr = float(getattr(args, 'dup_ex_corr', 0.0) or 0.0)
@@ -426,10 +470,6 @@ def _run_l1_phase(ctx, args):
     _reuse_v = bool(getattr(args, 'reuse_v', 1))       # 跨阶段复用 L1 值(默认开, 行为等价)
     _C.VCACHE.clear()
     _C._VREUSE_MB[0] = 0.0
-    # ★need_shape 必须把 --style_obs / --shape_neutral 也算进来(2026-09-11 实测踩坑):
-    #  否则单独开 --style_obs(默认 old 排序)时 mono/shape_pos 不计算 -> 观测文件这两列全 NaN,
-    #  离线就无法复算 score_new = stab×(0.5+0.5·shape_pos), 整轮观测作废。
-    #  这**不改变选择压力**(need_shape 只管"算不算"), 只是让观测/中性化自足。
     need_shape = ((_min_mono > 0) or (_score_mode == 'new')
                   or _style_obs or _shape_neutral)
     if _style_obs and _shape_neutral:
@@ -440,14 +480,7 @@ def _run_l1_phase(ctx, args):
               f"score_mode={_score_mode}, style_obs={_style_obs}, "
               f"shape_neutral={_shape_neutral}; "
               f"调仓日视图 {Rsub_s.shape[0]}期)")
-    # ---- 风格暴露观测(2026-09-11, --style_obs 默认关) ----
-    #  口径 = standard_test【3】风格归因的四项特征定义; 取 **L1 子面板 + [::FWD] 调仓日视图**
-    #  (与 decile_shape 同视图 -> 两者共用一次 rank_rows); 快, 但只是"相对比较用代理",
-    #  绝对值以 standard_test 全量报告为准。用途: 验证批1 是否让因子更往低换手/低成交额挤。
     STYLE_S, FEAT_S = {}, {}
-    # ★ L2 剥风格需要**全面板**风格值(§8.13): 与 L1 子面板版共用一次 `style_features`
-    #  (该函数两次 rolling 较贵 -> 一代只算一次)。只在 --strip_style 时保留全量
-    #  (lncap+lnamt 各 71MB) —— 不用时零额外开销。
     STYLE_FULL = {}
     if _style_obs or _shape_neutral or _strip_style:
         _sf = style_features(B)
@@ -466,10 +499,6 @@ def _run_l1_phase(ctx, args):
             print(f"  [剥风格] L2 将记录剥 lncap+lnamt 后的 IC/超额/Calmar -> {_P.STRIP_OBS}"
                   + (f"; **入库门槛 strip_calmar>{args.min_strip_calmar:g}**"
                      if args.min_strip_calmar > 0 else "; 仅记录不设门槛(默认)"))
-    # ★风格中性收益: 把远期收益对 lncap/lnamt 逐期回归取残差。两种用途——
-    #   ① --style_obs:     只落观测(记 shape_pos_n), 供**离线**配对比较 old/new/new_n
-    #   ② --shape_neutral: 作为**主形状量**的收益入参 -> shape_pos 即"风格中性后的档位单调性",
-    #                       直接进入 --min_mono 与 l1_score(new)。§8.5.1 判定 ✅ 后的行动①。
     Rsub_s_n = None
     if _style_obs or _shape_neutral:
         try:
@@ -486,36 +515,11 @@ def _run_l1_phase(ctx, args):
     l1 = _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mode)
     if l1 is None:
         return True
-    # ---- 结构族配额(QuantaAlpha 冗余检测移植, gen31) ----
-    # 数值去重(|corr|>dedup_corr) 只拦"数值近重复"; FSA 冻结只拦"完整串复用"。同族"外层模板
-    # 固定、内层微调"的候选(score 各异、公共结构巨大)会继续挤满 L2 名额与下代种子池, 费后全灭 ->
-    # 每模板族最多放 fam_quota 条进 L2/种子池(保结构多样性), FSA/下代种子池因此天然跨族。
-    # gen51: 族指纹增补"单叶变换"维度(floor_sole_leaf) -> max(<某叶单目变换>, <地板>) 的
-    # "同叶不同壳"代理候选归为同族, 由配额拦重复(防 F23 型"leverage 套壳+地板"反复重发现)。
     fam_blocked, l1 = _apply_fam_quota(args, l1)
 
-    # ---- FSA 骨架统计(对齐中金: 抽象因子结构/剥离窗口参数) ----
-    # 观察样本 = 本代L1通过者 + 前50候选; 统计对象 = 非叶子结构骨架(剥掉窗口数字)
-    # ★★★★ 2026-09-19 修真 BUG（同 v1.21.6/1.21.7 那一类，第三个 ✗ —— 抢读崩溃日志才拿到 traceback ✗）：
-    #     File loop_engine.py, line 2679, in run
-    #         frozen, nd, r, s = _fsa_stats(args, cands, frozen, fsa, l1, nd, r, s, fsa_frz)
-    #     UnboundLocalError: cannot access local variable 's'
-    #   ⇒ **等号两边同名**：右边要读的 `s` 此刻还没绑定，左边才刚给它赋值 ✗
-    #   ★ 为什么首代才会塌：`s` 唯一的"真"赋值在 `s = pick_parent(rng, seeds, …)`，
-    #     而那一句在 `if seeds and r < cut[2]:` 里 ⇒ **首代没有种子（50 池 bank=0）⇒ 走不到** ✗
-    #     （另一处 `for v, s in zip(...)` 是**推导式自己的作用域**，绑不到外面的 s ✗）
-    #   （本处与前一处的修复合并在 **v1.21.7** 一起发布 ✓）
-    #   ★ 已核实这两处 `r`/`s` 都是**死透传**：`_fsa_stats` 内部只把 `s` 当自己的循环变量、
-    #     最后原样吐回 ✓；`_save_state` 里的 `s` 也是**局部**（函数内自己 `s = skeleton(nd)`）⇒
-    #     传进去的参数**从来没被读过** ✓ ⇒ 给安全初值即可，**语义零变化** ✓
-    #   （`r` 不必管：它在 L2163 由 `_critic_review_prev` **无条件**赋值 ✓；只有 `s` 会漏 ✗）
     s = None                           # 首代没有"亲本节点"这个遗留值 ⇒ None（下游不读 ✓）
     frozen, nd, r, s = _fsa_stats(args, cands, frozen, fsa, l1, nd, r, s, fsa_frz)
 
-    # ---- 中金【审查】环节: B角候选级 LLM 精判(硬滤后抽5深判, 与生成侧隔离防自证) ----
-    # 硬规则已在上方先滤(IC/稳定/去相关/去重/跨量纲/FSA) -> 剩余候选随机抽 --jury_n 个,
-    # 由审查侧 Sub-agent LLM(loop_llm.jury_verdict)判经济含义/过拟合边界/已知族嫌疑,
-    # verdict=KILL 者剔除出 L2 费后回测; 无 key/调用失败一律放行不误杀(无人值守铁律)。
     jury_lines, l1, n_jury_kill, n_jury_rev = _jury_deep_review(args, l1, loop_llm, rng)
 
 
