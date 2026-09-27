@@ -252,3 +252,73 @@
 
 ⚠ **仍然只能由人做的部分**（如实留着，不假装自动化 ✗）：change_log 的主题措辞 · README 版本表 ·
 tag 说明 · **性能优化**（需要先授权 ✗）。
+
+---
+
+## 七、函数级整治方案（2026-09-27 侦察定稿）
+
+> 目标：清掉 `loop_stage.py` 的 **R2（1349 行 > 800）** 与 **6 个函数超 R1（>120）** ——
+> 这正是「可读性 8」「可维护性 8」**唯一的扣分项**（见 §五 末 ✓）。
+> 此前"收益为负"的结论建立在"抽纯函数 ⇒ 13~18 个参数爆炸" ✗ 上 —— **本次侦察否掉了这个前提** ✓
+
+### 7.1 侦察结论（`ai_test/_ls_inventory.py` 实测 · 2026-09-27）
+
+`engine/loop_stage.py` = **1349 行 / 9 个函数 / 69 个 ctx 键**：
+
+| 行数 | 函数 | 形参 | 处置 |
+|---|---|---|---|
+| 251 | `_run_l2_phase(ctx, args)` | 2 | 按注释段落切 3 段 ✓ |
+| 197 | `_run_l1_phase(ctx, args)` | 2 | 切 2~3 段 ✓ |
+| 174 | `_l1_eval(...)` | **13** ✗ | 改收 `(ctx, args, 少量)` ✓ |
+| 151 | `_run_prepare(args)` | 1 | 切 2 段 ✓ |
+| 135 | `_run_gen(ctx, args)` | 2 | 切 2 段 ✓ |
+| 133 | `_l1_filter(...)` | **9** ✗ | 同上 ✓ |
+| 93 | `_l2_pool_tags(...)` | **18** ✗✗ | ★ 参数爆炸本体 ⇒ 改传 ctx ✓ |
+| 90 | `_l2_strip_dual(...)` | 10 | 同上 ✓ |
+| 57 | `_run_finalize(ctx, args)` | 2 | 不动 ✓ |
+
+### 7.2 ★ 关键判断：**不需要新造 dataclass 配置对象** ✓
+
+* **`ctx`（69 键）= 状态对象** ✓ —— R6 早把 `dates/cols/close/B/Bsub/Rsub/Usub/bank/POOL_M/
+  _pools/_lp/_strip_style/…` 全收在里面 ✓
+* **`args`（Namespace）= 口径配置对象** ✓ —— `min_ic/min_calmar/decorr/seg_n/strip_style/…`
+  本来就是**属性读**（`args.min_ic` ✓），并不存在 20 个位置参数 ✗
+
+⇒ "参数爆炸"**只发生在 4 个子函数的签名上** ✗（18/13/10/9）—— 它们把 **ctx 里的东西拆开传**了 ✗✗。
+⇒ 修法：一律改传 **`(ctx, args, <2~4 个本轮特有量>)`** ✓，内部按需 `ctx[...]` ✓
+（每处 5~10 行解包换掉 13~18 参数 ✓，比例远好于先前那次"22 行换 13 参数" ✗）
+
+### 7.3 拆文件方案（R2：1349 → 三个文件都 ≤800）
+
+| 新文件 | 内容 | 预计行数 |
+|---|---|---|
+| `engine/loop_l1.py` | `_run_l1_phase` + `_l1_eval` + `_l1_filter` | ~510 |
+| `engine/loop_l2.py` | `_run_l2_phase` + `_l2_strip_dual` + `_l2_pool_tags` | ~440 |
+| `engine/loop_stage.py` | `_run_prepare` + `_run_gen` + `_run_finalize` + 头部 | ~400 |
+
+### 7.4 ★★ 三个**必须同步**的点（漏一个就静默崩 —— v1.23.0 的教训）
+
+1. **`engine/loop_engine.py` L114-116 的 import 行**：9 个阶段函数改成从新模块 import ✓
+2. ★ **`_LS.FWD` 同步**（`loop_engine.py` L615-616：`import loop_stage as _LS; _LS.FWD = _FM.FWD`）✗ ——
+   `FWD` 是**主口径快照**（副口径切换期间 `_FM.FWD` 会短暂变成副值 ✗ ⇒ **不能**改成读 `_FM.FWD` ✓）；
+   拆文件后仍必须**只有一处定义** ✓ ⇒ 别名留在 `loop_stage.py` ✓，新模块**运行时读** ✓
+   （`import loop_stage as _S` + `_S.FWD` ✓；**禁止** `from loop_stage import FWD` ✗ 那是值拷贝 ✗）
+3. ★ **3 个静态守门直接读 `loop_stage.py`** ⇒ 搬函数必须同步改它们：
+   `tools/_test_inject_pools.py` · `tools/_test_fsa_freeze.py` ·
+   `tools/_test_dual_horizon.py`（★ 断言 `_run_l2_phase.__code__` 里 `pass_filter` 的解析方式 ✗
+   ⇒ 切分后要指向**新落点** ✓）
+
+### 7.5 验收协议（**每步都过，未过不进下一步** ✓）
+
+1. `python tools/_test_undefined_names.py`（0 处 ✓）+ `py_compile` ✓
+2. ★ **同 seed A/B 逐字对照**（工具已就绪并**自证可信** ✓）：
+   ```
+   python tools/ab_generation.py --out ai_test/_ab/base      # 改前（已存：引擎此刻未改 ✓）
+   …改代码…
+   python tools/ab_generation.py --out ai_test/_ab/after
+   python tools/ab_generation.py --diff ai_test/_ab/base ai_test/_ab/after
+   ```
+   ★ 自证记录（2026-09-27）：**同代码跑两遍 ⇒ 8 个产物逐字节相同 + stdout 逐行相同（0 差异）** ✓
+   —— 前提是 `PYTHONHASHSEED=0` ✓（工具已内置；否则 `leaf_hist` 字典键序会假报差异 ✗）
+3. `python tools/release_check.py`（55 条守门全绿 · ~11 分钟 ✓）
+4. 三条数字（`_audit_codebase.py`）：**`>800 行文件 = 0`** ✓ · `loop_stage*.py` **无 >120 行函数** ✓
