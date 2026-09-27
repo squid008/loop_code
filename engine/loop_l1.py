@@ -220,6 +220,53 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
               % (type(_e_b).__name__, str(_e_b)[:60], BATCH), flush=True)
     n_eval = 0
     t_l1 = time.time()
+    # ★ S3b-3：本块已抽成 `_l1_batches(...)` ✓（形参/回传由 AST 机器算 ✓）
+    k, n_eval, nd = _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _reuse_v, _style_obs, args, cands, fail_lib, n_eval, need_shape, stats, t_l1)
+    print(f"L1 求值完成 {n_eval} 个, 用时 {time.time()-t_l1:.0f}s "
+          f"({(time.time()-t_l1)/max(n_eval,1):.2f}s/候选)")
+    _C._LRU.clear()                                       # L1 结束: 释放跨批子树缓存
+    l1 = pd.DataFrame(stats)
+    obs_df = None
+    if _style_obs and stats:
+        try:
+            obs_df = pd.DataFrame([dict(
+                gen=args.gen, expr=d_['expr'], sign=d_['sign'],
+                ic=d_['ic'], ic_ir=d_['ic_ir'], stab=d_['stab'],
+                mono=d_.get('mono', np.nan), shape_pos=d_.get('shape_pos', np.nan),
+                mono_n=d_.get('mono_n', np.nan), shape_pos_n=d_.get('shape_pos_n', np.nan),
+                **{'st_' + k: d_['st_' + k] for k in STYLE_KEYS})
+                for d_ in stats if ('st_' + STYLE_KEYS[0]) in d_])
+            need_h = (not os.path.exists(_P.STYLE_OBS)) or os.path.getsize(_P.STYLE_OBS) == 0
+            obs_df.to_csv(_P.STYLE_OBS, index=False, mode='a', header=need_h,
+                          encoding='utf-8-sig')
+            print(f"已存 {_P.STYLE_OBS} (追加, 本代 {len(obs_df)} 条候选)")
+            if obs_df['shape_pos'].isna().all():          # 自检: 见上方 need_shape 的踩坑注释
+                print("  [风格观测] [!] shape_pos 全为 NaN -> need_shape 未生效, "
+                      "本轮观测无法复算 score_new, 请检查 --score_mode/--min_mono/--style_obs")
+        except Exception as e:
+            obs_df = None
+            print(f"  [风格观测] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
+    # 失败模式库: IC/稳定性不过线的候选按骨架记失败(过线者待 L2 后记 ok)
+    for r_ in stats:
+        nd = r_['node']
+        if r_['ic'] <= args.min_ic:
+            flib_mark(fail_lib, nd, args.gen, False, 'ic')
+        elif r_['stab'] <= args.min_stab:
+            flib_mark(fail_lib, nd, args.gen, False, 'stab')
+
+    return l1, obs_df
+
+
+def _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _reuse_v, _style_obs, args, cands, fail_lib, n_eval, need_shape, stats, t_l1):
+    """S3b-3（2026-09-27）：从 `_l1_eval` **原样搬出**（R1：函数 ≤120 行 ✗）。
+
+    ★ 形参与回传**都由 AST 机器算** ✓（不人眼挑 ✗）：
+      形参 = 块里读到、块外才有：`BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _reuse_v, _style_obs, args, cands, fail_lib, n_eval, need_shape, stats, t_l1`
+      回传 = 块里赋值、块外还读：`k, n_eval, nd`
+      条件赋值（先置 None）：`k, nd`
+    """
+    k = None   # ★ 条件赋值：块内只在嵌套分支里绑 ⇒ 先占位（原函数里作用域覆盖全函数 ✓）
+    nd = None   # ★ 条件赋值：块内只在嵌套分支里绑 ⇒ 先占位（原函数里作用域覆盖全函数 ✓）
     for b0 in range(0, len(cands), BATCH):
         print(f"  L1 批 {min(b0 + BATCH, len(cands))}/{len(cands)} 开始 "
               f"(已用 {time.time()-t_l1:.0f}s)", flush=True)
@@ -320,39 +367,7 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
         gc.collect()
         trim_cache(_C._LRU, _C.LRU_MAX)                      # LRU 容量控制(防OOM)
         trim_cache_mb(_C._LRU, _C.LRU_MB)                    # ★ 治本: 字节上限(池越宽单条越大 ✗)
-    print(f"L1 求值完成 {n_eval} 个, 用时 {time.time()-t_l1:.0f}s "
-          f"({(time.time()-t_l1)/max(n_eval,1):.2f}s/候选)")
-    _C._LRU.clear()                                       # L1 结束: 释放跨批子树缓存
-    l1 = pd.DataFrame(stats)
-    obs_df = None
-    if _style_obs and stats:
-        try:
-            obs_df = pd.DataFrame([dict(
-                gen=args.gen, expr=d_['expr'], sign=d_['sign'],
-                ic=d_['ic'], ic_ir=d_['ic_ir'], stab=d_['stab'],
-                mono=d_.get('mono', np.nan), shape_pos=d_.get('shape_pos', np.nan),
-                mono_n=d_.get('mono_n', np.nan), shape_pos_n=d_.get('shape_pos_n', np.nan),
-                **{'st_' + k: d_['st_' + k] for k in STYLE_KEYS})
-                for d_ in stats if ('st_' + STYLE_KEYS[0]) in d_])
-            need_h = (not os.path.exists(_P.STYLE_OBS)) or os.path.getsize(_P.STYLE_OBS) == 0
-            obs_df.to_csv(_P.STYLE_OBS, index=False, mode='a', header=need_h,
-                          encoding='utf-8-sig')
-            print(f"已存 {_P.STYLE_OBS} (追加, 本代 {len(obs_df)} 条候选)")
-            if obs_df['shape_pos'].isna().all():          # 自检: 见上方 need_shape 的踩坑注释
-                print("  [风格观测] [!] shape_pos 全为 NaN -> need_shape 未生效, "
-                      "本轮观测无法复算 score_new, 请检查 --score_mode/--min_mono/--style_obs")
-        except Exception as e:
-            obs_df = None
-            print(f"  [风格观测] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
-    # 失败模式库: IC/稳定性不过线的候选按骨架记失败(过线者待 L2 后记 ok)
-    for r_ in stats:
-        nd = r_['node']
-        if r_['ic'] <= args.min_ic:
-            flib_mark(fail_lib, nd, args.gen, False, 'ic')
-        elif r_['stab'] <= args.min_stab:
-            flib_mark(fail_lib, nd, args.gen, False, 'stab')
-
-    return l1, obs_df
+    return k, n_eval, nd
 
 # ★★★ 以下是本函数**函数体内**的设计说明（S3a 只搬位置、一字未改 ✓）
 #   规则：连续 ≥3 行的论述块上移；贴行注释留在代码旁（保局部性 ✓）
