@@ -30,6 +30,33 @@ from loop_cache import trim_cache, trim_cache_mb
 import loop_paths as _P
 
 
+# ★★★ S3a（2026-09-27）：以下五段是**从本函数体内上移**的设计说明（**只挪位置、一字未改** ✓）——
+#   动因：R1「函数 ≤120 行」把**注释**也算进长度 ✗，而本项目风格是"函数体内写大段论述" ✗
+#   ⇒ 把**成段的**论述移到 `def` 上方（与 `combine_ok` / `pool_engines` 同写法 ✓）；
+#     **贴行注释留在代码旁**（解释紧邻那一行的不动 ✓，例如 `_reuse_v` / `trim_cache_mb` 那几处 ✓）
+#
+# ---- ① 形状门槛标定（gen52+, 批1 P0; `--min_mono` 默认 0=关闭 ⇒ 默认零行为变化）----
+# 标定(1150 条历史 L2 候选): L2 通过者 mono 中位 0.964 / 最小 0.770; 判死者中位 0.867。
+# 故 `mono >= 0.75` 可拦下 ~27% 判死候选且对 19 个入库因子**零误杀**。
+#
+# ---- ② 去相关的意义 ----
+# ★去相关: 与【已入库已知因子】相关性过高的丢弃, 强迫引擎探索新方向
+#   (中金的"IC相关性<0.70"; 否则引擎会反复重新发现 ln_mktcap / amt_log)
+#
+# ---- ③ 去相关的对比对象 ----
+# 对比对象 = 人工基准 + 【历代入库因子(state.bank)】 —— 对齐中金
+# "与已入库因子IC相关<0.70"的结果闸门: 不是固定两个基准, 库扩大后
+# 与新入库因子相似的候选会被拦在L2外(不靠禁叶子字段)
+#
+# ---- ④ `--score_mode=new` 的标定依据 ----
+# 依据: 标定 1150 条历史 L2 候选, 与 L2 Calmar 的相关性 old +0.167 -> new +0.668;
+#       ic_ir 本身与 L2 负相关(-0.317), 乘进去在稀释 stab 的正信号(stab 单独 +0.546)。
+#       IC 仍由 `ic > min_ic` 当准入门槛, 只是不再当排序驱动。
+#
+# ---- ⑤ 近重复去重阈值（`--dedup_corr` 默认 0.85）的标定 ----
+# gen51: 阈值 0.99 -> args.dedup_corr(默认0.85)。0.99 过松: 实测同代 F20~F23 两两
+# |corr| 0.93/0.88 全数放行(4 个近重复因子同代入库)。标定: 全库 23 因子在此口径下
+# 仅这两对>0.85(其余<=0.744) -> 0.85 既能拦下两对、又不误杀历史入库因子。
 def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mode):
     """L1 过滤：ic/stab 门槛 + 形状门槛 + 去相关 + 评分 + 近重复去重 -> 返回 l1（空则 None）"""
     cache2 = {}
@@ -37,9 +64,6 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
         print("L1 无候选通过, 退出")
         return None
     l1 = l1[(l1['ic'] > args.min_ic) & (l1['stab'] > args.min_stab)]
-    # ---- 形状门槛(gen52+, 批1 P0; --min_mono 默认 0=关闭 -> 默认零行为变化) ----
-    # 标定(1150 条历史 L2 候选): L2 通过者 mono 中位 0.964 / 最小 0.770; 判死者中位 0.867。
-    # 故 `mono >= 0.75` 可拦下 ~27% 判死候选且对 19 个入库因子**零误杀**。
     if _min_mono > 0 and 'mono' in l1.columns:
         n_pre_mono = len(l1)
         l1 = l1[np.isfinite(l1['mono']) & (l1['mono'] >= _min_mono)]
@@ -48,13 +72,8 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
         if not len(l1):
             print("L1 形状门槛后无候选, 退出")
             return None
-    # ★去相关: 与【已入库已知因子】相关性过高的丢弃, 强迫引擎探索新方向
-    #   (中金的"IC相关性<0.70"; 否则引擎会反复重新发现 ln_mktcap / amt_log)
     if args.decorr > 0:
         _t_dec = time.time()
-        # 对比对象 = 人工基准 + 【历代入库因子(state.bank)】 —— 对齐中金
-        # "与已入库因子IC相关<0.70"的结果闸门: 不是固定两个基准, 库扩大后
-        # 与新入库因子相似的候选会被拦在L2外(不靠禁叶子字段)
         KNOWN = {
             'ln_mktcap': np.log(np.maximum(B['mktcap'], 1e-9)),
             'amt_log': -np.log(ts_mean(B['turnover'], 20) + 1.0),
@@ -110,18 +129,12 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
     l1['turn_est'] = 1.0 - l1['stab']
     if _score_mode == 'new':
         # 批1 P0(gen52+): score = stab × (0.5 + 0.5·shape_pos)，**去掉 |ic_ir|**
-        # 依据: 标定 1150 条历史 L2 候选, 与 L2 Calmar 的相关性 old +0.167 -> new +0.668;
-        #       ic_ir 本身与 L2 负相关(-0.317), 乘进去在稀释 stab 的正信号(stab 单独 +0.546)。
-        #       IC 仍由 `ic > min_ic` 当准入门槛, 只是不再当排序驱动。
         l1['score'] = l1_score(l1['stab'], l1['ic_ir'],
                                l1['shape_pos'] if 'shape_pos' in l1.columns else None, 'new')
     else:
         l1['score'] = l1['ic_ir'].abs() * (0.25 + 0.75 * l1['stab'].clip(0, 1))
     l1 = l1.sort_values('score', ascending=False)
     # 数值近重复去重(只对 TopN 做, 用采样指纹加速, 否则 O(n^2) 跑不动)
-    # gen51: 阈值 0.99 -> args.dedup_corr(默认0.85)。0.99 过松: 实测同代 F20~F23 两两
-    # |corr| 0.93/0.88 全数放行(4 个近重复因子同代入库)。标定: 全库 23 因子在此口径下
-    # 仅这两对>0.85(其余<=0.744) -> 0.85 既能拦下两对、又不误杀历史入库因子。
     _t_dd = time.time()
     TOPN = min(len(l1), args.dedup_n)
     dedup, seen_v = [], []
