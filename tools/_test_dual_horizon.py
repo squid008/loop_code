@@ -149,12 +149,18 @@ try:
     sys.path.insert(0, os.path.join(ROOT, 'engine'))
     import factor_miner as _FM8
     import loop_engine as _LE8
-    _c = _LE8._run_l2_phase.__code__   # ★ L3 拆分后 pass_filter 引用在 _run_l2_phase（L2 循环/副口径）
-    chk('③ 行为：`_run_l2_phase` 的**局部名表**里没有 `pass_filter` ✓（有 ⇒ 就是局部名 ⇒ 必然报错 ✗）',
-        'pass_filter' not in _c.co_varnames,
+    # ★ 2026-09-27（S3b）：L2 候选循环已从 `_run_l2_phase` 抽成 **`_l2_candidates`** ✓
+    #   ⇒ `pass_filter` 的**引用点跟着搬了** ⇒ 断言必须看新家 ✓（否则报的是"坐标过期"，不是真问题 ✗）
+    #   ⚠ 保护**一点没减** ✗ —— 仍是「③ 不许函数内绑定」「④ 必须以**全局名**取（`co_names`）」，
+    #      只是把 ③ 扩到两个函数、④ 对准"现在真的持有那段循环"的函数 ✓
+    _c = _LE8._run_l2_phase.__code__
+    _c2 = sys.modules['loop_l2']._l2_candidates.__code__   # ← L2 候选循环现在在此 ✓
+    #   （`loop_engine` 只**转发**了 `_run_l2_phase` ✓、没有再导出新函数 ✗ ⇒ 从 `loop_l2` 取 ✓）
+    chk('③ 行为：两个 L2 函数的**局部名表**里都没有 `pass_filter` ✓（有 ⇒ 就是局部名 ⇒ 必然报错 ✗）',
+        'pass_filter' not in _c.co_varnames and 'pass_filter' not in _c2.co_varnames,
         'co_varnames 含它 = 又出现函数内绑定 ✗')
-    chk('④ 行为：`_run_l2_phase` 以**全局名**引用它 ✓（`co_names` 里有 ✓）',
-        'pass_filter' in _c.co_names)
+    chk('④ 行为：`pass_filter` 在**持有循环的那个函数**里以**全局名**引用 ✓（`co_names` 里有 ✓）',
+        'pass_filter' in _c2.co_names)
     chk('⑤ 它确实解析到 `factor_miner.pass_filter`（同一个函数对象 ✓）',
         getattr(_LE8, 'pass_filter', None) is getattr(_FM8, 'pass_filter', None),
         '应为同一对象 ✓ 若不同 ⇒ 拿到的不是同一套 11 项标准 ✗')
