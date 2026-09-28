@@ -697,7 +697,60 @@ _ctx · act · base · cmul · cool · diag · ineff · n_blocked · n_ineff · 
 **静默回退内置副本** ✗（= 引擎改了模板、该工具照抄旧副本；实测两份确实**有一处不同** ✗）
 ⇒ 本次指到真正的家 ✓，并用 `ai_test/_check_skeleton_tpl.py` 证明：**旧路径提取失败 ✓ / 新路径与引擎模板逐字相同 ✓**。
 
-#### ③ ⏳ **待办**：`factor_miner.evaluate_real()` **275 行** ✗（碰**数值路径** ⇒ 需同 seed 确定性 + **逐位对拍** ✓）
+#### ③ ✅ **已完成（2026-09-28 · v1.29.0）** —— `factor_miner.evaluate_real()` **275 → 47 行**（★ 数值路径，逐位验证 ✓）
+
+**拆法（★ 因为碰数值路径，做法与 ①② 不同）**：①② 是"搬到新模块 + 把闭包变方法"，
+而 ③ **原地拆**（`factor_miner.py` 只 609 行 ✓，没有 R2 压力 ✓）—— 关键铁律是：
+
+> **每个块都逐字搬运、块内零改名** ✓ —— 只在新函数开头补几行把"原来的局部名"重新绑好
+> （如 `ann_e = res['ann_ex']` / `yrs = len(tr) * FWD / 243` ✓）⇒ **算术顺序、结合、字面量全未动**
+> ⇒ 输出**逐位**不变 ✓✓（这是"数值路径"能安全重构的唯一办法 ✓）
+
+| 位置 | 改前 | 改后（AST 实测 ✓） |
+|---|---|---|
+| `evaluate_real` | **275** ✗（R1 线 120）| **47** ✓（只剩编排 ✓）|
+| `engine/factor_miner.py` | 609 | **683** ✓（R2 线 800 ✓）|
+| 逐期主循环 | 内联 99 行 | `_er_periods` **112** ✓（连 3 行几何映射 + `cv` 一起搬 ✓）|
+| IC 段 | 内联 | `_er_ic` **27** ✓ |
+| 期频/组合自身指标 + `res` | 内联 | `_er_base_res` **46** ✓ |
+| 市值加权口径 | 内联 | `_er_cw_marks` **38** ✓ |
+| 日频 mark-to-market 两段 | 内联 | `_er_daily_marks` **50** ✓ |
+| 8 条平行累积列表 | 8 元组 / 可变对象 | `_ErAcc`（`NamedTuple`）✓ —— ⚠ 与 `loop_l2._L2Acc` 的选择**不同**：那边是"可取属性的可变对象"，这里**宁可用有名记录**，因为可变对象要在 **99 行循环里逐处改名** ✗（逐位风险 ✗）✓ |
+
+★ **诚实记账三条**：
+1. **两段论述注释搬了家**：原 docstring 的 7（mcap）/8（with_daily）两段 essay（22 行）
+   **搬进 `_er_cw_marks` / `_er_daily_marks` 的 docstring** ✓（主 docstring 只留 1~6 号契约 + 指路行 ✓）
+   —— 属**文档搬家**（对运行行为零影响 ✓），**不是"没动"** ✗。
+2. **日频两段的 `if with_daily and X:` 合并**成调用方一处 `if with_daily and (ex_d or tr_d):` ✓（等价 ✓）。
+3. **顺带删掉 `factor_miner.py` 里一行真死 import** `import time` ✓（实测 HEAD 里 `time.` 出现 **0 次** ✓，
+   即**既存**死码 ✓，不是本次引入 ✓）—— 另外查到 `loop_critic.py` 的 `import pandas as pd` 同样是既存死码 ✗
+   （`pd.` 在 HEAD 与工作区都出现 **0 次** ✓），**未动**（属① 的文件，另记 ✓）。
+
+★★ **手术脚本自己犯的两个真错**（`ai_test/_cut_eval_real.py` 头注已留痕 ✓）：
+初版把 IC 块漏了 `ics = []` ✗、逐期块里残留一行引用 `mcap` 的 `mc_ = …` ✗ ⇒ 两处都会 **NameError** ✗✗。
+抓法＝**先 `--dump` 人工审阅 + 事后 `tools/_test_undefined_names.py`**（作用域感知 ✓）——
+后者实测 **0 处** ✓✓。⇒ 教训写进脚本头注：这类"拼接式手术"**必须**这两道闸门 ✓。
+
+**验证（★ 逐位 + 确定性，用户点名要的两条 ✓）**：
+1. `tools/_test_undefined_names.py` ⇒ **0 处** ✓（179 文件 ✓）；`_test_unbound_return`（含 `factor_miner` ✓）✓；
+2. ★★ **逐位差分对拍**（`ai_test/_ab_eval_dual.py` ✓）：**旧版（HEAD `evaluate_real`）vs 新版**
+   在 **23 个用例 × FWD=5/20 = 46 次调用**上 ⇒ **float64 原始字节级完全相同** ✓✓
+   （比 `float.hex()` 更严：直接比 `ndarray.tobytes()` ⇒ 连 `-0.0` 与 NaN 负载都比 ✓；键集合/类型/索引/列
+   与**键的顺序**也一并比 ✓）。用例覆盖：**真实面板派生因子 ×4**（`cs_rank(close)` / `-close` /
+   `ts_mean(turnover,20)` / `-mktcap`）· 确定性随机噪声 · 全常数 · **全 NaN（两边都 `None` ⇒ 早退 ✓）** ·
+   **半 NaN** · `window` full/recent600 · `with_ex` / `with_daily` / 两者 · `mcap`（无 / **真实市值** /
+   **常数市值**（恒等式：市值加权==等权 ✓））· `cost=0.002 + cash=0.95` ✓；
+3. **同 seed 确定性**：同进程连跑两次逐位相同（前 3 例 ✓）＋ **跨进程** `--digest` 两遍 **diff 输出一致** ✓
+   ＋ 端到端 A/B（下面第 4 条）本身就是**跨进程**产物对照 ✓；
+4. **同 seed A/B**：`_ab/after2`（改前 = ② 后的代码 ✓）←→ `_ab/after3`（改后）⇒
+   **8 个产物逐字节 + stdout 103 行 0 差异** ✓
+   （⚠ 为什么要用 `after2` 当基线：③ 与 ② 之间只差"注释搬家"✓ ⇒ 行为同一 ✓，见 `change_log [1.28.0]` ✓）；
+5. 相关守门：`_test_excess_caliber`（**静态**查四条式子 ✓ 公式仍在同文件 ⇒ 仍命中 ✓）·
+   `_test_fwd_wiring`（运行期 `FWD` ✓）· `_test_daily_dd`（日频口径 23/23 ✓）· `_test_dual_horizon` ✓；
+6. `tools/release_check.py` ⇒ **55/55 全绿** ✓。
+
+**⇒ `engine` 侧 R1 只剩两条既存违规**（本次**顺带查明**、非本次引入 ✗）：
+`build_fa_pit.main()` **145** · `loop_persist._save_state()` **140** ⇒ 已记入 `maintainability.md §五` ✓。
 
 ---
 

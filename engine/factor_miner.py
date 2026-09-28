@@ -13,9 +13,9 @@
 换仓: 5日    成本: 单边千一    分组: 10组, Top组多头
 """
 import os
-import time
 import warnings
 import numpy as np
+from typing import NamedTuple
 import pandas as pd
 from scipy.stats import spearmanr
 
@@ -178,29 +178,13 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
       6. with_ex: 默认False(行为/返回结构完全不变); True时额外返回 'ex'=
           费后日度超额序列(每换仓期一条), 供上层做【分段独立验证】——
           把该序列按时间均分成K个不相交子区间, 各段须方向同号稳定。
-      7. mcap: 默认None(行为完全不变)。给**市值面板**((T x N), 与 close 同轴)时, 额外返回
-          **市值加权基准**下的指标('ann_ex_cw'/'dd_cw'/'calmar_cw'/'sharpe_cw')与
-          'tilt' = ann_ex_cw - ann_ex。为什么(2026-09-13, roadmap §8.28):
-            · **组合腿永远是"Top10% 等权"**(策略本身, 不改)；
-            · 基准腿有两种口径          —— 现状 = **池内等权**(`nanmean(keep_all)`)；
-              新增 = **市值加权**(≈真实指数, 沪深300 就是自由流通市值加权)；
-            · 两者**同为等权**时 ⇒ 规模中性 ⇒ 差额 = **纯选股 alpha**；
-              组合等权 vs 基准市值加权 ⇒ 组合**天然超配池内小盘** ⇒ 多出一块
-              「**池内规模倾斜**」收益, 那不是 alpha。
-            · 所以 'tilt' 就是**这块倾斜的贡献**: 它越大, 说明"超额"里越多不是选股能力
-              (与 §8.13「全A超额 vs 剥风格后超额」同一逻辑, 只是从"全A 小盘"缩到"池内小盘")。
-          ⚠ 成本: **零额外回测** —— 组合腿 tr 不变, 只是基准腿换个加权平均。
-      8. with_daily: 默认False(行为/返回结构完全不变); True 时额外返回**日频 mark-to-market**
-         的风险指标 'dd_d'/'calmar_d'/'sharpe_d'（with_ex 时另给 'ex_d' 日度超额序列）。
-         为什么必须补这一口径（2026-09-14, `docs/loop_todo.md` §1.19）:
-           现状 `nav_e=(1+ex).cumprod()` 而 `ex` 是**每换仓期**一条 ⇒ 净值**只在期末打点**
-           ⇒ **漏掉持有期内的日内回撤** ⇒ 回撤**系统性低估 ~3.6pp**、Calmar **高估 ~1.4x**。
-           实测(F10_1000): 期频 dd −7.8%/Calmar 0.891 → 日频 dd **−11.42%**/Calmar **0.627**。
-         ⚠⚠ **不要用 `set_fwd(1)` 来得到日频**！那会变成「**每天调仓**」(换手 x5、成本 x5)
-           ⇒ 那是**另一个策略**, 不是"同一策略的日频回撤"(方法学错误, 会既改收益又改成本)。
-           **正确做法**：保持 `FWD` 调仓, 在**持有期内逐日 mark** —— 即本参数做的事
-           (复用同一个 `keep_top`/`keep_all` 持仓, 只把 d1→d2 拆成逐日; **不必重新选股**) ✓
+      7. mcap / 8. with_daily: 见 `_er_cw_marks` / `_er_daily_marks` 的 docstring ✓
+         （⚠ 默认均为 False/None ⇒ **行为/返回结构完全不变** ✓，纯新增字段 ✓）
       其余(IC/分组/年度)与 evaluate 一致, 便于对照。
+
+    ★ 2026-09-28（`loop_todo §1.36/§1.37 ③`）：本函数改前 **275 行** ✗（R1 线 120）
+      ⇒ 拆成「**本函数只编排** + 5 个块」✓；**每块都是逐字搬运**（块内零改名 ✓）
+      ⇒ 算术顺序/结合/字面量全未动 ⇒ 输出**逐位不变**（由 `ai_test/_ab_eval_dual.py` 逐位证明 ✓）。
     """
     TR = get_tradability()
     idx_all = close.index[(close.index >= START)]
@@ -211,13 +195,50 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
     else:
         idx = idx_all
     fac = fac.reindex(index=idx, columns=close.columns)
-    col_of = {c: j for j, c in enumerate(close.columns)}
-    dates_all = close.index.values
-    pos_of = {d: i for i, d in enumerate(dates_all)}
-    cv = TR['close']
-
     U = get_universe().reindex(index=idx, columns=close.columns).fillna(False)
     fwd_ret = (close.shift(-(1 + FWD)) / close.shift(-1) - 1).reindex(index=idx)
+    ics = _er_ic(fac, fwd_ret, U, idx)
+    mc_ = None if mcap is None else np.asarray(mcap, dtype='float64')   # 市值面板(可选, 见 docstring 7)
+    acc = _er_periods(fac, U, idx, close, TR, mc_, cash, cost, with_daily)
+    if len(acc.top_r) < 30:
+        return None
+    tr = pd.Series(acc.top_r, index=acc.dates)
+    mr = pd.Series(acc.mkt_r, index=acc.dates)
+    ex = tr - mr
+    res = _er_base_res(name, window, ics, tr, mr, ex, acc.turns, with_ex)
+    # ---- 市值加权基准口径(2026-09-13, roadmap §8.28; 仅当传了 mcap) ----
+    if mc_ is not None and len(acc.mkt_cw) == len(acc.mkt_r) and len(acc.mkt_cw) >= 30:
+        _er_cw_marks(res, tr, acc.mkt_cw, acc.dates)
+    # ---- ★★ 日频 mark-to-market 风险指标（2026-09-14, §1.19；with_daily 时）----
+    if with_daily and (acc.ex_d or acc.tr_d):
+        _er_daily_marks(res, acc.ex_d, acc.tr_d, acc.d_dates, with_ex)
+    return res
+
+
+class _ErAcc(NamedTuple):
+    """`_er_periods` 的**本代累积**（8 条平行列表 ⇒ 用有名记录而不是 8 元组 ✓）。
+
+    ⚠ 为什么不是可变对象 + 在循环里写 `acc.top_r.append(…)`：那要在 99 行循环里**逐处改名** ✗
+      —— 而本函数是**数值路径**，改名越多、逐位不变的风险越大 ✗ ⇒ 这里宁可"返回 8 项记录" ✓
+      （与 `loop_l2._L2Acc` 的选择不同的理由就在这 ✓）。
+    """
+
+    top_r: list
+    mkt_r: list
+    mkt_cw: list
+    dates: list
+    turns: list
+    ex_d: list
+    tr_d: list
+    d_dates: list
+
+
+def _er_ic(fac, fwd_ret, U, idx):
+    """IC 三件套（`ic_mean`/`ic_ir`/`ic_win` + `ic` 序列）—— **IC 仍用原始口径**
+    （不受可实现性影响 ✓）便于与历史结果对照 ✓。
+
+    ★ 2026-09-28（§1.37 ③）：**逐字**自 `evaluate_real` 搬出（块内零改名 ✓）。
+    """
     ics = []
     # IC 仍用(不受可实现性影响的)原始口径, 便于与历史结果对照
     fv_all, rv_all, uv_all = fac.values, fwd_ret.values, U.values
@@ -238,11 +259,24 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
     ic_mean = ic.mean()
     ic_ir = ic.mean() / ic.std() if ic.std() > 0 else np.nan
     ic_win = (ic > 0).sum() / ic.notna().sum() if ic.notna().sum() else np.nan
+    return ic_mean, ic_ir, ic_win, ic
 
+
+def _er_periods(fac, U, idx, close, TR, mc_, cash, cost, with_daily):
+    """逐期主循环：选股 → 可买/可卖处理 → 期频收益 → （可选）日频 mark-to-market。
+
+    ★ 2026-09-28（§1.37 ③）：**逐字**自 `evaluate_real` 搬出 ✓ —— 连同它前面那 3 行几何映射
+      （`col_of`/`dates_all`/`pos_of`）与 `cv = TR['close']` ✓（它们只被本循环用 ✓）。
+    ⚠ 日频那段"为什么不能改用 `set_fwd(1)`"的论述见 `_er_daily_marks` 的 docstring ✓
+      （那是日频指标的口径契约，放在它落地的 helper 上 ✓）。
+    """
+    col_of = {c: j for j, c in enumerate(close.columns)}
+    dates_all = close.index.values
+    pos_of = {d: i for i, d in enumerate(dates_all)}
+    cv = TR['close']
     buyable = TR['buyable']
     next_sell = TR['next_sell']
     ar = np.arange(len(close.columns))
-    mc_ = None if mcap is None else np.asarray(mcap, dtype='float64')   # 市值面板(可选, 见 docstring 7)
     top_r, mkt_r, mkt_cw, dates_l, turns = [], [], [], [], []
     ex_d_parts = []          # ★ 日频超额(§1.19, with_daily 时才填): 持有期内逐日 mark
     # ★ 2026-09-16 新增「**组合自身**的日频序列」—— 起因：用户看到明细里「组合自身最大回撤 −34.7%」
@@ -338,11 +372,16 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
         dates_l.append(d)
         turns.append(turn)
         prev_top = set(top)
-    if len(top_r) < 30:
-        return None
-    tr = pd.Series(top_r, index=dates_l)
-    mr = pd.Series(mkt_r, index=dates_l)
-    ex = tr - mr
+    return _ErAcc(top_r, mkt_r, mkt_cw, dates_l, turns,
+                   ex_d_parts, tr_d_parts, d_dates)
+
+
+def _er_base_res(name, window, ics, tr, mr, ex, turns, with_ex):
+    """期频指标（超额 + **组合自身**两套）+ `res` 字面量 —— 纯计算，不碰文件/全局状态 ✓。
+
+    ★ 2026-09-28（§1.37 ③）：**逐字**自 `evaluate_real` 搬出 ✓（`ics` = `_er_ic` 的四元组 ✓）。
+    """
+    ic_mean, ic_ir, ic_win, ic = ics
     nav_t = (1 + tr).cumprod()
     nav_m = (1 + mr).cumprod()
     nav_e = (1 + ex).cumprod()
@@ -382,31 +421,68 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
         #  ⇒ 直接得到组合的收益序列, 不必重跑回测。默认(False)行为不变。
         **({'ex': ex, 'tr': tr} if with_ex else {}),
     }
-    # ---- 市值加权基准口径(2026-09-13, roadmap §8.28; 仅当传了 mcap) ----
-    #  组合腿 tr 不变(仍是 Top10% 等权), 只换基准腿: 等权 -> 市值加权(≈真实指数)。
-    #  'tilt' = ann_ex_cw - ann_ex = 「池内规模倾斜」的贡献(见 docstring 7)。
-    if mc_ is not None and len(mkt_cw) == len(mkt_r) and len(mkt_cw) >= 30:
-        mrc = pd.Series(mkt_cw, index=dates_l)
-        exc = tr - mrc
-        nav_ec = (1 + exc).cumprod()
-        ann_ec = nav_ec.iloc[-1] ** (1 / yrs) - 1 if yrs > 0 else np.nan
-        dd_ec = (nav_ec / nav_ec.cummax() - 1).min()
-        nav_mc = (1 + mrc).cumprod()
-        res.update(
-            ann_ex_cw=ann_ec, dd_cw=dd_ec,
-            calmar_cw=(ann_ec / abs(dd_ec) if dd_ec < 0 else np.nan),
-            sharpe_cw=(exc.mean() / exc.std() * np.sqrt(243 / FWD)
-                       if exc.std() > 0 else np.nan),
-            tilt=ann_ec - ann_e,
-            ann_mkt_cw=(nav_mc.iloc[-1] ** (1 / yrs) - 1 if yrs > 0 else np.nan),
-        )
-    # ---- ★★ 日频 mark-to-market 风险指标（2026-09-14, §1.19；with_daily 时）----
-    #   口径 = **同一策略**（同一持仓、同一调仓日、同一成本）的**日频**净值 ⇒ 回撤不再被低估。
-    #   ⚠ 与'期频'对比时看的是**风险**（dd/calmar/sharpe）；'ann_ex' 两者**本就相同**
-    #     （终值一样、年数一样），所以 `calmar_d = ann_ex / |dd_d|` 与 `calmar = ann_ex / |dd|`
-    #     的差别**只来自回撤** ✓（实测 F10_1000: 0.0685/0.078=0.878 → 0.0685/0.1142=0.600，
-    #     与外部独立审查的 0.627 吻合。）
-    if with_daily and ex_d_parts:
+    return res
+
+
+def _er_cw_marks(res, tr, mkt_cw, dates_l):
+    """市值加权基准口径(2026-09-13, roadmap §8.28) —— 命中时**更新** `res` 的那 6 个字段。
+
+    组合腿 `tr` 不变(仍是 Top10% 等权), 只换基准腿: 等权 -> 市值加权(≈真实指数)。
+    'tilt' = ann_ex_cw - ann_ex = 「池内规模倾斜」的贡献(见 `evaluate_real` docstring 7)。
+    ★ 原文（搬进这里以免主 docstring 过长 ✓）：
+      mcap 默认 None(行为完全不变)。给**市值面板**((T x N), 与 close 同轴)时, 额外返回
+      **市值加权基准**下的指标('ann_ex_cw'/'dd_cw'/'calmar_cw'/'sharpe_cw')与
+      'tilt' = ann_ex_cw - ann_ex。为什么(2026-09-13, roadmap §8.28):
+        · **组合腿永远是"Top10% 等权"**(策略本身, 不改)；
+        · 基准腿有两种口径          —— 现状 = **池内等权**(`nanmean(keep_all)`)；
+          新增 = **市值加权**(≈真实指数, 沪深300 就是自由流通市值加权)；
+        · 两者**同为等权**时 ⇒ 规模中性 ⇒ 差额 = **纯选股 alpha**；
+          组合等权 vs 基准市值加权 ⇒ 组合**天然超配池内小盘** ⇒ 多出一块
+          「**池内规模倾斜**」收益, 那不是 alpha。
+        · 所以 'tilt' 就是**这块倾斜的贡献**: 它越大, 说明"超额"里越多不是选股能力
+          (与 §8.13「全A超额 vs 剥风格后超额」同一逻辑, 只是从"全A 小盘"缩到"池内小盘")。
+      ⚠ 成本: **零额外回测** —— 组合腿 tr 不变, 只是基准腿换个加权平均。
+
+    ★ 2026-09-28（§1.37 ③）：**逐字**搬出 ✓；只在开头补 `ann_e`/`yrs` 两个原局部名 ✓
+      （`yrs` 与主函数同式重算 ⇒ 同一浮点值 ✓）。
+    """
+    ann_e = res['ann_ex']
+    yrs = len(tr) * FWD / 243
+    mrc = pd.Series(mkt_cw, index=dates_l)
+    exc = tr - mrc
+    nav_ec = (1 + exc).cumprod()
+    ann_ec = nav_ec.iloc[-1] ** (1 / yrs) - 1 if yrs > 0 else np.nan
+    dd_ec = (nav_ec / nav_ec.cummax() - 1).min()
+    nav_mc = (1 + mrc).cumprod()
+    res.update(
+        ann_ex_cw=ann_ec, dd_cw=dd_ec,
+        calmar_cw=(ann_ec / abs(dd_ec) if dd_ec < 0 else np.nan),
+        sharpe_cw=(exc.mean() / exc.std() * np.sqrt(243 / FWD)
+                   if exc.std() > 0 else np.nan),
+        tilt=ann_ec - ann_e,
+        ann_mkt_cw=(nav_mc.iloc[-1] ** (1 / yrs) - 1 if yrs > 0 else np.nan),
+    )
+
+
+def _er_daily_marks(res, ex_d_parts, tr_d_parts, d_dates, with_ex):
+    """日频 mark-to-market 两段（超额 + 组合自身）—— 命中时**更新** `res` ✓。
+
+    with_daily: 默认False(行为/返回结构完全不变); True 时额外返回**日频 mark-to-market**
+    的风险指标 'dd_d'/'calmar_d'/'sharpe_d'（with_ex 时另给 'ex_d' 日度超额序列）。
+    为什么必须补这一口径（2026-09-14, `docs/loop_todo.md` §1.19）:
+       现状 `nav_e=(1+ex).cumprod()` 而 `ex` 是**每换仓期**一条 ⇒ 净值**只在期末打点**
+       ⇒ **漏掉持有期内的日内回撤** ⇒ 回撤**系统性低估 ~3.6pp**、Calmar **高估 ~1.4x**。
+       实测(F10_1000): 期频 dd −7.8%/Calmar 0.891 → 日频 dd **−11.42%**/Calmar **0.627**。
+    ⚠⚠ **不要用 `set_fwd(1)` 来得到日频**！那会变成「**每天调仓**」(换手 x5、成本 x5)
+       ⇒ 那是**另一个策略**, 不是"同一策略的日频回撤"(方法学错误, 会既改收益又改成本)。
+       **正确做法**：保持 `FWD` 调仓, 在**持有期内逐日 mark** —— 即本函数做的事
+       (复用同一个 `keep_top`/`keep_all` 持仓, 只把 d1→d2 拆成逐日; **不必重新选股**) ✓
+
+    ★ 2026-09-28（§1.37 ③）：**逐字**搬出 ✓；只在开头补 `ann_e`/`ann_t` 两个原局部名 ✓；
+      两段的 `if with_daily and X:` 由调用方统一判 `if with_daily and (X or Y):` ✓（等价 ✓）。
+    """
+    ann_e, ann_t = res['ann_ex'], res['ann_top']
+    if ex_d_parts:
         ex_d = pd.Series(ex_d_parts, dtype='float64')
         nav_d = (1 + ex_d).cumprod()
         dd_d = float((nav_d / nav_d.cummax() - 1).min())
@@ -426,9 +502,7 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
             res['ex_d'] = ex_d
         # ★ 日频日期轴（与 ex_d / tr_d 逐点对齐）—— 看板画曲线用；纯新增字段 ✓
         res['d_dates'] = d_dates
-    # ★★ 组合自身的**日频**风险（2026-09-16 新增；口径与 `dd_top/calmar_top/sharpe_top` 配对）：
-    #   恒等式 `dd_top_d <= dd_top`（日频是期频的子采样 ⇒ 只能看到更深的回撤）⇒ 可被测试钉死 ✓
-    if with_daily and tr_d_parts:
+    if tr_d_parts:
         tr_d = pd.Series(tr_d_parts, dtype='float64')
         nav_td = (1 + tr_d).cumprod()
         dd_td = float((nav_td / nav_td.cummax() - 1).min())
@@ -440,7 +514,6 @@ def evaluate_real(fac, close, name='', cost=COST_RT, cash=1.0, verbose=False,
         )
         if with_ex:
             res['tr_d'] = tr_d
-    return res
 
 
 # ===================== 验证 =====================
