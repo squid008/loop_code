@@ -164,56 +164,12 @@ def main():
     n_ok = n_skip_col = n_miss_any = 0
     miss_cnt = {c: 0 for c in CORE}
 
+    _stat = [n_skip_col, n_miss_any]              # ★ 可就地累加：[n_skip_col, n_miss_any]
     for fi, fp in enumerate(files):
-        code = os.path.basename(fp)[:-3]
-        if code not in colpos:
+        got = _load_pit_stock(fp, colpos, dates, miss_cnt, _stat)
+        if got is None:
             continue
-        with h5py.File(fp, 'r') as f:
-            g = f['fields']
-            # ★★ 2026-09-15 修：**不再要求全部科目都在**（缺的置 NaN，其余照算）
-            #    旧版 `if not all(have): continue` ⇒ 任一新科目缺失就整只股票被跳过
-            #    ⇒ 覆盖率会暴跌（实测 `interest_expense`/`inventory` 并非所有公司都有）✗
-            have = [c in g for c in CORE]
-            if not any(have):
-                continue
-            for c, h in zip(CORE, have):
-                if not h:
-                    miss_cnt[c] += 1
-            if not all(have):
-                n_miss_any += 1
-            core_raw = np.full((len(f['quarter'][:]), len(CORE)), np.nan, dtype=np.float64)
-            for c, h in zip(CORE, have):
-                if h:
-                    v = g[c][:].astype(np.float64)
-                    core_raw[:len(v), CI[c]] = v
-            qs = [x.decode('utf-8', 'replace') if isinstance(x, bytes) else str(x)
-                  for x in f['quarter'][:]]
-            infos = [x.decode('utf-8', 'replace') if isinstance(x, bytes) else str(x)
-                     for x in f['info_date'][:]]
-        n = len(qs)
-        qk = np.empty(n, dtype=np.int64)
-        ok = np.ones(n, dtype=bool)
-        for i, s in enumerate(qs):
-            try:
-                y, qq = s.split('q')
-                qk[i] = int(y) * 4 + int(qq) - 1
-            except Exception:
-                ok[i] = False
-        info = np.empty(n, dtype=np.int64)
-        for i, s in enumerate(infos):
-            try:
-                info[i] = int(s.replace('-', ''))
-            except Exception:
-                ok[i] = False
-        if not ok.any():
-            n_skip_col += 1
-            continue
-        core_raw, qk, info = core_raw[ok], qk[ok], info[ok]
-        fin = info <= int(dates[-1])
-        core_raw, qk, info = core_raw[fin], qk[fin], info[fin]
-        if not len(info):
-            n_skip_col += 1
-            continue
+        code, core_raw, qk, info = got
 
         pos = np.searchsorted(dates, info, side='right')
         order = np.argsort(pos, kind='stable')
@@ -265,6 +221,7 @@ def main():
         if (fi + 1) % 800 == 0:
             print('  %d/%d  n_ok=%d  %.0fs' % (fi + 1, len(files), n_ok, time.time() - t0))
 
+    n_skip_col, n_miss_any = _stat
     print('有效股票: %d（其中 %d 只缺部分科目 ⇒ 已按 NaN 容忍）  跳过 %d  耗时 %.0fs'
           % (n_ok, n_miss_any, n_skip_col, time.time() - t0))
     if n_miss_any:
@@ -289,6 +246,80 @@ def main():
         print('\nsanity 000001 fa_lev 2016中位=%.3f (期望~0.9)  gm NaN=%.0f%% (期望~100)'
               % (np.nanmedian(lev[lev.index < 20170101]),
                  gm.isna().sum() / len(gm) * 100))
+
+
+
+
+def _load_pit_stock(fp, colpos, dates, miss_cnt, stat):
+    """读一只股票的 PIT h5 ⇒ 展开成「按 (quarter, info_date) 紧凑排列」的数组。
+
+    ★ 2026-09-28：**逐字**自 `main()` 搬出（R1 收官：`main` 145 → ~103 行 ✓）——
+      只把 4 处 `continue` 换成 `return None` ✓，其余零改名 ✓。
+
+    :param colpos:    `{股票代码: 列号}`；**不在其中 ⇒ 静默跳过**（原 `continue` ✓，不计任何数 ✓）
+    :param dates:     **完整日期轴**（块里只用 `dates[-1]` 当"数据末端"✓）——
+                      ⚠ 特意传整根数组而不是单个 `last_date`：这样块内 `dates[-1]` **一个字都不用改** ✓
+                      （初版我写成 `last_date` 形参 ⇒ 块里 `dates[-1]` 就成了 NameError ✗，靠 `--dump` 审阅抓到 ✓）
+    :param miss_cnt:  **就地累加**「科目缺失」的股票数 `{科目: 只数}`（可变 dict ✓）
+    :param stat:      `[n_skip_col, n_miss_any]`，**就地累加**（list 才可变 ✓）
+    :return:          `(code, core_raw, qk, info)`；**静默跳过**（不在 colpos / 一个核心科目都没有）
+                      ⇒ `None` ✓；**计入跳过**（quarter/info 全解析失败、或 info 早于起点后为空）
+                      ⇒ 不返回（`stat[0]` 已加 1，由调用方 `continue` ✓）
+
+    ⚠ **顺序有讲究**（照搬原文 ✓）：科目缺失的计数发生在**解析失败之前** ⇒
+      即使这只股票随后被计入 `n_skip_col`，它的缺科目数**已经计过了** ✓
+      ⇒ 所以计数留在本函数里、**不能挪到调用方**（挪了就漏计这一类 ✗）。
+    """
+    code = os.path.basename(fp)[:-3]
+    if code not in colpos:
+        return None
+    with h5py.File(fp, 'r') as f:
+        g = f['fields']
+        # ★★ 2026-09-15 修：**不再要求全部科目都在**（缺的置 NaN，其余照算）
+        #    旧版 `if not all(have): continue` ⇒ 任一新科目缺失就整只股票被跳过
+        #    ⇒ 覆盖率会暴跌（实测 `interest_expense`/`inventory` 并非所有公司都有）✗
+        have = [c in g for c in CORE]
+        if not any(have):
+            return None
+        for c, h in zip(CORE, have):
+            if not h:
+                miss_cnt[c] += 1
+        if not all(have):
+            stat[1] += 1
+        core_raw = np.full((len(f['quarter'][:]), len(CORE)), np.nan, dtype=np.float64)
+        for c, h in zip(CORE, have):
+            if h:
+                v = g[c][:].astype(np.float64)
+                core_raw[:len(v), CI[c]] = v
+        qs = [x.decode('utf-8', 'replace') if isinstance(x, bytes) else str(x)
+              for x in f['quarter'][:]]
+        infos = [x.decode('utf-8', 'replace') if isinstance(x, bytes) else str(x)
+                 for x in f['info_date'][:]]
+    n = len(qs)
+    qk = np.empty(n, dtype=np.int64)
+    ok = np.ones(n, dtype=bool)
+    for i, s in enumerate(qs):
+        try:
+            y, qq = s.split('q')
+            qk[i] = int(y) * 4 + int(qq) - 1
+        except Exception:
+            ok[i] = False
+    info = np.empty(n, dtype=np.int64)
+    for i, s in enumerate(infos):
+        try:
+            info[i] = int(s.replace('-', ''))
+        except Exception:
+            ok[i] = False
+    if not ok.any():
+        stat[0] += 1
+        return None
+    core_raw, qk, info = core_raw[ok], qk[ok], info[ok]
+    fin = info <= int(dates[-1])
+    core_raw, qk, info = core_raw[fin], qk[fin], info[fin]
+    if not len(info):
+        stat[0] += 1
+        return None
+    return code, core_raw, qk, info
 
 
 if __name__ == '__main__':

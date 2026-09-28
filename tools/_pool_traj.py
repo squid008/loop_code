@@ -141,8 +141,17 @@ def gen_cmd(pool, gen, n=12, l2=2, batch=None, seed=777, extra=None, prod_flags=
     return cmd + list(extra or [])
 
 
-def run_generation(pool, gen, n=12, l2=2, seed=777, extra=None, prod_flags=True, timeout=900):
-    """真跑一代（不动任何文件管理）—— 返回 (rc, out, err, dt_sec) ✓"""
+def run_generation(pool, gen, n=12, l2=2, seed=777, extra=None, prod_flags=True, timeout=None):
+    """真跑一代（不动任何文件管理）—— 返回 (rc, out, err, dt_sec) ✓
+
+    ★ 2026-09-28：`timeout` 默认改为 `None` ⇒ 取 `LOOP_AB_TIMEOUT` 环境变量、再退回 **900s** ✓
+      —— 起因：本机同时跑着**别的项目**的重活（`E:\\quant\\data_wash` 的面板构建 ✗）时，
+      一代从 ~190s 变成 >900s ✗ ⇒ 本工具报 `退出码=-9`（**是超时、不是行为差异** ✗，别误判 ✓）。
+      ⚠ 默认值**一字未变**（900 ✓）⇒ 既有调用方行为不变 ✓；要放宽就在命令行前设环境变量 ✓：
+        PowerShell: `$env:LOOP_AB_TIMEOUT='10800'; python tools/ab_generation.py --out …`
+    """
+    if timeout is None:
+        timeout = int(os.environ.get('LOOP_AB_TIMEOUT', '900') or 900)
     cmd = gen_cmd(pool, gen, n=n, l2=l2, seed=seed, extra=extra, prod_flags=prod_flags)
     # ★ `PYTHONHASHSEED=0`：把"字符串哈希随机化"固定下来 ✓
     #   不固定的话，`Counter`/`set` 的迭代顺序每次不同 ⇒ 诊断行里 `leaf_hist {...}` 的键序会变 ✗

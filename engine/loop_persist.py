@@ -377,41 +377,10 @@ def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_ex
     # 对齐中金: ①冻结骨架禁入 ②同结构参数变体上限有限(bank_skel_max) 防窗口变体堆叠
     if len(res) and res['passed'].any():
         by_expr = {str(r['node']): r['node'] for _, r in top.iterrows()}
-        skel_cnt = skeleton_freq(bank)
-        fset = set(frozen) if args.fsa_th > 0 else set()
         n_bank_old = len(bank)
-        lib_added = []
-        for expr in res.loc[res['passed'], 'expr'].tolist():
-            nd = by_expr.get(expr)
-            if nd is None or any(str(x) == expr for x in bank):
-                continue
-            s = skeleton(nd)
-            if s in fset:
-                print(f"  [FSA] 通过但不入库: 骨架已冻结 -> {s}")
-                continue
-            if skel_cnt.get(s, 0) >= args.bank_skel_max:
-                print(f"  [FSA] 通过但不入库: 骨架 {s} 已有 {skel_cnt.get(s,0)} "
-                      f"个(上限{args.bank_skel_max})")
-                continue
-            # ★ 收益流去重(2026-09-13, roadmap §8.34, --dup_ex_corr): **止血**闸门。
-            #   bank_ex 会在本循环里随入库增长 ⇒ 同时防"与历史库重复"与"同代内近重复"。
-            #   ⚠ 拿不到收益流(旧 state / 回测失败)则**放行不误杀**(与本项目其它闸门同一铁律)。
-            _ex_i = _ex_by_expr.get(expr)
-            if _dup_ex_corr > 0 and _ex_i is not None:
-                _mc2, _mw2 = ex_max_corr(_ex_i, _cmp_lib(bank_ex, bank_ex_ext))   # ★ 含外部池库(§1.8)
-                if _mc2 is not None and _mc2 > _dup_ex_corr:
-                    _n_dup_ex += 1
-                    print(f"  [收益流去重] 不入库: 与库内收益流相关 {_mc2:.3f} > "
-                          f"{_dup_ex_corr:.2f}（对方 {str(_mw2)[:66]}）")
-                    continue
-            bank.append(nd)
-            skel_cnt[s] = skel_cnt.get(s, 0) + 1
-            lib_added.append(expr)
-            if _ex_i is not None:
-                bank_ex[expr] = _ex_i          # 入库 -> 其收益流进对照集
-        if _n_dup_ex:
-            print(f"  [收益流去重] 本代拦下 {_n_dup_ex} 个「与库内赚同一块钱」的因子"
-                  f"(阈值 |corr|>{_dup_ex_corr:.2f})")
+        lib_added = _bank_admit(res, bank, bank_ex, bank_ex_ext, args,
+                                by_expr, _dup_ex_corr, _ex_by_expr,
+                                _n_dup_ex, frozen)
         if len(bank) > n_bank_old:
             print(f"  入库 {len(bank)-n_bank_old} 个新因子, 累计 {len(bank)} 个")
             # 入库文档自动同步(factor_library.md): 只增不改, 失败不影响入库
@@ -420,17 +389,10 @@ def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_ex
             #   为什么必须分：`_lib_sync` 会写「口径：N 日调仓」+ 用**对应口径**的剥风格数字 ✓
             #   ⇒ 混在一起就会把 5 日的剥风格结论写给 20 日入选的因子 ✗
             #   ⚠ 两次调用都**重读 md** ⇒ 编号自动递增 ✓ 不会撞号 ✓（`_lib_sync` 的既有行为 ✓）
-            _added_2 = [e for e in lib_added if e in _hzn2_by_expr]
-            _added_5 = [e for e in lib_added if e not in _hzn2_by_expr]
-            if _added_5:
-                _lib_sync(args.gen, res, len(bank), _added_5, by_expr,
-                          pool_tags=_tag_by_expr, strip_grades=_strip_by_expr)
-            if _added_2:
-                print(f"  [双口径] 其中 {len(_added_2)} 个是**副口径({int(args.dual_fwd)} 日)"
-                      f"入选** ✓ ⇒ 文档按该口径标注 ✓（与 5 日口径的数字不可直接比 ✗）")
-                _lib_sync(args.gen, res, len(bank), _added_2, by_expr,
-                          pool_tags=_tag_by_expr, strip_grades=_strip2_by_expr,
-                          horizon=int(args.dual_fwd))
+            _lib_doc_sync(args, res, bank, lib_added, by_expr,
+                          marks=dict(tag=_tag_by_expr, strip=_strip_by_expr,
+                                     strip2=_strip2_by_expr,
+                                     hzn2=_hzn2_by_expr))
             # ★ 剥风格档汇总（2026-09-14, §1.9）：**"纯风格"必须吼出来** —— 它是"全A 口径漂亮
             #   但剥掉 lncap+lnamt 后转负"的因子，入库后**指数增强不可用**，不吼会被忽略。
             if _strip_by_expr:
@@ -504,6 +466,95 @@ def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_ex
                                                  key=lambda kv: -kv[1].get('left', 0))[:3]) + '）'
              if fsa_frz else '') + ', '
           f"耗时 {_LG.fmt_dur(time.time()-t0)}")
+
+
+
+
+def _bank_admit(res, bank, bank_ex, bank_ex_ext, args, by_expr,
+                dup_th, ex_by_expr, n_dup_in, frozen):
+    """本代"通过者"的**入库准入**：FSA 冻结 / 骨架上限 / 收益流去重 ⇒ **就地**改写 `bank`/`bank_ex`。
+
+    :param by_expr:    `{str(node): node}`（**由调用方算好传入** —— 它后面写文档时还要用 ✓）
+    :param dup_th:     收益流去重阈值 `--dup_ex_corr`（0=关 ✓）
+    :param ex_by_expr: `{表达式: 本代 L2 的每期费后超额 Series}`（去重对照用 ✓）
+    :param n_dup_in:   之前各段累计的"收益流去重拦下数"（本段只接续打印 ✓）
+    :param frozen:     冻结骨架集合（`args.fsa_th > 0` 时才参与 **FSA 禁入** ✓）
+    :return:           `lib_added` = 本代**真正进库**的表达式清单 ✓
+
+    ★ 2026-09-28：**逐字**自 `_save_state` 搬出（R1 收官：140 → ~89 行 ✓）——
+      只把 `by_expr`/`n_bank_old` 两行**留给调用方** ✓（后者后面还要用 ✓），其余零改名 ✓。
+    ⚠ 形参 10 个看着多，但：① 每个都是本段**真实的独立输入** ✓（无共同子结构可再聚合 ——
+      与 `maintainability.md §七` 批评的"上帝参数表"不同 ✗）；② 下一行把块内**原有的私有名绑回来**
+      ⇒ 块正文**一个字都不用改**（关键：状态路径上少改一个名就少一份风险 ✓）。
+      ⚠ 踩过两次：初版漏了 `frozen`、且 `_dup_ex_corr`/`_ex_by_expr`/`_n_dup_ex` 未绑 ✗
+      —— 前者由 `tools/_test_undefined_names.py` 抓、后者由 `--dump` 人工审阅抓 ✓（两道闸门各值一次 ✓）。
+    """
+    _dup_ex_corr, _ex_by_expr, _n_dup_ex = dup_th, ex_by_expr, n_dup_in
+    skel_cnt = skeleton_freq(bank)
+    skel_cnt = skeleton_freq(bank)
+    fset = set(frozen) if args.fsa_th > 0 else set()
+    lib_added = []
+    for expr in res.loc[res['passed'], 'expr'].tolist():
+        nd = by_expr.get(expr)
+        if nd is None or any(str(x) == expr for x in bank):
+            continue
+        s = skeleton(nd)
+        if s in fset:
+            print(f"  [FSA] 通过但不入库: 骨架已冻结 -> {s}")
+            continue
+        if skel_cnt.get(s, 0) >= args.bank_skel_max:
+            print(f"  [FSA] 通过但不入库: 骨架 {s} 已有 {skel_cnt.get(s,0)} "
+                  f"个(上限{args.bank_skel_max})")
+            continue
+        # ★ 收益流去重(2026-09-13, roadmap §8.34, --dup_ex_corr): **止血**闸门。
+        #   bank_ex 会在本循环里随入库增长 ⇒ 同时防"与历史库重复"与"同代内近重复"。
+        #   ⚠ 拿不到收益流(旧 state / 回测失败)则**放行不误杀**(与本项目其它闸门同一铁律)。
+        _ex_i = _ex_by_expr.get(expr)
+        if _dup_ex_corr > 0 and _ex_i is not None:
+            _mc2, _mw2 = ex_max_corr(_ex_i, _cmp_lib(bank_ex, bank_ex_ext))   # ★ 含外部池库(§1.8)
+            if _mc2 is not None and _mc2 > _dup_ex_corr:
+                _n_dup_ex += 1
+                print(f"  [收益流去重] 不入库: 与库内收益流相关 {_mc2:.3f} > "
+                      f"{_dup_ex_corr:.2f}（对方 {str(_mw2)[:66]}）")
+                continue
+        bank.append(nd)
+        skel_cnt[s] = skel_cnt.get(s, 0) + 1
+        lib_added.append(expr)
+        if _ex_i is not None:
+            bank_ex[expr] = _ex_i          # 入库 -> 其收益流进对照集
+    if _n_dup_ex:
+        print(f"  [收益流去重] 本代拦下 {_n_dup_ex} 个「与库内赚同一块钱」的因子"
+              f"(阈值 |corr|>{_dup_ex_corr:.2f})")
+    return lib_added
+
+
+def _lib_doc_sync(args, res, bank, lib_added, by_expr, marks):
+    """**分口径**把本代入库因子落进因子库文档（`_lib_sync` ×2 ✓）。
+
+    :param bank:     **入库后的库**（块里只用 `len(bank)` ⇒ 直接传列表 ✓，块内零改名 ✓）
+    :param lib_added: 本代真正进库的表达式清单 ✓
+    :param marks:    `dict(tag=池标签, strip=剥风格档, strip2=副口径剥风格档, hzn2=副口径入选集)`
+                     —— 用一个**带名字的字典**而不是再摊 4 个位置参数 ✓
+
+    ★ 2026-09-28：**逐字**自 `_save_state` 搬出（含"为什么必须分口径"那段注释 ✓）；
+      形参**刻意取名 `bank`/`lib_added`**（= 块里原有的名字 ✓）⇒ 块正文零改名 ✓
+      （初版用了 `n_bank`/`added` ⇒ 块里 `len(bank)`/`lib_added` 全成未定义名 ✗，靠 `--dump` 抓到 ✓）。
+    """
+    _hzn2_by_expr = marks['hzn2']
+    _tag_by_expr = marks['tag']
+    _strip_by_expr = marks['strip']
+    _strip2_by_expr = marks['strip2']
+    _added_2 = [e for e in lib_added if e in _hzn2_by_expr]
+    _added_5 = [e for e in lib_added if e not in _hzn2_by_expr]
+    if _added_5:
+        _lib_sync(args.gen, res, len(bank), _added_5, by_expr,
+                  pool_tags=_tag_by_expr, strip_grades=_strip_by_expr)
+    if _added_2:
+        print(f"  [双口径] 其中 {len(_added_2)} 个是**副口径({int(args.dual_fwd)} 日)"
+              f"入选** ✓ ⇒ 文档按该口径标注 ✓（与 5 日口径的数字不可直接比 ✗）")
+        _lib_sync(args.gen, res, len(bank), _added_2, by_expr,
+                  pool_tags=_tag_by_expr, strip_grades=_strip2_by_expr,
+                  horizon=int(args.dual_fwd))
 
 
 class _StateUnpickler(pickle.Unpickler):

@@ -10,7 +10,7 @@ import sys
 import time
 
 import numpy as np
-import pandas as pd
+# ⚠ 2026-09-28（R4）：`import pandas as pd` 已删 —— `pd.` 在本文件出现 0 次 ✗（死码 ✓）
 
 sys.stdout.reconfigure(encoding="utf-8")
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))

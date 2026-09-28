@@ -79,7 +79,28 @@ for n, f, name, ln in funcs[:15]:
     print('    %5d 行  %-40s %s()  L%d%s' % (n, f, name, ln, flag))
 over300 = [x for x in funcs if x[0] > 300]
 over150 = [x for x in funcs if 150 < x[0] <= 300]
-print('  → 超 300 行函数 %d 个；150~300 行 %d 个' % (len(over300), len(over150)))
+over120 = [x for x in funcs if 120 < x[0] <= 150]
+print('  → 超 300 行函数 %d 个；150~300 行 %d 个；**121~150 行 %d 个**' % (
+    len(over300), len(over150), len(over120)))
+# ★ 2026-09-28 增（`docs/loop_todo.md §1.36` 的教训：**只点名 >150 档 ⇒ 121~150 这一档一直没人看见** ✗，
+#   于是 `build_fa_pit.main` 145 / `loop_persist._save_state` 140 长期躺在 R1 违规里 ✗）
+#   R1 是"函数 ≤**120** 行"（硬上限 150）⇒ 只要 >120 就该被点名，与档位无关 ✓
+#   ⚠ **评分范围 = `engine/`**；`tools/`、`strategies/` 等脚本不在评分范围（但一并列出来供参考 ✓）
+print()
+print('  ★★ R1 违规全清单（**R1：函数 ≤120 行**；按是否评分范围分组 ✓）——')
+eng = [x for x in funcs if x[0] > 120 and x[1].replace('\\', '/').startswith('engine/')]
+oth = [x for x in funcs if x[0] > 120 and not x[1].replace('\\', '/').startswith('engine/')]
+print('    【评分范围 engine/】%d 个：' % len(eng))
+for n, f, name, ln in eng:
+    print('      %5d 行  %-40s %s()  L%d' % (n, f, name, ln))
+if not eng:
+    print('      （无 ✓ R1 全达标 —— `engine/` 侧没有任何 >120 行函数 ✓）')
+print('    【非评分范围（tools/ strategies/ standard/ 等脚本）】%d 个（**只供参考** ✓）：'
+      % len(oth))
+for n, f, name, ln in oth[:12]:
+    print('      %5d 行  %-40s %s()  L%d' % (n, f, name, ln))
+if len(oth) > 12:
+    print('      ... 另 %d 个' % (len(oth) - 12))
 
 print()
 print('=' * 100)

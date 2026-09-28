@@ -10,7 +10,7 @@
 """
 import os
 import time
-import glob
+# ⚠ 2026-09-28（R4）：`import glob` 已删 —— `glob.` 在本文件出现 0 次 ✗（死码 ✓）
 import h5py
 import numpy as np
 import pandas as pd

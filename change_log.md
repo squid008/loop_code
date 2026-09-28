@@ -24,6 +24,89 @@
 
 ---
 
+## [1.30.0] — 2026-09-28
+
+> 主题：**R1 收官 —— `engine/` 侧 >120 行函数清零**（`build_fa_pit.main` 145→102 · `_save_state` 140→102）
+> ＋ **修掉让它们藏了很久的根因**：体检工具只点名 `>150`/`>300` 两档 ⇒ **121~150 一直没人看见** ✗
+> ⚠ **引擎行为零改动** ✓（三方证据：`_save_state` 8 用例**逐字节**对拍 · `fa_pit.h5` 80 只股票**逐位**对拍 ·
+> 同 seed A/B 8 产物 + stdout 逐字相同 ✓）⇒ 属结构整治 ⇒ SemVer **MINOR** ✓
+
+### 一、为什么要做（`§1.36` 顺带查明的两条**既存** R1 违规）
+
+`build_fa_pit.main()` **145** ✗ · `loop_persist._save_state()` **140** ✗ —— 都是**既存**违规 ✓（非本次引入 ✓）。
+★ **真根因不是"没人拆"，而是"没人看见"** ✗：`tools/_audit_codebase.py`【3】只单列 `>300` 与 `150~300`
+两档 ⇒ **121~150 这一档**从来没被点名过 ✗✗（R1 写的却是"函数 **≤120** 行" ✓）。
+
+### 二、修根因（体检工具）
+
+`_audit_codebase.py` 现输出 **R1 违规全清单**：凡 **>120 全部点名** ✓，并按
+「**评分范围 `engine/`** / 非评分范围（`tools/` `strategies/` 等脚本）」**分组** ✓ ——
+避免再把"engine 里的违规"和"脚本里的长 `main`"混为一谈 ✗。本版实测：
+**`engine/` = 0 个** ✓（“R1 全达标”）、非评分范围 23 个（供参考 ✓）。
+
+### 三、两条违规的拆法（都是**最小切口** ✓）
+
+| 位置 | 改前 | 改后 | 抽出的 helper |
+|---|---|---|---|
+| `engine/build_fa_pit.py` | `main()` **145** ✗ | **102** ✓（文件 295 → 326）| `_load_pit_stock`（读 h5 + 解析 quarter/info_date）**67** ✓ |
+| `engine/loop_persist.py` | `_save_state()` **140** ✗ | **102** ✓（文件 528 → 579）| `_bank_admit`（入库准入循环）**56** ✓ · `_lib_doc_sync`（分口径落文档）**27** ✓ |
+
+★ `build_fa_pit` 只抽**一段**（49 行）就够 ✓ ⇒ 循环里"选股/填充/落盘"**一字未动** ✓；
+★ `_save_state` 里 **「原子写 state」那段绝对没碰** ✓ —— `pickle.dump(dict(...))` 的**键顺序决定字节** ✗，
+  动它 A/B 就过不了 ✓；`by_expr`/`n_bank_old` 刻意**留在调用方**（后面还要用 ✓）。
+★ **逐字搬运 + 块内零改名**（同 ③ 的铁律 ✓）：形参**刻意取名贴合块内原名**（`bank`/`lib_added` ✓），
+  其余用"开头绑回原名"（`_dup_ex_corr, _ex_by_expr, _n_dup_ex = dup_th, ex_by_expr, n_dup_in` ✓）。
+
+### 四、★★ 三道闸门各抓到一个真错（留痕，别再犯 ✗）
+
+| # | 错 | 抓它的闸门 |
+|---|---|---|
+| 1 | IC 块漏搬 `ics = []` ✗（helper 里 `ics.append` 必 NameError）| `--dump` 人工审阅 |
+| 2 | 逐期块残留 `mc_ = None if mcap is None …` ✗（`mc_` 已是形参、`mcap` 不存在）| `--dump` 人工审阅 |
+| 3 | `_load_pit_stock` 形参写成 `last_date` 而块里用 `dates[-1]` ✗ | `--dump` 人工审阅 |
+| 4 | `_bank_admit` 漏传 `frozen` ✗（块里 `fset = set(frozen)…`）| `tools/_test_undefined_names.py` |
+| 5 | `_lib_doc_sync` 形参 `n_bank`/`added` 与块里 `bank`/`lib_added` 不符 ✗ | `--dump` 人工审阅 |
+
+⇒ 结论（已写进各脚本头注 ✓）：**"拼接式手术"必须过两道闸门 —— `--dump` 人工审阅 ＋ `_test_undefined_names`**，
+只信"dry-run 报的行数"就 apply 一定会翻车 ✗。
+
+### 五、验证（★ 因为 A/B 一代**覆盖不到**这些分支 ⇒ 必须自己造对拍）
+
+1. ★★ **`_save_state` 逐字节对拍**（`ai_test/_ab_save_state_dual.py` ✓）：旧版(HEAD) vs 新版
+   在 **8 个用例**上 ⇒ **state pkl 原始字节 + md + jsonl(`ts` 归一化) + stdout + 异常** 全同 ✓
+   （用例：早退 0 通过 · 单入库+池标签+剥风格"纯风格 C" · **双口径分流**（一个副口径一个 5 日 ✓）·
+   **收益流去重命中** · **FSA 冻结命中** · **骨架上限命中** · 库内已有同表达式 · 入 2 个+收益流进对照集 ✓）
+   —— ⚠ 为什么非造不可：`ab_generation` 的最小规模一代**常"入库 0"** ✗ ⇒ `_save_state` 第一句就早退 ✗✗
+   （`if len(res) and res['passed'].any():`），**准入循环与分口径落文档根本不执行** ✗；
+2. ★★ **`fa_pit.h5` 逐位对拍**（`ai_test/_ab_fa_pit_dual.py` ✓）：**80 只股票**各跑一遍旧版/新版 ⇒
+   产物**逐 key / 逐数组 / float32 原始字节级相同** ✓（2,001,791 字节 ✓）＋ stdout 逐行相同（耗时归一化 ✓）；
+3. **同 seed A/B**：`_ab/after3` ←→ 改后 ⇒ **8 产物逐字节 + stdout 逐行相同** ✓；
+4. 相关静态守门：`_test_fsa_freeze` **22/22** · `_test_inject_pools` **17/17** · `_test_node_single` ✓ ·
+   `_test_library_log` **44/44** · `_test_critic_sensor` ✓ · `_test_action_efficacy` **42/42** ·
+   `_test_unbound_return` ✓ · `_test_undefined_names` **0 处** ✓；
+5. `tools/release_check.py` ⇒ **55/55 全绿** ✓。
+
+### 六、★ 顺带：给 A/B 工具加**超时预算开关**（否则"别的项目占着机器"时验不完 ✗）
+
+本版跑 A/B 时撞上真实场景：本机同时跑着**别的项目**的重活
+（`E:\quant\data_wash\tools\build_multiwindow_panel.py` ✗ —— **不是本项目、没动它** ✓），
+一代从 ~190s 变成 >900s ✗ ⇒ `ab_generation.py` 报 **`退出码=-9`**（**是超时、不是行为差异** ✗✗，
+极易误判成"改动坏了" ✗）。★ 顺带确认了工具的**自我保护有效** ✓：超时后 `finally` 仍把池轨迹
+**逐字节还原** ✓（输出里就有那行 ✓）—— 这正是 `v1.25.0` 建这套隔离的目的 ✓。
+⇒ 加**可选**预算（**默认值一字未变** ✓，既有调用方行为不变 ✓）：
+`tools/_pool_traj.run_generation(timeout=None)` ⇒ 取 `LOOP_AB_TIMEOUT` 环境变量、再退回 **900** ✓；
+`tools/ab_generation.py` 加 `--timeout`（0 = 用默认 ✓）✓。
+
+### 七、顺带清死码（R4）
+
+`loop_critic.pd` ✓ · `gen_f11_daily.pd` ✓ · `augment_panel.glob` ✓ —— 实测三者在本文件出现 **0 次** ✓
+（删前确认 ✓，删后编译 + 名字检查 + 守门全过 ✓）。
+⚠ **两处工具误报，故意不删** ✗：① `factor_miner.COST_PRESETS` —— 它是**有意转出**的兼容出口 ✓
+（注释写着"转出, 勿在此再定义" ✓）；② `engine/_dump_state.py` / `_dump_skel.py` 的 `Node`（或 `E`）——
+**pickle 反序列化需要该类在加载方命名空间可见** ✓（脚本里写明了 ✓）。⇒ 已在台账注明，免后人再误删 ✗。
+
+---
+
 ## [1.29.0] — 2026-09-28
 
 > 主题：**最后一个大函数拆分 —— `factor_miner.evaluate_real()` 275 → 47 行**（`loop_todo §1.36/§1.37 ③`）

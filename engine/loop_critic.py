@@ -27,7 +27,8 @@ B角(本文件)     : 负责"监督 + 启发" ——
 import os
 import hashlib
 import numpy as np
-import pandas as pd
+# ⚠ 2026-09-28（R4）：`import pandas as pd` 已删 —— 实测 `pd.` 在本文件出现 **0 次** ✗（HEAD 起就是死码 ✓）
+#   （`pd` 的用处随 2026-09-2x 的拆模块搬去了 `loop_libdoc.py` 等 ✓；由 `ai_test/_unused_imports.py` 查出 ✓）
 
 # 叶子字段全集与引擎A角共用单一事实源 loop_fields.py(新增字段族只改那一处)
 # 历史坑: 本文件曾硬编码旧12字段, 引擎叶子池扩展后 B角诊断漏认新族 -> 漂移

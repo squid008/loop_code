@@ -66,7 +66,8 @@ def do_out(a):
     before = T.snap(files)
     try:
         print('【2】真跑一代 …（生产同款 flag + 最小规模 ✓）')
-        rc, out, err, dt = T.run_generation(a.pool, a.gen, n=a.n, l2=a.l2, seed=a.seed)
+        rc, out, err, dt = T.run_generation(a.pool, a.gen, n=a.n, l2=a.l2, seed=a.seed,
+                                           timeout=a.timeout or None)   # ★ 0 ⇒ 交给默认/环境变量 ✓
         print('    用时 %.0fs · 退出码=%d' % (dt, rc))
         os.makedirs(a.out, exist_ok=True)
         io.open(os.path.join(a.out, 'stdout.log'), 'w', encoding='utf-8').write(out + '\n' + err)
@@ -223,6 +224,10 @@ def main():
     ap.add_argument('--n', type=int, default=12)
     ap.add_argument('--l2', type=int, default=2)
     ap.add_argument('--seed', type=int, default=777)
+    # ★ 2026-09-28：超时预算（0 = 用默认 900s / `LOOP_AB_TIMEOUT` ✓）——
+    #   机器被别的项目占用时一代可能 >900s ⇒ 用 `--timeout 10800`（或环境变量）放宽 ✓，
+    #   否则会看到 `退出码=-9`（**超时，不是行为差异** ✗）。
+    ap.add_argument('--timeout', type=int, default=0)
     a = ap.parse_args()
     if a.diff:
         return do_diff(a)

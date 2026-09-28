@@ -754,6 +754,54 @@ _ctx · act · base · cmul · cool · diag · ineff · n_blocked · n_ineff · 
 
 ---
 
+### 1.38 ✅【已完成·v1.30.0】R1 收官：`engine/` 侧 >120 行函数**清零** ＋ 修掉"让它们藏很久"的**根因**
+
+> 承接 §1.36 顺带查明的两条**既存** R1 违规：`build_fa_pit.main()` **145** ✗ · `loop_persist._save_state()` **140** ✗
+> （用户 2026-09-28：_"下一轮清，那几个点都处理一下"_ ✓ —— 指这两条 ＋ 死 import ＋ 体检工具漏报 ✓）
+
+**★ 根因优先**：这两条不是"没人拆"，而是"**没人看见**" ✗ —— `tools/_audit_codebase.py`【3】
+只单列 `>300` 与 `150~300` 两档 ⇒ **121~150 这一档从没被点名** ⚠（而 R1 写的是"函数 **≤120** 行" ✗）。
+⇒ 该工具现输出 **R1 违规全清单（凡 >120 全部点名 ✓）**，并按「评分范围 `engine/` / 非评分范围脚本」**分组** ✓
+⇒ 本版实测 **`engine/` = 0 个 ✓**（“R1 全达标”）、非评分范围 23 个（**只供参考** ✓，如 `parallel_runner.run` 342 ✗）。
+
+| 位置 | 改前 | 改后 | 抽出的 helper |
+|---|---|---|---|
+| `engine/build_fa_pit.py` | `main()` **145** ✗ | **102** ✓ | `_load_pit_stock`（读 h5 + 解析 quarter/info_date）**67** ✓ |
+| `engine/loop_persist.py` | `_save_state()` **140** ✗ | **102** ✓ | `_bank_admit`（入库准入循环）**56** ✓ · `_lib_doc_sync`（分口径落文档）**27** ✓ |
+
+★ 两条都是**最小切口** ✓：`build_fa_pit` 只抽 49 行一段（循环里选股/填充/落盘**一字未动** ✓）；
+`_save_state` 里 **「原子写 state」那段绝对没碰** ✓（`pickle.dump` 的键顺序决定字节 ⇒ 动它就过不了 A/B ✗）。
+★ **逐字搬运 + 块内零改名**（同 §1.37 ③ 的数值路径铁律 ✓）。
+
+**验证（★ A/B 一代**覆盖不到**这些分支 ⇒ 必须自造对拍 ✓）**：
+1. **`_save_state` 逐字节对拍**（`ai_test/_ab_save_state_dual.py`）⇒ 8 用例的
+   **state pkl 原始字节 + md + jsonl + stdout + 异常**全同 ✓（早退 · 单入库+池标签+纯风格C ·
+   **双口径分流** · **收益流去重** · **FSA 冻结** · **骨架上限** · 库内已有 · 收益流进对照集 ✓）——
+   ⚠ 非造不可的原因：最小规模一代**常"入库 0"** ⇒ `_save_state` 头一句就 `return`，**准入循环根本不执行** ✗；
+2. **`fa_pit.h5` 逐位对拍**（`ai_test/_ab_fa_pit_dual.py`）⇒ **80 只股票**旧版 vs 新版：
+   产物**逐 key/逐数组 float32 原始字节级相同** ✓（2,001,791 字节 ✓）+ stdout 逐行相同 ✓；
+3. 同 seed A/B（`after3` ←→ 改后）⇒ 8 产物 + stdout 逐字相同 ✓；
+4. 静态守门：`_test_fsa_freeze` 22/22 · `_test_inject_pools` 17/17 · `_test_node_single` ·
+   `_test_library_log` 44/44 · `_test_critic_sensor` · `_test_action_efficacy` 42/42 ·
+   `_test_unbound_return` · `_test_undefined_names` **0 处** ✓；
+5. `tools/release_check.py` ⇒ **55/55 全绿** ✓。
+
+**★★ 三道闸门各抓到一个真错（留痕 ✗）**：`--dump` 人工审阅抓 **3 个**（漏搬 `ics = []` ✗；
+残留 `mc_ = None if mcap is None …` ✗；`last_date` 形参 vs 块里 `dates[-1]` ✗）、
+`_test_undefined_names` 抓 **1 个**（`_bank_admit` 漏传 `frozen` ✗）、`--dump` 又抓 **1 个**
+（`_lib_doc_sync` 形参名与块里 `bank`/`lib_added` 不符 ✗）⇒
+**结论：这类"拼接式手术"必须过「`--dump` 人工审阅 ＋ `_test_undefined_names`」两道**，
+只信 dry-run 的行数就 apply 必翻车 ✗（各脚本头注已写明 ✓）。
+
+**顺带清死码（R4）**：`loop_critic.pd` · `gen_f11_daily.pd` · `augment_panel.glob`（实测各 **0 次** ✗ 死码 ✓）；
+⚠ **工具误报、故意保留** ✗：`factor_miner.COST_PRESETS`（**有意转出**的兼容出口 ✓）·
+`_dump_state.py`/`_dump_skel.py` 的 `Node`（**pickle 反序列化命名空间**所需 ✓）。
+
+**⇒ 收官**：`engine/` 侧 R1/R2 **双达标** ✓（R2：最大文件 `loop_critic.py` **775** ≤800 ✓；
+R1：无任何 >120 行函数 ✓）—— 剩下的大函数都在 `tools/`（非评分范围 ✓）。
+
+---
+
 ### 1.20 ★★★【铁律·2026-09-14 用户拍定】**不要用"放宽门槛"凑因子数量** —— 瓶颈是**信号源多样性**，不是数量
 
 **用户原话**：
