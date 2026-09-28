@@ -130,9 +130,13 @@ from loop_eval import (style_features, _jscalar, node_to_dict, node_from_dict,
                       llm_jury, llm_jury_block, llm_journal_block)  # ★ 文件级拆分：评估
 from loop_persist import (_StateUnpickler, append_csv_schema_safe, _real_mb,
                          _dump_strip_detail, _dump_pool_obs,
-                         _cmp_lib, ex_max_corr, _tag_desc, _gate_of, _pool_best,
-                         combine_ok, _mk_library_skeleton, append_library_entries,
-                         _lib_sync, _save_state)  # ★ 文件级拆分：库文档/收益流/保存
+                         _cmp_lib, ex_max_corr, _gate_of, _pool_best,
+                         combine_ok, _save_state)  # ★ 文件级拆分：收益流/保存
+# ★ 2026-09-28（§1.36/§1.37 ②）：库文档簇（4 个名字）已从 loop_persist 拆到 loop_libdoc ✓
+#   ⚠ **这行不许删** ✗ —— `tools/horizon_admit_write.py` 与 `tools/backfill_library_pool.py`
+#     走的是 `LE._lib_sync` / `LE._mk_library_skeleton` ✓；删掉它两个工具会**静默失联** ✗✗
+from loop_libdoc import (_tag_desc, _mk_library_skeleton, append_library_entries,
+                         _lib_sync)  # ★ 库文档同步（单一职责模块 ✓）
 from loop_llm_guide import llm_fetch, parse_expr  # ★ L3 拆分：LLM 引导
 
 LLM_MAX_SIZE = 15         # 解析上限: 超过该节点总数的巨型表达式视为 LLM 失控, 丢弃

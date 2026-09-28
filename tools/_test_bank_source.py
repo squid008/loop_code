@@ -26,7 +26,10 @@ import sys
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BF = io.open(os.path.join(ROOT, 'tools', 'build_facs.py'), encoding='utf-8').read()
-ENG = io.open(os.path.join(ROOT, 'engine', 'loop_persist.py'), encoding='utf-8').read()  # 入库日志已迁 loop_persist
+# ★ 2026-09-28（`loop_todo §1.36/§1.37 ②`）：入库事件日志（`LIB_ENTRIES`/`library_entries.jsonl`）
+#   已随库文档簇从 `engine/loop_persist.py` 搬到 `engine/loop_libdoc.py` ⇒ **取源必须跟着搬** ✗
+#   （否则本断言变成"永远找不到"而误报 —— 本处正是被 `release_check.py` 抓出来的 ✓✓）
+ENG = io.open(os.path.join(ROOT, 'engine', 'loop_libdoc.py'), encoding='utf-8').read()
 J = os.path.join(ROOT, 'docs', 'library_entries.jsonl')
 
 FAIL = []

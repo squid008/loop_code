@@ -21,6 +21,81 @@
 
 ---
 
+## [1.28.0] — 2026-09-28
+
+> 主题：**库文档簇拆成 `engine/loop_libdoc.py`** —— `loop_persist.py` **796 → 528 行**、
+> `_lib_sync()` **186 → 61 行**（`docs/loop_todo.md §1.36/§1.37 ②`）
+> ⚠ **引擎行为零改动** ✓ —— 同 seed A/B **8 产物 + stdout 逐字相同** ✓ ＋ **18 用例旧版 vs 新版逐字节差分** ✓
+> ⇒ 属"向后兼容的结构整治"（同 v1.25.x / v1.27.0 口径）⇒ SemVer **MINOR** ✓
+
+### 一、为什么要"搬"而不是"就地拆"
+
+`loop_persist._lib_sync()` **186 行** ✗（R1 线 120）；而它所在的 `loop_persist.py` 当时 **796 行**，
+离 R2 线（800）**只剩 4 行** ✗✗ ⇒ 就地拆（新增 `def`/docstring/`return` 都要占行）**必然把文件顶过线** ✗
+⇒ 把「**库文档**」这一件事整簇搬成**单一职责模块** ✓
+（同 `v1.25.x` 拆 `loop_l1`/`loop_l2`、`v1.27.0` 拆 `loop_critic_rules` ✓）。
+
+### 二、落点（`ast` 实测）
+
+| 位置 | 改前 | 改后 |
+|---|---|---|
+| `engine/loop_persist.py` | **796**（贴线 ✗）| **528** ✓ |
+| 新模块 `engine/loop_libdoc.py` | — | **347** 行 ✓ |
+| `_lib_sync` | **186** ✗ | **61** ✓ |
+| 拆出的两段 | — | `_lib_rows`（渲染总览行/明细块/入库事件 · **113** ✓）· `_lib_insert_md`（md 三处锚点 · **31** ✓）|
+| 逐字搬的 3 个 | — | `_tag_desc` **4** · `_mk_library_skeleton` **38** · `append_library_entries` **33** ✓ |
+
+★ **`_lib_rows` 一度 121 行** ✗（超 R1 线 1 行）⇒ 用本项目**已有手法**「上移论述注释」压回 **113** ✓
+（`v1.25.x` 的 "comment hoist only" ✓）。⚠ **诚实记账**：**没做到**"token 级逐字相同" ✗ ——
+上移时顺手把那段注释写得更清楚（并加了 §1.37 的来历）⇒ 属**注释增量**（对行为零影响 ✓）。
+
+### 三、依赖方向（★ 单向，无环）
+
+`loop_libdoc` 只依赖**叶子模块**（`loop_paths` · `loop_expr.skeleton` · `cost_presets` ·
+`loop_pools`（惰性 import ✓））⇒ **不 import `loop_persist` / `loop_engine`** ✓；
+`loop_persist` 反向 **只** `from loop_libdoc import _lib_sync`（`_save_state` 的代末双口径同步仍要它 ✓）；
+`loop_engine` 顶部 **re-export 那 4 个名字** ✓ —— ⚠ `tools/horizon_admit_write.py` /
+`tools/backfill_library_pool.py` 走的是 `LE._lib_sync` / `LE._mk_library_skeleton`，
+**删掉那行会让两个工具静默失联** ✗ ⇒ 已在原处写明"不许删" ✗。
+
+### 四、验证（★ 其中第 3 条是"必须直拍"的）
+
+1. `tools/_test_undefined_names.py` ⇒ **0 处** ✓（179 个文件 ✓）；
+2. **同 seed A/B**：`_ab/base2`（187 s）←→ `_ab/after2`（192 s）⇒ **8 产物逐字节 + stdout 103 行 0 差异** ✓
+   —— ⚠ 但它**证明不了 `_lib_sync` 本身** ✗✗：该函数第一句就是 `if not added_exprs: return`，
+   而 `ab_generation` 跑的是**最小规模**（"常常入库 0" ✓）⇒ **主体根本没执行** ✗；
+3. ★★ **直拍（本版的关键证据）**：`ai_test/_ab_libdoc_dual.py` ——
+   **旧版（`HEAD:loop_persist._lib_sync`）vs 新版（`loop_libdoc` 三段）逐字节差分** ✓：
+   沙箱把 `loop_paths.LIBRARY/LIB_ENTRIES/MINE_POOL` 指到临时目录（两边各自的副本 ✓），
+   **18 个用例**覆盖 早退（无入库/明细为空）· **骨架自动创建** · 表尾插入 · **刚建骨架无数据行（`elif` 分支）** ·
+   **缺「相关文件导航」（`p<0` 分支）** · 池标签有/无 · 剥风格 **4 元组 / 6 元组 / 日频 NaN** ·
+   `sign` 有/无/坏值 · 口径有/无（含无期数）· 来源 `engine`/`promote` · **编号 F99→F100 边界** ·
+   `jsonl` 幂等 · `jsonl` 坏行 ⇒ **18/18 逐字节相同**（md + jsonl（`ts` 归一化）+ **stdout** + 异常）✓；
+4. 相关守门：`_test_library_log` **44/44** ✓ · `_test_admit_write` ✓ · `_test_reports_expr` **34/34** ✓ ·
+   `_test_dual_horizon` ✓ · `_test_unbound_return`（**新模块已纳入扫描** ✓）✓ · `_audit_deadcode`（无新死码 ✓）✓；
+5. `tools/release_check.py`（全量 **55/55**）⇒ 全绿 ✓。
+
+### 五、守门/工具取源同步（防护一字未减 ✓）＋ 顺手修掉一个真缺陷 ✓
+
+* 三处"按文件路径做静态断言"的取源改到 `loop_libdoc.py` ✓：
+  `_test_library_log`（`append_library_entries` 有定义且被调用）· `_test_admit_write`（`def _lib_sync(...source=None)`）·
+  `_test_reports_expr`（`sign` 行）✓；
+* `tools/_test_unbound_return.py` 的默认文件清单加 `engine/loop_libdoc.py` ✓（R7：搬来的代码必须被扫 ✓）；
+* ★ **`tools/_mk_pool_library_skeleton.py` 的 `ENGINE_SRC` 原先写 `loop_engine.py`** ✗ ——
+  而 `_mk_library_skeleton` **从来不在** loop_engine 里定义（那边只有 import）⇒ **ast 提取每次都失败、
+  静默回退内置 `FALLBACK` 副本** ✗（= 引擎改模板、工具照抄旧副本；**实测两份确实有一处不同** ✗）。
+  本次把路径指到真正的家 ✓，并用 `ai_test/_check_skeleton_tpl.py` 证明：
+  **旧路径提取失败** ✓ / **新路径与引擎模板逐字相同** ✓（该工具**不覆盖已有文件**（`if os.path.exists: exit 0` ✓）
+  ⇒ 只影响"将来新建的池骨架"，风险可控 ✓）。
+* `loop_persist.py` 里随簇搬走而**变成死 import** 的 `json` / `re` / `cost_label` 已删 ✓（R4 无死码 ✓）。
+
+**遗留（如实记账 ✗）**：① `factor_miner.evaluate_real()` **275 行** ⇒ 下一版（③，碰数值路径 ⇒
+需同 seed 确定性 + **逐位对拍** ✓）；② 顺带查明两条**既存** R1 违规（**不是本版引入** ✗）：
+`build_fa_pit.main()` **145** · `loop_persist._save_state()` **140** ⇒ 已记入 `maintainability.md §五` 台账 ✓
+（根因：`_audit_codebase`【3】只点名 `>150`/`>300` 两档 ⇒ **121~150 这一档一直没被看见** ✗）。
+
+---
+
 ## [1.27.0] — 2026-09-28
 
 > 主题：**既存 R2 违规清零 —— `loop_critic.py` 998 → 774 行、`suggest()` 207 → 30 行**

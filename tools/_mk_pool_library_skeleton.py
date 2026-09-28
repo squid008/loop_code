@@ -23,7 +23,13 @@ import sys
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-ENGINE_SRC = os.path.join(R, 'engine', 'loop_engine.py')
+# ★ 2026-09-28（`loop_todo §1.36/§1.37 ②`）修：原先写 `loop_engine.py` ✗ ——
+#   而 `_mk_library_skeleton` **从来不在** loop_engine 里定义（那边只有 import）⇒
+#   ast 提取**每次都失败**、静默回退到内置 `FALLBACK`（于是"引擎改了模板、本工具却照抄旧副本" ✗）。
+#   库文档簇现已搬到 `engine/loop_libdoc.py` ⇒ 指向**真正的定义处** ✓
+#   （⚠ 内置 `FALLBACK` 与引擎模板**本来就有一处不同**（crosspool 那行的说明文字）⇒
+#     以前生成的骨架与引擎实际模板并不一致；修好后一致 ✓ 已记进 change_log ✓）
+ENGINE_SRC = os.path.join(R, 'engine', 'loop_libdoc.py')
 POOL = sys.argv[1] if len(sys.argv) > 1 else '50'
 TAG = POOL
 SFX = '' if POOL == 'all' else '_' + POOL

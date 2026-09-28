@@ -61,8 +61,9 @@ chk('★ 20 日指标**必须配 `--out`**（否则 `factor_metrics.py` 会冲�
 print('\n【2】`_lib_sync` 调用要**如实标来源** `promote`（不冒充引擎 ✗）')
 chk("`source='promote'` 传进了 `_lib_sync` ✓", re.search(r"source\s*=\s*'promote'", src) is not None)
 chk('引擎侧 `_lib_sync` 有该可选参数（默认 None ⇒ 行为逐位不变 ✓）',
+    # ★ 2026-09-28（`loop_todo §1.36/§1.37 ②`）：`_lib_sync` 已迁 `engine/loop_libdoc.py` ⇒ 取源跟着搬 ✓
     re.search(r'def _lib_sync\([^)]*source=None\)', io.open(
-        os.path.join(ENG, 'loop_persist.py'), encoding='utf-8').read(), re.S) is not None)
+        os.path.join(ENG, 'loop_libdoc.py'), encoding='utf-8').read(), re.S) is not None)
 
 print('\n【3】去重闸**先排除自己**（否则"已在库"会被误报成"收益流重复"✗）')
 chk('存在 `_lib_wo_self`（把候选自己从对照集里去掉 ✓）', '_lib_wo_self' in src)

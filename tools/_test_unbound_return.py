@@ -36,7 +36,9 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FILES = [a for a in sys.argv[1:] if not a.startswith('--')] or [
     'engine/loop_engine.py', 'engine/loop_critic.py', 'engine/factor_miner.py',
     # ★ 2026-09-28（§1.37）：B角规则状态机（原 `suggest()` 里的 7 个闭包）搬来此处 ⇒ 一并守 ✓
-    'engine/loop_critic_rules.py']
+    'engine/loop_critic_rules.py',
+    # ★ 2026-09-28（§1.36/§1.37 ②）：库文档簇（含 186 行的 `_lib_sync` 拆出的两段）搬来此处 ⇒ 一并守 ✓
+    'engine/loop_libdoc.py']
 COMPOUND = (ast.If, ast.For, ast.AsyncFor, ast.While, ast.Try, ast.With, ast.AsyncWith, ast.Match)
 COMPREH = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 
