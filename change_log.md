@@ -21,6 +21,75 @@
 
 ---
 
+## [1.27.0] — 2026-09-28
+
+> 主题：**既存 R2 违规清零 —— `loop_critic.py` 998 → 774 行、`suggest()` 207 → 30 行**
+> （`docs/loop_todo.md §1.37` ①：**先对象化、再把 7 个闭包转方法**，走 B 路「整改」✓）
+> ⚠ **引擎行为零改动** ✓ —— A/B 证据：**8 个产物逐字节 + stdout 103 行逐行相同（差异 0）** ✓
+> ⇒ 属"向后兼容的结构整治"（同 v1.25.x 口径）⇒ SemVer **MINOR** ✓
+
+### 一、为什么要做（§1.36 查出的**既存**违规，口径要一致）
+
+`loop_critic.py` 改前就 **991 行**、v1.26.0 后又 **998 行** ✗（R2 线 = 800）——
+它上一轮审计里已是 **engine 最大文件**，却**从未进过 §五 的扣分项** ✗
+（而新文件都按 ≤800 算 ✓）⇒ **口径不一致** ✗。两条路里选了 **B（整改）**：A（承认遗产）给不出理由 ✓。
+
+### 二、★ 关键判断：**不做机械抽块**（这条是 AST 机器算出来的，不是人眼猜 ✓）
+
+`tools/_extract_block.py loop_critic.py suggest 581 752 <名>` 的结论：那 7 个嵌套 `def`
+「**块里读了、块外才有**」的名字 **13 个** ——
+`_ctx · act · base · cmul · cool · diag · ineff · n_blocked · n_ineff · reasons · s · tgt · veto`；
+而「块里赋值、块外还读」的**只有 `n_blocked`**。
+
+⇒ 机械抽成函数 ⇒ 每个子函数要背 **13 个形参** ✗✗ —— 正是 `maintainability.md §七` 警告的
+   「**上帝函数换成上帝参数表**」✗（`_run_l2_phase` 试抽 `_l2_judge` 已因此回退过一次 ✓）
+⇒ 改用**方法**（`self.xxx`）⇒ **形参 0 个** ✓；`n_blocked` / `n_ineff` 留在对象上**就地自增**
+   ⇒ **连回传都不需要** ✓✓（原 `n_blocked = [0]` 的单元素列表只是"闭包改不动外层变量"的变通 ✗ ⇒ 顺手拆掉 ✓）。
+
+### 三、落点（`ast` 实测行数）
+
+| 位置 | 改前 | 改后 |
+|---|---|---|
+| `engine/loop_critic.py` | **998** ✗ | **774** ✓（R2 线 800 ✓）|
+| `loop_critic.suggest()` | **207** ✗（R1 线 120）| **30** ✓ |
+| 新文件 `engine/loop_critic_rules.py` | — | **312** ✓ |
+| 7 个方法（7 个闭包 ⇒ 方法） | — | `_set` **8** · `_ineff_muted` **4** · `_begin` **3** · `_mark` **20** · `_rollback` **34** · `_guard` **43** · `_settle` **54** ✓（**与 §1.37 预估逐数吻合** ✓）|
+| `_SugState.__init__`（原 `_init_sug` **并入** ✓）| 30 行模块级函数 | **43** ✓ |
+| `_fmt` / `_fmt_l1` / `_fmt_l2` | 闭包 + 2 个模块级 | 一并搬入（**4 / 14 / 18** ✓）|
+| **留在原文件** | — | `_apply_rules`（7 条规则表 · **67** ✓）+ `_finalize_sug`（出口 mix 护栏 · **28** ✓）|
+
+★ **两处按实情修正了原方案**（不假装照抄 ✓）：
+1. **`_init_sug` 也并进了对象** —— 状态布局的**唯一知情人**就是对象本身 ✓，否则构造时还得再抄 6 行
+   "从 `s` 取别名"（重复 ✗）；代价是新模块 312 行（原估 ≈220），仍远在 800 线内 ✓。
+2. **`n_blocked`/`n_ineff` 由 `[0]` 单元素列表改为对象整数** ✓（理由见 §二）。
+
+### 四、依赖方向（★ 单向，不成环）
+
+`loop_critic_rules` 顶部 `from loop_critic import …`（**复用**其常量与纯函数 ⇒ **R5 未复制第二份** ✓）；
+`loop_critic` **只在函数内** import 它（`suggest` / `report` / `ai_review` 三处）⇒ 到那一刻
+`loop_critic` 已完全初始化 ⇒ **不成环** ✓（与 `_op_names` 惰性 import `loop_engine` 同一条理由 ✓）。
+模块头注写明「**不许**把它提到 `loop_critic` 的模块级」✗。
+
+### 五、验证（R7 铁律：名字解析 + 同 seed A/B，缺一不可 ✓）
+
+1. `tools/_test_undefined_names.py` ⇒ **0 处** ✓；
+2. **A/B 逐字节**：改前 `_ab/base`（219 s ✓）←→ 改后 `_ab/after37`（186 s ✓），
+   同 `--pool=50 --gen=9999 --seed=777` + 生产同款 flag ⇒
+   **8 个产物逐字节相同**（journal 归一化后逐行相同 ✓）+ **stdout 103 vs 103 行、差异 0** ✓；
+3. 相关守门：`_test_critic_sensor`（饱和/否决/永久闭嘴）✓ · `_test_action_efficacy` **42/42** ✓ ·
+   `_test_unbound_return`（**新模块已纳入扫描** ✓）✓ · `_test_ops_sync` 28/28 ✓ ·
+   `_test_ops_registry` 17/17 ✓ · `_test_critic_firstgen` ✓；
+4. `tools/release_check.py`（版本一致 → 未定义名 → 全量 55 条守门）⇒ **全绿** ✓。
+
+**守门同步（防护内容一字未减 ✓）**：`_test_action_efficacy` 的两处静态取源改为
+「`loop_critic.py` + `loop_critic_rules.py` **拼接**」✓（动作区正则仍命中原文件里的 `_apply_rules` ✓、
+`_set` 计数 10 ✓、"无直接 `s[...]` 赋值" ✓）；`_test_unbound_return` 的默认文件清单加新模块 ✓。
+
+**遗留（如实记账 ✗）**：`engine` 侧仍有 `factor_miner.evaluate_real()` **275 行**、
+`loop_persist._lib_sync()` **186 行** ⇒ 即 `loop_todo §1.36` 顺带记的那两笔（**②③ 待办** ✓）。
+
+---
+
 ## [1.26.0] — 2026-09-28
 
 > 主题：**给挖掘留"时间线"** —— journal 与 stdout 加**秒级时间**、耗时改**人类可读**、

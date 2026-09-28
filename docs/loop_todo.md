@@ -583,7 +583,7 @@ md 总览 ✓ · md 明细 ✓ · **不在** JSONL ✓ · **不在** 登记表 �
 （不在评分范围内 ✓）；`engine` 侧除 `loop_critic.suggest()` 外还有 `factor_miner.evaluate_real()` **275 行** ✗、
 `loop_persist._lib_sync()` **186 行** ✗ ⇒ 若要诚实，这些也该一并列出 ✓。
 
-### 1.37 【方案·已侦察】① 整改 `loop_critic.py`：**先对象化、再把 7 个闭包转方法**（走 B 路线 ✓）
+### 1.37 ① ✅【已完成·v1.27.0】整改 `loop_critic.py`：**先对象化、再把 7 个闭包转方法**（走 B 路线 ✓）
 
 > ★ 2026-09-28 用 **AST 机器算**出共享状态（不用人眼猜 ✓）：
 > `tools/_extract_block.py loop_critic.py suggest 581 752 <任意名>` ⇒ 那 7 个嵌套 `def` 的
@@ -608,6 +608,44 @@ _ctx · act · base · cmul · cool · diag · ineff · n_blocked · n_ineff · 
 **验证**（同一套硬证据 ✓）：A/B **逐字节**（挖掘已停 ✓ 可跑 ✓）＋ `_test_undefined_names` ✓ ＋ 相关守门 ✓ ⇒ 全绿才提交 ✓。
 ⚠ 纪律：**不做机械 `--apply`** ✗（上面那 13 形参的事实已证明盲抽会产上帝参数表 ✗）⇒ 手写这批方法 + 逐处 `self.` 改写 ✓，
 并把"为什么不机械抽"写进新模块 docstring ✓。
+
+#### ① ✅ **已完成（2026-09-28 · v1.27.0）** —— 实测数字与硬证据
+
+| 位置 | 改前 | 改后（AST 实测 ✓） |
+|---|---|---|
+| `engine/loop_critic.py` | **998** ✗ | **774** ✓（R2 线 800 ✓）|
+| `suggest()` | **207** ✗ | **30** ✓（R1 线 120 ✓）|
+| 新模块 `engine/loop_critic_rules.py` | — | **312** 行 ✓ |
+| 7 个方法（`_set`/`_ineff_muted`/`_begin`/`_mark`/`_rollback`/`_guard`/`_settle`） | 闭包 ✗ | **8 / 4 / 3 / 20 / 34 / 43 / 54** ✓（**与上表预估逐数吻合** ✓）|
+| `_SugState.__init__`（= 原 `_init_sug` 并入 ✓） | 30 行模块级函数 | 43 行 ✓ |
+| `_fmt` / `_fmt_l1` / `_fmt_l2` | 闭包 + 2 个模块级 | 一并搬入（4 / 14 / 18）✓ |
+| **留在原文件** | — | `_apply_rules`（7 条规则表 · **67 行**）+ `_finalize_sug`（出口护栏 · **28 行**）✓ |
+
+★ **两处按实情修正了原方案**（记账，不假装照抄 ✓）：
+1. **`_init_sug` 也并进了对象**（原方案按"只搬 7 个闭包"估 ≈220 行）—— 因为状态布局的**唯一知情人**就是对象本身 ✓，
+   否则构造时要再抄 6 行"从 `s` 取别名"（重复 ✗）。代价：新模块 312 行（> ≈220），但仍远在 800 线内 ✓。
+2. **`n_blocked` / `n_ineff` 从 `[0]` 单元素列表改成对象上的整数** ✓ —— 原写法只是"闭包改不动外层变量"的变通；
+   对象化后 `self.n_blocked += 1` 直写 ⇒ **回传机制整个消失** ✓（正是本方案要的"连回传都不需要" ✓）。
+
+**验证（四条硬证据，全绿才提交 ✓）**：
+1. `tools/_test_undefined_names.py` ⇒ **0 处** ✓；
+2. `python tools/ab_generation.py --diff ai_test/_ab/base ai_test/_ab/after37` ⇒ **8 个产物 + stdout 逐字相同** ✓
+   （改前 `_ab/base`（219s ✓）/ 改后 `_ab/after37` ✓，同 `--pool=50 --gen=9999 --seed=777` + 生产同款 flag ✓）；
+3. 相关守门：`_test_critic_sensor`（饱和/否决/永久闭嘴）✓ · `_test_action_efficacy` **42/42**（有效性 + 棘轮）✓ ·
+   `_test_unbound_return`（**已把新模块纳入扫描** ✓）✓ · `_test_ops_sync` 28/28 · `_test_ops_registry` 17/17 ·
+   `_test_critic_firstgen` ✓；
+4. `tools/release_check.py`（全量 55 条守门 + 版本/未定义名）⇒ **全绿** ✓。
+
+★ **守门同步（防护内容一字未减 ✓）**：`_test_action_efficacy` 的两处**静态取源**改为
+「`loop_critic.py` + `loop_critic_rules.py` 拼接」✓（状态机换文件了 ⇒ 断言跟着搬 ✓；
+动作区正则仍命中原文件里的 `_apply_rules` ✓，`_set` 计数 10 ✓，"无直接 `s[...]` 赋值" ✓）；
+`_test_unbound_return` 的默认文件清单加 `engine/loop_critic_rules.py` ✓。
+
+★ **依赖方向**：`loop_critic_rules` 顶部 `from loop_critic import …`（**复用**常量与纯函数 ⇒ R5 未复制 ✓）；
+`loop_critic` **只在函数内** import 它（`suggest`/`report`/`ai_review` 三处）⇒ 那时 `loop_critic` 已完全初始化
+⇒ **不成环** ✓（同 `_op_names` 惰性 import `loop_engine` 的道理 ✓）；模块头注写明「不许提到模块级」✗。
+
+**②③ 待办照旧**（`_lib_sync` 186 行 / `evaluate_real` 275 行 ⇒ 见 §1.36 顺带记的那一笔 ✓）。
 
 ---
 

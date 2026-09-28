@@ -39,6 +39,19 @@ sys.path.insert(0, ENG)
 OK = [0, 0]
 
 
+def _src():
+    """B角规则机的**源码拼接**（`loop_critic.py` + `loop_critic_rules.py`）。
+
+    ★ 2026-09-28（`loop_todo §1.37`）：7 个闭包变方法后，`_set`/`_settle`/`_rollback`/`_guard`
+      与那 3 个纯格式化函数搬到了 `engine/loop_critic_rules.py` ✓，
+      而**规则表** `_apply_rules` / 出口 `_finalize_sug` 仍在 `loop_critic.py` ✓
+      ⇒ 静态断言必须**两个文件一起看**，否则会误判"守的东西不见了" ✗
+      （拼接顺序：`loop_critic.py` 在前 —— 动作区正则靠它先命中 ✓）
+    """
+    return '\n'.join(open(os.path.join(ENG, fn), encoding='utf-8').read()
+                     for fn in ('loop_critic.py', 'loop_critic_rules.py'))
+
+
 def chk(cond, msg):
     OK[0] += 1
     if not cond:
@@ -172,7 +185,7 @@ def t_none_weight(C):
         '回退计划如实返回 old=None（日志里要写明"删键"而不是"恢复成 None"）')
     chk('barra_growth' not in s2['leaf_w'] and None not in s2['leaf_w'].values(),
         '★★ 回退后 cfg 里**不含任何 None**（这就是不崩的关键）—— 实得 {}'.format(s2['leaf_w']))
-    chk('删除该键' in open(os.path.join(ENG, 'loop_critic.py'), encoding='utf-8').read(),
+    chk('删除该键' in _src(),
         '回退留痕写明"删除该键"（否则 journal 会让人以为真值就是 None）')
 
 
@@ -203,7 +216,10 @@ def t_none_weights_engine():
 
 def t_static(C):
     print('\n[5] 静态断言：所有动作都必须走 `_set`（防新增动作**静默漏记**）')
-    src = open(os.path.join(ENG, 'loop_critic.py'), encoding='utf-8').read()
+    src = _src()          # ★ §1.37 起 = `loop_critic.py` + `loop_critic_rules.py` ✓（见 `_src` 说明）
+    # ⚠ 下面这条正则**仍然命中 `loop_critic.py` 里的 `_apply_rules`**（动作表留在原文件 ✓）：
+    #   起 `# 1) 叶子过度集中` ⇒ 止于 `_finalize_sug` 的 `if not reasons:`（缩进 4 ✓）
+    #   ⇒ group(1) 恰是"7 条动作"的正文 ✓（拼接不会让它跑到新文件里 —— 新文件里没有这一串 ✓）
     m = re.search(r'(# 1\) 叶子过度集中.*?)(\n    if not reasons:)', src, re.S)
     chk(m is not None, '找到"动作区"（从 r1 到收尾）')
     body = m.group(1)

@@ -111,7 +111,11 @@
   - [x] `combo_constrain.run` **369→10 行**：抽 `_parse_args`/`_load_and_prep`/`_simulate`/`_report`
   - [x] `run_tracks.main` **433→76 行**：抽 `_parse_args`（191 行）+ `_rotate_schedule`/`_finalize_schedule`
     （轮转主循环 + 退出收尾）
-  - [~] `loop_critic.suggest` **308→207 行**（第一步：抽 `_init_sug`/`_apply_rules`/`_finalize_sug`；闭包网 ctx 化留第二步）
+  - [x] `loop_critic.suggest` **308→207 行**（第一步：抽 `_init_sug`/`_apply_rules`/`_finalize_sug`）
+    ⇒ ✅ **第二步已完成（2026-09-28 · v1.27.0）**：**207 → 30 行**（R1 线 120 ✓）——
+    「**先对象化、再把 7 个闭包转方法**」（`_SugState` = 13 个共享状态 + 7 个方法 ⇒ **形参 0 个** ✓，
+    不做机械抽块以免 13 形参的上帝参数表 ✗）⇒ 同时把 **`loop_critic.py` 998 → 774 行**（R2 线 800 ✓）✓
+    新模块 `engine/loop_critic_rules.py` **312 行** ✓；证据：A/B **8 产物 + stdout 逐字相同** ✓（详见 `loop_todo §1.37`）
   - [x] `parallel_runner.run` **390→~344 行**：抽 `_setup_parallel`/`_cleanup_parallel`（启动段 + 退出清理；
     主循环 307 行的调度状态机保留）
 - 验收：每拆一个配守门 + 全量回归绿 + 行为逐字不变（必要时 diff 产物）
@@ -196,13 +200,21 @@
 
 ### 硬指标对照（`_audit_codebase.py` 实测）
 
-| 指标 | 09-15 基线 | **09-26** |
-|---|---|---|
-| `>1500 行巨型文件` | **1**（`loop_engine.py` 3917）| **0** ✓ |
-| `>300 行函数` | **6** | **2**（`parallel_runner.run` 342 · `horizon_admit_write.main` 303）|
-| 最长函数 | `run()` **1079** 行 | `parallel_runner.run()` **342** 行 |
-| `engine/` 总行数 | — | **10833**（47 文件；最大 `loop_stage.py` 1332）|
-| `loop_engine.py` | **3917** 行 / 98 顶层定义 | **619** 行 / 1 个函数（`run()` 8 行）|
+| 指标 | 09-15 基线 | **09-26** | **09-28（v1.27.0）** |
+|---|---|---|---|
+| `>1500 行巨型文件` | **1**（`loop_engine.py` 3917）| **0** ✓ | **0** ✓ |
+| `>300 行函数` | **6** | **2**（`parallel_runner.run` 342 · `horizon_admit_write.main` 303）| **2**（同上；均属 `tools/` 脚本，不在评分范围 ✓）|
+| 最长函数 | `run()` **1079** 行 | `parallel_runner.run()` **342** 行 | 同左 ✓ |
+| `engine/` 总行数 | — | **10833**（47 文件；最大 `loop_stage.py` 1332）| **11192**（51 文件；最大 `loop_persist.py` **796** ✓ / `loop_critic.py` **774** ✓）|
+| `engine/` 最大文件 | — | ✗ 曾有 `loop_critic.py` **998**（**既存**违规，§1.36）| ✅ **796**（`loop_persist.py` ⇒ **全部 ≤800** ✓）|
+| `loop_engine.py` | **3917** 行 / 98 顶层定义 | **619** 行 / 1 个函数（`run()` 8 行）| **631** 行 ✓ |
+| 最长 engine 函数（评分范围内） | — | `factor_miner.evaluate_real()` **275** ✗ | 同左 ✗（**②③ 待办**：§1.36 顺带记的那两笔 ✓）|
+
+> ★ **2026-09-28 追记（v1.27.0）**：`docs/loop_todo.md §1.36` 查出的
+> **既存** R2 违规 —— `loop_critic.py` 改前就 **991 行**、v1.26.0 后 **998 行**，却**从未进过 §五 扣分项** ✗
+> （口径不一致：新文件都按 ≤800 算 ✓）⇒ **本次按 B 路（整改）清零** ✓：
+> 998 → **774** ✓、`suggest()` 207 → **30** ✓、新模块 `loop_critic_rules.py` **312** ✓、
+> 7 个方法 8/4/3/20/34/43/54 ✓ ⇒ **可读性/可维护性 9 分的口径补齐** ✓（证据见 `loop_todo §1.37` ✓）。
 
 ### ⚠ 诚实的剩余（扣分项 · 不假装满分）
 
