@@ -760,6 +760,14 @@ def report(diag, sug, reasons, path):
     """诊断报告 markdown, 追加写入"""
     lines = []
     lines.append(f"\n## 第 {diag['gen']} 代 (B角诊断)\n")
+    # ★ 2026-09-28（用户要求）：journal 也要留**秒级时间** ⇒ 与 stdout 的 `时间:` 行**同格式** ✓
+    #   ⚠ 时区用 `%z` **实测**（本机在北京时即 `+0800` ✓），**不硬编码 `+08:00`** ✗（换机器不会撒谎 ✓）
+    #   ⚠ 这一时刻**只知"诊断落档"**：`开工/完工/耗时` **还没有**（AI 审查在其后 ✓）
+    #     ⇒ 它们出现在 ① stdout 的 `时间:` 行（`loop_persist` ✓）② `_engine_exits.log` 的成功代 ✓
+    #     ⇒ **这里不编造** ✗（宁缺勿假 ✓）
+    import time                        # ⚠ 本文件**既有 lazy-import 约定**（见文件内另一处 `import time` ✓）
+    lines.append('时间: %s（诊断落档时刻 · 本机时区）\n'
+                 % time.strftime('%Y-%m-%d %H:%M:%S %z'))
     # 指标横排 md 表格(键行/分隔/值行): 源码3行, 渲染为横向对齐表格
     # ★ 2026-09-14 新增（§1.1 修法①）：诊断的门槛**与被判的量并列展示**，以便一眼对账。
     #   `gate_min_calmar` = 诊断实际用的全A calmar 门槛（应等于 --min_calmar）

@@ -174,15 +174,21 @@ def _exit_reason(rc, errf, logf, killed):
     return ' · '.join(bits)
 
 
-def _log_exit(pool, gen, rc, mins, errsz, killed, why):
-    """追加一行到一个**只记退出**的日志（比在 1 MB 调度器日志里翻好找 ✓）。"""
+def _log_exit(pool, gen, rc, mins, errsz, killed, why, tag=None):
+    """追加一行到一个**只记退出**的日志（比在 1 MB 调度器日志里翻好找 ✓）。
+
+    ★ 2026-09-28：新增可选的 `tag` —— 让 **rc==0 的「成功代」也写进来** ✓。
+      背景：此前本函数**只在失败路径被调用** ✗ ⇒ 成功完成的代**一行都不写** ✗ ⇒
+      翻这个日志会以为"没怎么挖"（2026-09-28 我就据此误判过"300 才挖两代" ✓）
+      ⇒ 现在成功/被停/异常**三类都留痕** ✓（默认仍按 `killed` 判，旧调用点无需改动 ✓）。
+    """
     try:
         os.makedirs(RT.LOGD, exist_ok=True)
         p = os.path.join(RT.LOGD, '_engine_exits.log')
         with io.open(p, 'a', encoding='utf-8') as f:
             f.write('%s  pool=%-5s gen=%-3s rc=%-11s %5.1fmin err=%-7s %s  %s\n'
                     % (time.strftime('%Y-%m-%d %H:%M:%S'), pool, gen, rc, mins, errsz,
-                       '被停' if killed else '异常', why))
+                       tag or ('被停' if killed else '异常'), why))
     except Exception:                                          # noqa: BLE001
         pass
 
@@ -217,11 +223,23 @@ def _reap(t):
         # ★ 2026-09-19（第 2 步用）：本代**入库个数** ⇒ 决定要不要立刻补 pool-local 数据 ✓
         _bm = re.findall(r'入库 (\d+) 个新因子', txt)
         t['banked'] = int(_bm[-1]) if _bm else 0
+        # ★ 2026-09-28：把引擎那条 `时间: … 耗时 1h59m2s` 里的**人类可读耗时**也取出来 ✓
+        #   ⇒ 成功代记录**照抄**它 ✓（不在这里重做格式化 ✗ —— R5「单一实现」在引擎侧 ✓）
+        _dm = re.findall(r'耗时 ([0-9hms]+)', txt)
+        t['durh'] = _dm[-1] if _dm else ''
         if re.search(r'入库 0 个新因子', txt):
             RT.log('        [note] 本代入库 0（连续多代如此先看 fail_* 分布再下结论）')
     except Exception:
         pass
     t['crashed'] = False
+    # ★ 2026-09-28（用户要求）：**成功代也留痕** ✓ —— 此前 `rc==0` 走不到下面那个 `if` ✗
+    #   ⇒ 本文件只记"被停/异常"，成功完成的一行都没有 ✗（翻日志会以为没怎么挖 ✓ —— 实测误判过 ✓）
+    #   入库数用上面已解析的 `t['banked']` ✓；耗时**照抄**引擎给的字符串 ✓（`t['durh']` ✓，缺失则不写）
+    if rc == 0 and errsz == 0:
+        _log_exit(t['pool'], t['gen'], rc, mins, errsz, False,
+                  '成功  入库 %d 个%s' % (t.get('banked', 0),
+                                          ('  耗时 ' + t['durh']) if t.get('durh') else ''),
+                  tag='成功')
     if rc != 0 or errsz > 0:
         ctl = RT.read_ctl()
         killed = bool(ctl.get('stopAll')) or (t['pool'] in set(ctl.get('stopped') or []))

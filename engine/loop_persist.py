@@ -759,6 +759,14 @@ def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_ex
                          cfg=next_cfg), f)
     os.replace(_tmp, _P.STATE)        # 原子替换: 要么全新状态, 要么保持旧状态, 不会出现半成品
     # ⚠ 日志口径: 打印的必须是**实际持久化**的数量(此前截断时打内存值 -> 与落盘不一致)
+    # ★ 2026-09-28（用户要求）：本代的**时间戳**单独一行，且三个时刻**同源**（都从 `t0` 推 ✓）
+    #   `开工` = 进程启动（= 开始挖 ✓）；`完工` = 这一行打印时（= 诊断+LLM/AI审查+落盘**全部**完成 ✓）
+    #   ⇒ 恒有 `完工 − 开工 == 耗时` ✓，不会出现两个时钟互相打架 ✗
+    #   ⚠ 时区用 `%z` **实测**（不硬编码 `+08:00` ✗ —— 本机在北京时它就是 +0800 ✓，换机器也不会撒谎 ✓）
+    print('时间: %s · 开工 %s · 完工 %s · 耗时 %s'
+          % (time.strftime('%Y-%m-%d %H:%M:%S %z'),
+             time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(t0)),
+             time.strftime('%Y-%m-%d %H:%M:%S'), _fmt_dur(time.time() - t0)))
     print(f"\n保存状态: 种子 {len(new_seeds[:60])} 个, 入库因子 {len(bank)} 个(全量), "
           f"收益流库 {len(bank_ex)} 条, 冻结骨架 {len(frozen)} 个, 失败库 {len(fail_lib)} 条, "
           # ★ 2026-09-17：把冻结**记账**也报出来（用户要"日志留痕"）⇒ 一眼看出谁冻着、剩几代 ✓
@@ -767,7 +775,23 @@ def _save_state(_dup_ex_corr, _ex_by_expr, _n_dup_ex, _strip_by_expr, _tag_by_ex
                               for k, v in sorted(fsa_frz.items(),
                                                  key=lambda kv: -kv[1].get('left', 0))[:3]) + '）'
              if fsa_frz else '') + ', '
-          f"耗时 {time.time()-t0:.0f}s")
+          f"耗时 {_fmt_dur(time.time()-t0)}")
+
+
+def _fmt_dur(secs):
+    """秒 → **人类可读**耗时（`1h59m2s` ✓ / `58m42s` ✓ / `42s` ✓）。
+
+    ★ 2026-09-28（用户拍板 ✓）：日志里那个 `耗时 7142s` 要换算成 `1h59m2s` ——
+      **唯一实现就在这里** ✓（engine 侧用它 ✓；`tools/parallel_runner.py` 直接**照抄引擎打印的字符串** ✓
+      ⇒ 工具侧**不再造第二份** ✗，符合 R5「单一实现」✓）。
+    ⚠ 别写成 `%02d`（`1h09m07s` 不好读 ✓）；小时不补零、分秒不补零 ✓（用户给的样例就是 `1h58m42s` ✓）。
+    """
+    _s = int(secs)
+    if _s >= 3600:
+        return '%dh%dm%ds' % (_s // 3600, _s % 3600 // 60, _s % 60)
+    if _s >= 60:
+        return '%dm%ds' % (_s // 60, _s % 60)
+    return '%ds' % _s
 
 
 class _StateUnpickler(pickle.Unpickler):

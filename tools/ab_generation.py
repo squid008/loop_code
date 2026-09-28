@@ -144,6 +144,13 @@ def do_diff(a):
     print('A/B 对照：%s  ←→  %s' % (a.diff[0], a.diff[1]))
     print('=' * 96)
     A, B = a.diff
+    # ★ 2026-09-28：把"必然不同"的噪声归一化**提到产物比对之前** ✓ —— 因为 **journal 这类文本产物
+    #   也要用它** ✗（原先只有 stdout 段做归一化 ⇒ journal 一加时间戳就会**每次误报差异** ✗✗）
+    import re
+    #   剔掉：人类可读耗时（`1h59m2s` ✓，复合格式放最前，否则短的会把长的咬碎 ✗）· 旧式 `\d+s` ·
+    #   日期 `YYYY-MM-DD` · 时刻 `HH:MM:SS` ✓（后两者自 2026-09-2x 起就在用 ✓）
+    noise = re.compile(r'\d+h\d+m\d+s|\d+m\d+s|\d+(\.\d+)?s\b'
+                       r'|\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}')
     names = [os.path.basename(p) for p in T.pool_files('_' + a.pool)]
     for nm in names:
         pa, pb = os.path.join(A, nm), os.path.join(B, nm)
@@ -167,9 +174,16 @@ def do_diff(a):
             except Exception as e:
                 print('  %-28s ✗ 字节不同，且解不开: %r' % (nm, e))
             continue
-        la = io.open(pa, encoding='utf-8', errors='replace').read().splitlines()
-        lb = io.open(pb, encoding='utf-8', errors='replace').read().splitlines()
-        print('  %-28s ✗ 不同：行数 %d vs %d' % (nm, len(la), len(lb)))
+        # ★ 文本产物（journal/archive/library …）**先按 noise 归一化再比** ✓
+        #   理由：时间戳与耗时是**记录性**字段，不是行为 ✓ ⇒ 不该被报成差异 ✗
+        la = [noise.sub('<T>', l)
+              for l in io.open(pa, encoding='utf-8', errors='replace').read().splitlines()]
+        lb = [noise.sub('<T>', l)
+              for l in io.open(pb, encoding='utf-8', errors='replace').read().splitlines()]
+        if la == lb:
+            print('  %-28s ✓ 归一化后逐行相同（仅时间戳/耗时差异 ✓）' % nm)
+            continue
+        print('  %-28s ✗ 不同（**已归一化**）行数 %d vs %d' % (nm, len(la), len(lb)))
         shown = 0
         for i, (x, y) in enumerate(zip(la, lb)):
             if x != y:
@@ -179,11 +193,8 @@ def do_diff(a):
                 if shown >= 4:
                     break
 
-    # stdout 对照（剔耗时/时刻 ✓）
-    import re
-    # ★ 剔掉**必然不同**的噪声：任何 `\d+s`（耗时/秒数，含 `用时 33s (3.27s/候选)` 这种）+ 日期时刻 ✓
-    #   （自检时实测：只写「耗时\s*\d+s」会漏掉「用时」与括号里的 `3.27s/候选` ⇒ 假差异 ✗）
-    noise = re.compile(r'\d+(\.\d+)?s\b|\d{4}-\d{2}-\d{2}|\d{2}:\d{2}:\d{2}')
+    # stdout 对照（剔耗时/时刻 ✓）—— ★ `noise` 已在**产物比对之前**定义 ✓（见上 ✓），此处复用 ✓
+    #   （历史注释：自检时实测，只写「耗时\s*\d+s」会漏掉「用时」与括号里的 `3.27s/候选` ⇒ 假差异 ✗）
     sa = [noise.sub('<T>', l).strip() for l in
           io.open(os.path.join(A, 'stdout.log'), encoding='utf-8', errors='replace')
           if l.strip()]
