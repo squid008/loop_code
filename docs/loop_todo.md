@@ -754,6 +754,50 @@ _ctx · act · base · cmul · cool · diag · ineff · n_blocked · n_ineff · 
 
 ---
 
+### 1.39 ✅【已完成·v1.31.0】journal 也写**开工时间**（用户 2026-09-29：「我停了，让 journal 也写"开工时间"」）
+
+> 承接 §1.37 ②/③ 之后用户提的这一条 ✓ —— 顺带把"**轮 vs 代**"的口径钉在下面 §1.39.1 ✓。
+
+**落点（4 文件，改动极小 ✓）**：`loop_log.stamp()` 加第三态 `finished=False`
+⇒ `时间: … · 开工 … · 已跑 …` ✓（格式仍**只有一份实现** ✓）；
+`loop_critic.report(…, t0=None)` ✓；`loop_eval._agg_style_diag(…, t0)`（**必传形参** ✓
+—— 不给默认值 ✗：漏传就是"静默丢掉开工" ✗）；`loop_stage` 把 `ctx['t0']` 传下去 ✓
+（与 stdout 那条**同一个 `t0`** ⇒ **两边可互相核对** ✓）。
+
+★ **只写"已跑"，绝不写"完工/耗时"** ✓（宁缺勿假 ✓）：诊断落档时 AI 审查 + 写 state 还没跑
+⇒ 此刻的"耗时"必然偏小且无人对账 ⇒ 那就是编造 ✗；终态仍归 stdout 与 `_engine_exits.log` ✓。
+
+**验证**：① ★ **直拍** `ai_test/_chk_journal_t0.py`（8 断言全过 ✓；**当场抓到一处语义瑕疵** ✗：
+不传 `t0` 时尾巴仍写"只报已跑" ⇒ 指向不存在的字段 ✗ ⇒ 已改成尾巴随 `t0` 分支 ✓）；
+② 同 seed A/B：`_ab/base_jt0`（189 s）←→ `_ab/after_jt0`（191 s）⇒ **7 产物逐字节相同** ✓ ＋
+`loop_journal_50.md` **只差 1 行**（＝**预期那一行** ✓）＋ stdout **0 差异** ✓
+（★ 这版 A/B 的价值是"**差异恰好只有声明的那一行**" ✓，比"全相同"更严格地证明了改动范围 ✓）；
+③ `_test_undefined_names` **0 处** ✓；④ `release_check` **55/55** ✓。
+
+⚠ **记账**：v1.30.0 的验收引用过 `ai_test/_ab/after3`/`base3` ✗，本次 A/B 起初又用了同名 ✗
+⇒ 那两目录已被覆盖 ✗（随后改名 `base_jt0`/`after_jt0` ✓）⇒ **结论不受影响、快照已非原件** ✗ ⇒
+**教训：快照目录名必须带版本号/主题** ✗（别用 `base3` 这种序号 ✓）。
+
+#### 1.39.1 ★ 「**轮**」与「**代**」到底差在哪（用户 2026-09-29 之问：「这个轮跟代有啥区别？为啥 1 轮 3 代？」）
+
+| | **代（gen）** | **轮（round）** |
+|---|---|---|
+| 是什么 | **引擎的一次完整运行**：生成候选 → L1 → L2 → B角诊断 → 存 state ✓ | **调度器的一个批次**（`tools/parallel_runner.py` 的 `while True: rnd += 1` ✓）|
+| 谁管 | 引擎（一代一进程 ✓，`--gen=N` ✓） | 调度器（`run_tracks.py` / `parallel_runner.run` ✓）|
+| 编号 | **跨轮连续**（`curGen: 198` ✓ · journal「第 N 代」✓） | 独立计数（`round: 2 / rounds: 50` ✓）|
+| 边界动作 | 代末原子写 `loop_state_*.pkl` ✓ | **轮末做全局收尾**（facs 落地 / 跨池审查 / 精选池 ✓）⇒ `round+1`、`gensRound` 归零 ✓ |
+| 看板字段 | 「跑过代数」= journal 代标题数 ✓ · 「当前 gen」= `active[].gen` ✓ | 「本轮已跑 N 代」= `gensRound` ✓（**已跑完**的代数 ⇒ 显示时 **+1** = "**正在挖第几代**" ✓）|
+
+**为啥 1 轮 = 3 代**：★ 这是**用户 2026-09-20 亲自拍板的「方案 B」** ✓ ——
+`min_gens_per_round`（默认 **3** ✓）＝「**每个启用池都完成 ≥3 代，才允许收轮**」✓
+（`parallel_runner.py`：`_again = any(gens.get(x,0) < min_gens_per_round for x in pending_pools(...))` ✓）。
+背景：09-19 用户问"为什么非要等三个池一起挖完才审查"，于是先有了"跑完就领下一代"的不限模式（`gens_per_round=0` ✓），
+但 09-20 又发现**收轮几乎不发生** ✗（"最少的都跑 3 代了，按理说应该至少 3 轮了" ✗）⇒ 改成"每池至少 3 代"才收 ✓。
+⇒ 于是 `gensRound = {300: 3}` 就是**一轮的正常值** ✓（实测 09-29 轮 1 = gens 195/196/197 ✓、轮 2 从 198 起 ✓）；
+想改口径：`--min_gens_per_round=K` ✓。
+
+---
+
 ### 1.38 ✅【已完成·v1.30.0】R1 收官：`engine/` 侧 >120 行函数**清零** ＋ 修掉"让它们藏很久"的**根因**
 
 > 承接 §1.36 顺带查明的两条**既存** R1 违规：`build_fa_pit.main()` **145** ✗ · `loop_persist._save_state()` **140** ✗
@@ -781,6 +825,10 @@ _ctx · act · base · cmul · cool · diag · ineff · n_blocked · n_ineff · 
 2. **`fa_pit.h5` 逐位对拍**（`ai_test/_ab_fa_pit_dual.py`）⇒ **80 只股票**旧版 vs 新版：
    产物**逐 key/逐数组 float32 原始字节级相同** ✓（2,001,791 字节 ✓）+ stdout 逐行相同 ✓；
 3. 同 seed A/B（`after3` ←→ 改后）⇒ 8 产物 + stdout 逐字相同 ✓；
+   ⚠ **2026-09-29 追记（v1.31.0）**：本项引用的快照目录 `ai_test/_ab/after3`（＋`base3` ✓）
+   已被 v1.31.0 的 A/B **同名覆盖** ✗（随后改名 `base_jt0`/`after_jt0` ✓）⇒
+   **本项结论不受影响**（当时确实验过 ✓），但那两个**快照文件已不是原件** ✗ —— 据实记账 ✗；
+   ★ 教训：`ai_test/_ab/` 的快照目录名须**带版本号/主题** ✗（别用 `base3` 这类序号 ✓）。
 4. 静态守门：`_test_fsa_freeze` 22/22 · `_test_inject_pools` 17/17 · `_test_node_single` ·
    `_test_library_log` 44/44 · `_test_critic_sensor` · `_test_action_efficacy` 42/42 ·
    `_test_unbound_return` · `_test_undefined_names` **0 处** ✓；

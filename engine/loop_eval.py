@@ -377,10 +377,15 @@ def _critic_diagnose(args, fam_blocked, l1, pool_rows, res, seg_ok_list):
     return (critic, diag, res_c)
 
 
-def _agg_style_diag(cfg, critic, diag, l1, obs_df, r, res):
+def _agg_style_diag(cfg, critic, diag, l1, obs_df, r, res, t0):
     """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
 
     原段落: 风格暴露诊断聚合(2026-09-11, --style_obs): 落盘已在 L1 求值后完成, 此处只做分组聚合
+
+    ★ 2026-09-29（用户要求："让 journal 也写开工时间" ✓）：把本代 `t0`（引擎开工 ✓）**透传**给
+      `critic.report` ⇒ journal 的代首行同时有**开工 + 已跑** ✓（与 stdout 的 `t0` 同源 ✓）。
+      ⚠ 做成**必传形参**（不给默认值 ✗）：漏传就是"静默丢掉开工"（本项目最忌这种
+        "看着在工作、其实没干活" ✗）；只有一个调用点（`loop_stage` ✓），必传不增加负担 ✓
     """
     if obs_df is not None and len(obs_df):
         try:
@@ -401,7 +406,7 @@ def _agg_style_diag(cfg, critic, diag, l1, obs_df, r, res):
     print("\n[B角建议] 下一代:")
     for r in reasons:
         print("  -", r)
-    critic.report(diag, next_cfg, reasons, _P.JOURNAL)
+    critic.report(diag, next_cfg, reasons, _P.JOURNAL, t0=t0)
     print(f"诊断已写入 {_P.JOURNAL}")
     return (next_cfg, reasons)
 

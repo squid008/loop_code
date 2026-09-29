@@ -422,7 +422,8 @@ def _run_finalize(ctx, args):
     # ---- 风格暴露诊断聚合(2026-09-11, --style_obs): 落盘已在 L1 求值后完成, 此处只做分组聚合 ----
     #  判读(见 docs/log/2026-09.md §8.3/§8.4): new vs old 两组对比, 若 L2 候选/通过集的
     #  |lntr|、|lnamt| 中位显著上升 -> 确诊"新排序分在低换手/低成交额方向加倍下注"。
-    next_cfg, reasons = _agg_style_diag(cfg, critic, diag, l1, obs_df, r, res)
+    # ★ 2026-09-29（用户要求）：把本代 `t0`（引擎开工 ✓）传下去 ⇒ journal 也写开工时间 ✓
+    next_cfg, reasons = _agg_style_diag(cfg, critic, diag, l1, obs_df, r, res, t0)
     # ---- 生成侧 LLM 引导留痕(独立引用体小节, 与 ai_review 块同风格) ----
     _log_llm_hint(args, jury_lines, llm_hyp, llm_on, n_jury_kill, n_jury_rev, n_llm_call, n_llm_hit, n_llm_parse)
 

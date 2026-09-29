@@ -568,18 +568,27 @@ def suggest(diag, cur=None):
     return _finalize_sug(st)
 
 
-def report(diag, sug, reasons, path):
-    """诊断报告 markdown, 追加写入"""
+def report(diag, sug, reasons, path, t0=None):
+    """诊断报告 markdown, 追加写入。
+
+    :param t0: 本代**引擎开工**时刻（= `loop_stage._run_prepare` 的 `t0` ✓，与 stdout 那条**同一个** ✓）
+               ★ 2026-09-29（用户要求："让 journal 也写开工时间" ✓）：给了它 ⇒ 本行同时写**开工 + 已跑** ✓
+               ⚠ 仍**不写完工/耗时** ✗ —— 诊断落档时 AI 审查与写 state 都还没跑
+               ⇒ 整代终态只认 stdout 与 `_engine_exits.log`（宁缺勿假 ✓，理由见 `loop_log.stamp` ✓）
+    """
     from loop_critic_rules import _fmt    # ★ 惰性 import（§1.37；理由见 `suggest` 里的同款注释 ✓）
     lines = []
     lines.append(f"\n## 第 {diag['gen']} 代 (B角诊断)\n")
     # ★ 2026-09-28（用户要求）：journal 也要留**秒级时间** ⇒ 与 stdout 的 `时间:` 行**同格式** ✓
+    # ★ 2026-09-29（用户要求）：再补**开工**（= 本代引擎启动 ✓，与 stdout 的同源 ✓ ⇒ 两边可互相核对 ✓）
+    #   ⚠ 完工/整代耗时**仍然不在这里写** ✗ —— 此刻 AI 审查 + 写 state 还没跑
+    #     ⇒ 只报"**已跑**"（诚实 ✓）；终态记录在 stdout 与 `_engine_exits.log` ✓
     #   ⚠ 时区用 `%z` **实测**（本机在北京时即 `+0800` ✓），**不硬编码 `+08:00`** ✗（换机器不会撒谎 ✓）
-    #   ⚠ 这一时刻**只知"诊断落档"**：`开工/完工/耗时` **还没有**（AI 审查在其后 ✓）
-    #     ⇒ 它们出现在 ① stdout 的 `时间:` 行（`loop_persist` ✓）② `_engine_exits.log` 的成功代 ✓
-    #     ⇒ **这里不编造** ✗（宁缺勿假 ✓）
     import loop_log as _LG             # ★ R5：时间格式的**单一实现**在 `engine/loop_log.py` ✓
-    lines.append(_LG.stamp(tail='（诊断落档时刻 · 本机时区）') + '\n')
+    # ⚠ 尾巴随 `t0` 分支 ✗（自检实测：不传 t0 时若仍写"只报已跑"，就会**指向一个不存在的字段** ✗）
+    _tail = ('（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）' if t0 is not None
+             else '（诊断落档时刻 · 本机时区）')
+    lines.append(_LG.stamp(t0, finished=False, tail=_tail) + '\n')
     # 指标横排 md 表格(键行/分隔/值行): 源码3行, 渲染为横向对齐表格
     # ★ 2026-09-14 新增（§1.1 修法①）：诊断的门槛**与被判的量并列展示**，以便一眼对账。
     #   `gate_min_calmar` = 诊断实际用的全A calmar 门槛（应等于 --min_calmar）

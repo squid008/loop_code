@@ -1,10 +1,234 @@
-# change_log 归档（v1.22.1 及以前）
+# change_log 归档（v1.22.3 及以前）
 
 > 本文件由 `ai_test/_cl_split.py` 从 `change_log.md` 切出（2026-09-27）——
 > 目的是让主 `change_log.md` 只保留近期版本、可读可查（原文**一字未改** ✓）。
 > 新增条目请照旧写进主 `change_log.md` 的**最新**位置 ✓。
 
 ---
+
+## [1.22.3] — 2026-09-25
+
+> 主题：**详情页加「IC 口径注」＋ 9 个编号的「在库」口径收口**
+> （用户："详情页加 IC 口径注" · "9 个编号收口"；前情是"先用全A 的指标吧"与"9 个 CSV 你核对一下"）
+
+### 一、先说清一件事：**三个 IC 数字各有定义**（纠正 2026-09-21 的旧结论 ✗）
+
+**背景**：用户看详情页时觉得"文字指标 / 图上的 `ic` / 图的 `RankIC`"三个数对不上。
+
+**旧结论（2026-09-21，**本次实测否定** ✗）**：原以为"库里指标是引擎**按池**算的、曲线是全A 口径
+⇒ 同一页两套口径并排"。
+
+**2026-09-25 逐行读代码 + 当场复算后的事实**：
+- `tools/factor_metrics.py` 调 `evaluate_real(...)`，其投资域是 `engine/factor_miner.py:215` 的
+  `get_universe()` = **全市场 PIT 可交易** ⇒ **与曲线同一个掩码** ✓
+- 且 CSV 的 `ic_doc`（引擎写进库文档明细段的 IC）与重算的 `ic` **15 位完全相同**
+  （`F04_300` 两列都是 `0.00987929327746464` ✓）⇒ **文字与图本来就同口径、不存在"按池 vs 全A"** ✗
+
+**真因 = IC 的定义与采样不同**（同一个因子的三个数**都对** ✓）：
+
+| 位置 | 数值（`F04_300` · 5 日） | 定义（代码依据） |
+|---|---|---|
+| 文字（指标表 / 库文档明细段） | **0.00988** | **逐日 2090 天**截面 `spearmanr` 均值（`factor_miner.py:231-250`；窗口重叠）|
+| 图 `ic`（Pearson） | **0.01167** | **换仓日 418 期** Pearson（`factor_curves.py:229` 的 `np.corrcoef`）|
+| 图 `rank_ic`（RankIC） | **0.01005** | 同一条引擎 IC 序列，只取换仓日 418（`factor_curves.py:269` 的 `reindex(rb)`）|
+
+**用户拍板**：**"先用全A 的指标"**（统一按全A 口径）⇒ **不重算曲线、不改指标口径** ✓
+⇒ 另一件相关事实写清：**非 `all` 池因子的图与文字，投资域都是全市场**（不是该池成分）；
+池内口径在 `docs/loop_pool_obs*.csv` 与池标签那边 ✓（与 `--pool_gate_or_all` 语义一致 ✓）
+
+### 二、改法：详情页加「IC 口径注」（`dashboard/web/src/App.tsx`）
+
+- 「费后指标」那块**之前**新增一行 `dt-note`：说清这块的 `ic` = **全日频 Spearman 均值**、
+  图的 `ic` = **换仓日 Pearson**、`RankIC` = **换仓日 Spearman**（三个数不同属正常）
+  ＋ **全A 之外的池（300/500/1000）指标与曲线投资域是全市场、不是该池成分股** ✓
+- IC 图下的 `ch-note` 补一句"本图两条都是换仓日采样"
+- 文案遵守用户可见文本铁律（无 Markdown 标记 / 无引号类字符 ✓，过 `_test_ai_tone` + `_test_ui_quotes` ✓）
+- **守门**：`tools/_test_frontend_wiring.py` 新增 **【12】3 条**（口径注在位 / 投资域写明 / 图注在位 ✓）
+
+### 三、9 个编号的「在库」口径收口
+
+**症状**：`state.bank` 合计 **67**，而 `docs/factor_metrics*.csv` 的 `in_bank=1` 合计 **76** ⇒ 差 **9**
+—— 而**看板「因子库」读的就是这一列**（`factors.py::_inb`）⇒ 这 9 条**显示为在库**（引擎库里其实没有）✗
+
+**逐条判据**（只读脚本 `ai_test/_retired_audit.py`，按 `docs/loop_strip_style*.csv` 的 `strip_calmar`）：
+
+| 池 | 编号 | 剥风格 Calmar | 判读 |
+|---|---|---|---|
+| `1000` | `F02/F04/F05/F06/F08/F09` | −0.05 ~ −0.10 | **纯风格**（剥后转负）|
+| `300` | `F02` | **+0.180** | 过门槛；**同式子在 1000 池 `state.bank` 里** ⇒ 别名 |
+| `500` | `F01` | **+0.180** | 同上（同一式子）|
+| `500` | `F02` | **+0.171** | 过门槛 ⇒ **原因待查**（**不臆造理由** ✓）|
+
+**改法**（脚本 `ai_test/_retire_apply.py`：**默认 DRY-RUN** · 写前**自动备份**（`ai_test/_backups_20260925_retire/`）· `.tmp` + `os.replace` 原子写 ✓）：
+1. `docs/factor_library_{300,500,1000}.md`：总览表**状态列** ＋ **明细段体内**各标「已移出」
+   ⚠ **两处都要** —— `export_factor_registry.parse_overview` 只跳状态列、`parse_detail` 跳**块体**含
+   "已移出"的块，而 `build()` 是 `set(overview) | set(detail)` ⇒ **只改总览列会被明细块带回登记表** ✗
+2. `docs/library_entries.jsonl`：删这 9 条（76 → **67**）——
+   它是 `build_facs.load_bank_nodes()` 的**并集源**之一，留着就会被 `factor_metrics.refresh_in_bank`
+   **每轮刷回 `in_bank=1`** ✗
+3. `docs/factor_metrics*.csv`：**不手改**，按顺序重生成 —— `export_factor_registry.py` →
+   `factor_metrics.py --only-new`（5 日）→ 同上的 `--fwd 20`（各刷 **6 行**；
+   刷新发生在**载面板之前**、随即"无待算"退出 ⇒ **秒级** ✓）
+4. `docs/factor_registry.json` 一并重导（顺带带上 v1.22.2 回填后的**真实家族**：
+   `未分类` → `价格` / `风格` ✓）
+
+**验证**：
+
+| 项 | 结果 |
+|---|---|
+| md 两处（总览列 + 明细段）| ✓ 9/9 |
+| **不在** `library_entries.jsonl` · **不在** `factor_registry.json` | ✓ 9/9 |
+| 5 日 + 20 日 CSV `in_bank` | ✓ 均 **0** |
+| **登记表条目 = 5 池 `state.bank` 合计** | **67 = 67** ✓（收口前 CSV 口径是 76 ✗）|
+| `ai_test/_retired_audit.py` 各池差集 | ✓ **全部归零**（46 / 4 / 10 / 7）|
+| ★ **接口实测**（`ai_test/_api_check.py`，8101 在线）| ✓ 9 条 `inBank=false` ＋ 新状态串；三池 `stateBank` = **4 / 10 / 7** ✓ |
+
+⚠ **取舍（知情）**：这 9 条既不在 JSONL、也不在登记表 ⇒ `load_bank_nodes()` 不再收它们
+⇒ 收尾**不再自动**给它们算指标/曲线；要看它们的数得显式带 `--include_history` ✓
+（**原有文件不会被删**，仍在 `docs/factor_metrics*.csv` 与 `docs/factor_curves*/` 里 ✓）
+
+### 四、文档同步（`docs/loop_todo.md`）
+
+- `§1.30`：**改写为"三个 IC 数字各有定义"**，并**留痕**记下原结论错在哪 ✗ ＋ 用户拍板"先用全A" ✓
+- `§1.31`：**新增**（9 个编号的判据 / 改动 / 收口的坑 / 验证），执行后改为 **✅ 已完成** ✓
+- `§0.1 / §0.2 / §0.4 / §0.5`：按实测更新（`all` 池 gen79 在跑 · 各池状态与**口径修正** ·
+  **20 日双口径已在生产 `extra`**：`--dual_fwd=20 --min_calmar2=0.701`（2026-09-22 起）✓）
+- ⚠ 记一条教训：2026-09-21 的探针（`_expo_repro.py` / `_ic_scope_probe.py`）**已随 `ai_test/` 清理而不在仓库** ✗
+  ⇒ 文档改为**只引用可重跑的脚本**（`ai_test/_curves_scope_check.py` ✓）
+
+### 五、影响面 / 回退
+
+- **引擎的挖掘与判定逻辑未改** ✓（本次只动**前端文案**、**库文档状态列**、**入库历史 JSONL**、
+  以及**登记表 / 指标表的对账字段**）
+- ⚠ `factor_metrics*.csv` / `factor_curves*/` 是**产物**（`.gitignore`）⇒ **回退代码不会回退它们**
+- 回退：`git checkout v1.22.2`（md / JSONL 属**数据**，要回退得手工、或从
+  `ai_test/_backups_20260925_retire/` 取原件 ✓）
+- 验证：**全量回归 49/49** ✓ · `tsc --noEmit` ✓ · `_test_ai_tone` / `_test_ui_quotes` 干净 ✓
+- 本版含**前端用户可见改动** ⇒ 刷新 `5273` 即可看到（Vite 源热更，**无需** `npm run build` ✓）
+
+---
+
+## [1.22.2] — 2026-09-25
+
+> 主题：**修「一份代码里并存两个 `Node` 类」**（因子库家族全落「未分类」＋ 骨架去重 / FSA 冻结失效 ✗✗）
+> **＋ 修「新入库日志卡点开的详情页，20 日口径按钮被误置灰」**
+> （用户实测：_"这 F47 为啥会显示未分类"_ · _"20 日的那个按钮我点不了，提示还未生成"_）
+
+### 一、修「一份代码里并存**两个 `Node` 类**」⇒ 家族全落「未分类」＋ 骨架去重 / FSA 冻结失效 ✗✗
+
+**症状**（用户之问）：新入库的 `F47` 在因子库里显示 **「未分类」** ✗
+
+**真因**：引擎**直跑**时模块名是 `__main__`（`Node` 的类全名 = `__main__.Node` ✗），而
+`loop_critic` 的**惰性** `import loop_engine as LE` 会把 `loop_engine.py` **再执行一遍**
+（这次模块名是 `loop_engine` ✗）⇒ 同一个进程里出现**两个 `Node` 类** ✗
+
+**实测规模**（读 `loop_state.pkl`，按 pickle 记录的类路径统计）：
+
+- `bank` 里 **439** 个 Node 中 **438 个**是"第二份" ✗
+- `seeds` / `last_l1` 也各混着 **24** 个 ✗（合计 **486** 个异类）
+
+**后果**（`isinstance(x, Node)` 对"第二份"实例**恒为 False** ✗）：
+
+| 牵连 | 后果 |
+|---|---|
+| `collect()` → `leaf_parts()` | 因子库"家族"全落 **「未分类」** ✗（`docs/loop_archive*.csv` 的 `cat`/`leaf` 列空，全库 **392 行**）|
+| **`skeleton()`** | **骨架去重 / FSA 冻结失效** ✗（同族重复因子拦不住）|
+| `key()` / `size()` | FSA 结构哈希对那批因子失真 ✗ |
+| `crossover` / `mutate` | 子树操作退化成"只能动顶层" ✗ |
+| `dim_of()` / `clone` | 跨量纲审查、克隆同样失效 ✗ |
+
+**改法（两处）**：
+
+1. **治本（一行）** —— 引擎末尾的 `__main__` 块**第一条**注册自己：
+
+```python
+sys.modules.setdefault('loop_engine', sys.modules['__main__'])
+```
+
+   ⇒ 之后任何 `import loop_engine` 都拿到**本模块** ⇒ **结构上不可能再有第二份** ✓
+
+   ⚠ **位置有讲究：不能放文件顶部** —— `tools/_test_fwd_wiring.py` 用 AST 取**第一个**
+   `__main__` 块，并在其中断言 `set_panel_cache` / `set_mem_budget` / `run(_args)` 是**直接语句**；
+   顶部另起一块会抢走它的"目标块"（实测该守门**当场失败** ✗）。放末尾也**足够早** ✓
+   （`loop_critic` 是惰性 import，而 `run(_args)` 是该块**最后一句** ⇒ 注册必在它之前 ✓）
+
+2. **治旧（读盘归一）** —— 新增 `_StateUnpickler(pickle.Unpickler)`：`find_class` 把类名 `Node`
+   **一律**映射回本模块的类；**主 state** 与**外部池注入**两处读取都改走它 ✓
+   ⇒ 旧 state 里已混入的 **486 个异类**在读盘时**自动归一**（无需重算、无需手改 state ✓）
+
+**数据回填**：`docs/loop_archive*.csv` 的 `cat`/`leaf` 补齐 ⇒ 空 `cat` 行 **392 → 0** ✓
+
+| 文件 | 空 `cat`（回填前 → 后）|
+|---|---|
+| `loop_archive.csv`（全A）| 39 → 0 |
+| `loop_archive_1000.csv` | 178 → 0 |
+| `loop_archive_300.csv` | 160 → 0 |
+| `loop_archive_500.csv` | 15 → 0 |
+| `loop_archive_50.csv` | 0（本就齐 ✓）|
+
+⚠ 回填**只补 `cat` / `leaf` 两列**，**指标数值逐字未动** ✓（备份在 `ai_test/_backups_20260925/` ✓）
+⚠ `docs/loop_archive*.csv` 在 `.gitignore` 里 ⇒ 回填**不入库**（属产物 ✓）
+
+**文档同步**：`docs/factor_library.md`（**6 处**）＋ `docs/factor_library_1000.md`（**3 处**）
+的「未分类」修正为真实家族 / 叶子 ✓（合计 **9 处**）
+
+- `F47`（全A gen78 · `ts_mean200(ts_std60(cs_demean(neg(low))))`）：`未分类` → **`价格` / `low`** ✓
+- `F34`（全A）：`未分类` → **`风格`×3**（`barra_residual_volatility` / `barra_non_linear_size` / `barra_liquidity`）✓
+- `F10`（1000 池）：`未分类` → **`换手率`、`风格`×2** ✓
+
+（`docs/factor_registry.json` 一并重导 ⇒ 与回填后数据一致，**内容无变化** ✓）
+
+**新守门** `tools/_test_node_single.py`（4 组）：
+
+1. **静态**：注册在位 ✓ · 在**末尾**块里 ✓ · 引擎**只许 1 个** `__main__` 块 ✓ · 注册在 `run(_args)` 之前 ✓
+2. **静态**：`_StateUnpickler` 已定义 ✓ · state 的**两处**读取都走它 ✓ · 无残留裸 `pickle.load` ✓
+3. **功能**：`bank`＋`seeds` 共 **516** 个 Node **全部**是本模块类（异类 **0**）✓ ·
+   `last_l1` 里"取不到叶子"（会落「未分类」）的候选 = **0** ✓
+4. **数据**：各池 `loop_archive*.csv` 的 `cat` 空行 = **0**（防再次出现 ✓）
+
+### 二、修「新入库日志卡点开的详情页，20 日按钮被误置灰」
+
+**症状**（用户之问）：_"20 日的那个按钮我点不了，提示还未生成"_ ✗ —— 而数据其实**早就算好了** ✓
+
+**真因**：详情页判 `has20 = (metrics20Info ? … : true) && Object.keys(f.metrics20 ?? {}).length > 0`
+⇒ **哪个入口没把 `metrics20` 传给 `FactorDetail`，那一路的 20 日按钮就恒置灰** ✗
+实测**三条入口里只有「新入库日志」卡漏了** ✗（「因子库」表 /「精选池」两条都传了 ✓）
+—— 后端 `/api/library/entries` 本就照抄了 `metrics20` ✓，是**前端漏传** ＋
+`LibraryEntryDto` 类型里也缺字段 ✗
+
+**改法**：
+
+- `dashboard/web/src/api.ts`：`LibraryEntryDto` 补 `hzn?` / `metrics20?` ✓
+- `dashboard/web/src/App.tsx`：详情弹层传 `metrics20: entrySel.metrics20` ✓
+- 口径仍**只有一处**（后端照抄 `_lib(pool)`）✓ 前端不自己算 ✓
+
+**守门**：`tools/_test_frontend_wiring.py` 新增【11】—— **三条入口**各钉一处 ＋
+`LibraryEntryDto` 必须有这两个字段 ＋ 后端 `factors.py` 必须照抄
+`'detail', 'metrics', 'metrics20', 'status', 'hzn'` ✓
+
+### 三、工程杂项
+
+- `.gitignore`：加 `*.bak_before_*`（批量改数据时的临时备份**不入库** ✓；备份本身保留、可回滚 ✓）
+
+### 四、验证
+
+| 项 | 结果 |
+|---|---|
+| `tsc --noEmit`（前端改动）| ✓ 0 错 |
+| `_test_node_single.py`（新守门）| ✓ 全过 |
+| `_test_fwd_wiring.py`（注册挪位后）| ✓ 全过 |
+| 真机冒烟 `ai_test/smoke_gen_only.py` | ✓ **4/4**（`loop_state*.pkl` SHA256 **未变** ✓）|
+| **全量回归** `ai_test/_run_all_tests.py` | ✓ **49/49 通过** |
+
+### 五、影响面 / 回退
+
+- **引擎的因子求值逻辑未改** ✓（只加一行注册 ＋ 读 state 走归一 Unpickler ✓）
+- ⚠ 本次发版后须**重启调度器**，注册与归一才在新进程生效 ✓
+  （旧 state **无需手工处理**：新进程读盘时自动归一 ✓）
+- 回退：`git checkout v1.22.1`（数据回填属产物，留着无害 ✓）
+
+---
+
 
 ## [1.22.1] — 2026-09-25
 

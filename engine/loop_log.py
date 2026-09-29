@@ -27,12 +27,17 @@ def fmt_dur(secs):
     return '%ds' % _s
 
 
-def stamp(t0=None, tail=''):
+def stamp(t0=None, tail='', finished=True):
     """一行时间戳：`时间: … · 开工 … · 完工 … · 耗时 …`（★ 唯一实现 ✓）。
 
-    · 给了 `t0`：开工 = `t0`、完工 = 调用时刻 ✓ ⇒ 与 `耗时` **同源**（恒等 ✓，不会两个时钟打架 ✗）
-    · 没给 `t0`（如 journal 的"诊断落档" ✓）：**只写当下**，**不编造** 开工/完工 ✗ ——
-      那一刻"整代是否完工"还不可知（AI 审查在其**后**才跑 ✓）⇒ 宁缺勿假 ✓
+    · `t0` + `finished=True`（默认 ✓）：开工 = `t0`、完工 = 调用时刻 ✓ ⇒ 与 `耗时` **同源**
+      （恒等 ✓，不会两个时钟打架 ✗）—— stdout 的「保存状态」段走这一路 ✓
+    · `t0` + `finished=False`：`时间: … · 开工 … · 已跑 …`
+      ★ 2026-09-29（用户要求："让 journal 也写开工时间" ✓）：journal 的**诊断落档**行走这一路 ✓
+      ⚠ 那一刻**整代还没跑完**（AI 审查 + 写 state 都还在后面 ✓）⇒ 只能报"**已跑**" ✓，
+        **绝不**把当下写成"完工"、把"已跑"冒充终态"耗时" ✗（宁缺勿假 ✓）。
+        ⇒ 所以"已跑"会比 `_engine_exits.log` 的"耗时"**少几十秒**，那是正常的、**不是 bug** ✓
+    · 没给 `t0`：**只写当下**，**不编造** 开工/完工 ✗（那一刻"整代是否完工"不可知 ✓）
     · 时区用 `%z` **实测** ✓（不硬编码 `+08:00` ✗ —— 本机在北京时即 `+0800` ✓，换机器也不撒谎 ✓）
     · `tail` 附一句语义（如 `（诊断落档时刻 · 本机时区）` ✓）
     """
@@ -40,6 +45,9 @@ def stamp(t0=None, tail=''):
     _tz = time.strftime('%z')
     if t0 is None:
         return '时间: %s %s%s' % (_now, _tz, tail)
+    _t0s = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(t0))
+    if not finished:
+        return ('时间: %s %s · 开工 %s · 已跑 %s%s'
+                % (_now, _tz, _t0s, fmt_dur(time.time() - t0), tail))
     return ('时间: %s %s · 开工 %s · 完工 %s · 耗时 %s%s'
-            % (_now, _tz, time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(t0)),
-               _now, fmt_dur(time.time() - t0), tail))
+            % (_now, _tz, _t0s, _now, fmt_dur(time.time() - t0), tail))
