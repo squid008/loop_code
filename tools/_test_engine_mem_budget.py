@@ -91,15 +91,20 @@ print('\n【2】三处裁剪点都接上了（少一处就白改 ✗）')
 # ★ 2026-09-21 补第二步后：应该是 **4 处** —— `_LRU` 批末×1 + **`_LRU` 批内（每 8 个候选）×1**
 #   + `cache2` 去相关×1 + `cache2` 去重×1 ✓（少任何一处都会让内存重新上台阶 ✗）
 n_call = len(re.findall(r'^[ \t]+trim_cache_mb\(', stage_src, re.M))
-chk('trim_cache_mb 被**调用** 4 次（_LRU 批末+批内 · cache2 去相关+去重，实 %d）' % n_call, n_call == 4)
+# ★★ 2026-09-29（`loop_todo §1.40 ①` · v1.32.0）：**去相关那处随"不再重算"一起消失** ✓ ——
+#   `_l1_filter` 的去相关循环已删（改为**批内就地判定** ⇒ 不再 `eval_expr` ⇒ 那份 `cache2` 也不存在了 ✓）
+#   ⇒ 期望值 4 → **3** ✓。⚠ 这**不是**"少接一处" ✗：原来该被它裁的那份缓存**已经没有了** ✓；
+#   （另：`_known_rank_map` 建 `Kr` 时用的 `cache2`，与旧代码里"bank 批量求值"那一段**同形** ——
+#     旧版那段同样没裁 ✓ ⇒ **无回归** ✓，故本版不新增裁剪点 ✗）
+chk('trim_cache_mb 被**调用** 3 次（_LRU 批末+批内 · cache2 去重，实 %d）' % n_call, n_call == 3)
 chk('_LRU 在**批内**也有一次（防"一批之内一路上台阶"✗）',
     re.search(r"if i and \(i % 8\) == 0:\s*\n\s*trim_cache_mb\(_C\._LRU, _C\.LRU_MB\)", stage_src) is not None,
     '实测：只靠批末裁剪，第一批就会顶到 8.9 GB ✗')
 chk('_LRU 裁剪处同时调了字节版',
     re.search(r'trim_cache\(_C\._LRU, _C\.LRU_MAX\)[^\n]*\n[^\n]*trim_cache_mb\(_C\._LRU, _C\.LRU_MB\)', stage_src) is not None)
 _n2 = len(re.findall(r'trim_cache\(cache2, _C\.CACHE2_MAX\)[^\n]*\n[^\n]*trim_cache_mb\(cache2, _C\.CACHE2_MB\)', stage_src))
-chk('两处 cache2 裁剪（去相关 + 去重）都接了字节版（实 %d 处）' % _n2, _n2 == 2,
-    '两处 cache2 都要接 ✓')
+chk('★ **仍在用 `cache2` 的地方**必须接字节版（现在只剩**去重**一处 ⇒ 实 %d 处 ✓）' % _n2, _n2 == 1,
+    '只要还有 cache2 在用，就必须接字节上限 ✓（去相关那处已随它的 cache2 一起消失 ✓）')
 
 print('\n【2c】★ 2026-09-21 A/B 后的**新默认值**（防有人改回去 ✗）')
 # 依据：1000 池 L1 的工作集逐项量准（`ai_test/_l1_comp.py`）⇒ 两个缓存合计 ≈4.4 GB（私有一半 ✗）

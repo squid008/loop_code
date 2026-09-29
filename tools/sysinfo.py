@@ -14,26 +14,19 @@ sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 print('=' * 90)
 print('[1] 内存 / CPU')
 print('=' * 90)
-try:
-    import ctypes
-
-    class MEMORYSTATUSEX(ctypes.Structure):
-        _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong),
-                    ('ullTotalPhys', ctypes.c_ulonglong), ('ullAvailPhys', ctypes.c_ulonglong),
-                    ('ullTotalPageFile', ctypes.c_ulonglong), ('ullAvailPageFile', ctypes.c_ulonglong),
-                    ('ullTotalVirtual', ctypes.c_ulonglong), ('ullAvailVirtual', ctypes.c_ulonglong),
-                    ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
-
-    m = MEMORYSTATUSEX()
-    m.dwLength = ctypes.sizeof(MEMORYSTATUSEX)
-    ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
+# ★ 2026-09-29（`loop_todo §1.40.3` 可移植性平台化）：内存查询搬进 `engine/os_compat.py` ✓
+#   （Win32 的 ctypes 逐字搬过去了 ✓；这里不再有 Win32 代码 ✓；契约：取不到 ⇒ None ✓）
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'engine'))
+import os_compat as OC                                                       # noqa: E402
+_s = OC.mem_status()
+if _s is None:
+    print('  ✗ 取不到内存信息（os_compat.mem_status() 返回 None ✓）')
+else:
     G = 1024 ** 3
     print('  物理内存: 总 %.1f GB / 可用 %.1f GB / 占用 %d%%'
-          % (m.ullTotalPhys / G, m.ullAvailPhys / G, m.dwMemoryLoad))
+          % (_s['total_gb'], _s['avail_gb'], _s['load_pct']))
     print('  ⇒ 单引擎约需 6~9 GB ⇒ 可用内存最多支持约 **%d** 个引擎并行'
-          % max(int(m.ullAvailPhys / G / 9), 0))
-except Exception as e:
-    print('  ✗ %r' % (e,))
+          % max(int(_s['avail_gb'] / 9), 0))
 
 try:
     out = subprocess.run(['wmic', 'cpu', 'get', 'NumberOfCores,NumberOfLogicalProcessors', '/format:list'],
@@ -48,12 +41,12 @@ print()
 print('=' * 90)
 print('[2] 当前 python 进程内存 top 8')
 print('=' * 90)
-try:
-    out = subprocess.run(['powershell', '-NoProfile', '-Command',
-                          "Get-Process python -ErrorAction SilentlyContinue | "
-                          "Sort-Object -Descending WorkingSet64 | Select-Object -First 8 | "
-                          "ForEach-Object { '{0,7}  {1,9:N0} MB' -f $_.Id, ($_.WorkingSet64/1MB) }"],
-                         capture_output=True, text=True, encoding='utf-8', errors='replace')
-    print(out.stdout.strip() or '  (无 python 进程)')
-except Exception as e:
-    print('  ✗ %r' % (e,))
+# ★ 2026-09-29（§1.40.3）：列进程也走 `os_compat.list_procs()` ✓
+#   （Windows 仍是同一句 PowerShell ✓，POSIX 换成 `ps` ✓；字段名与原来一致 ✓）
+_rows = [p for p in OC.list_procs() if 'python' in (p['cmd'] or '').lower()]
+_rows.sort(key=lambda p: -p['mem_mb'])
+if _rows:
+    for p in _rows[:8]:
+        print('%7d  %9s MB' % (p['pid'], format(p['mem_mb'], ',')))
+else:
+    print('  (无 python 进程)')

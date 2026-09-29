@@ -78,6 +78,20 @@ def _PR():
         sys.path.insert(0, _t)
     return importlib.import_module('parallel_runner')
 
+
+def _OC():
+    """取 `engine/os_compat.py`（★ **操作系统专有件的单一实现** ✓；与 `_PR()` 同一套路 ✓）。
+
+    ★ 2026-09-29（`loop_todo §1.40.3` 可移植性平台化）：可用内存 / 判存活 / 杀进程
+      三件都搬进那个模块 ✓ —— 本文件里不再有 Win32 专有代码 ✗
+      （懒加载 ✓ 与 `_PR()` 同理 ⇒ 不改后端启动顺序 ✓）。
+    """
+    import importlib
+    _t = os.path.join(settings.PROJECT_ROOT, 'engine')
+    if _t not in sys.path:
+        sys.path.insert(0, _t)
+    return importlib.import_module('os_compat')
+
 # ★★★ 2026-09-16（用户之问「前端还没把并行切换加上是吧？」）：把 `run_tracks.py` **v1.4.0 就有的**
 #   调度模式开关与面板共享**暴露到看板**（能力全在 CLI，缺的只是这一层）。
 #   ★ 默认：**模式仍是 `rotate`**（不加参数时命令行与改造前一致）✓
@@ -256,29 +270,26 @@ def clear_crashes(pools=None):
 
 # ---------------------------------------------------------------- 资源 / 进程
 def avail_gb():
-    try:
-        class MS(ctypes.Structure):
-            _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong),
-                        ('ullTotalPhys', ctypes.c_ulonglong), ('ullAvailPhys', ctypes.c_ulonglong),
-                        ('ullTotalPageFile', ctypes.c_ulonglong), ('ullAvailPageFile', ctypes.c_ulonglong),
-                        ('ullTotalVirtual', ctypes.c_ulonglong), ('ullAvailVirtual', ctypes.c_ulonglong),
-                        ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
+    """可用物理内存（GB）；**取不到 ⇒ None**（原契约 ✓，调用方自己兜底 ✓）。
 
-        m = MS()
-        m.dwLength = ctypes.sizeof(MS)
-        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
-        return m.ullAvailPhys / 1024.0 ** 3
-    except Exception:
+    ★ 2026-09-29（§1.40.3）：实现搬进 `engine/os_compat.avail_gb()`（Win32 ctypes 逐字搬 ✓，
+      POSIX 分支新增 ✓）—— **返回契约一字未改** ✓。
+    """
+    try:
+        return _OC().avail_gb()
+    except Exception:                                                        # noqa: BLE001
         return None
 
 
 def _alive(pid):
+    """进程还在 ⇒ True / 不在 ⇒ False / **查不出 ⇒ None**（原契约 ✓）。
+
+    ★ 2026-09-29（§1.40.3）：搬进 `engine/os_compat.alive()` ✓
+      （Windows 仍是 `tasklist /FI "PID eq …"` 的逐字搬运 ✓；POSIX 用 `os.kill(pid, 0)` ✓）。
+    """
     try:
-        r = subprocess.run(['tasklist', '/FI', 'PID eq %d' % pid, '/NH'],
-                           capture_output=True, text=True, encoding='utf-8', errors='replace',
-                           creationflags=_NO_WIN)
-        return str(pid) in (r.stdout or '')
-    except Exception:
+        return _OC().alive(pid)
+    except Exception:                                                        # noqa: BLE001
         return None
 
 
@@ -735,11 +746,12 @@ def stop(pool=None, **kw):
         _targets = pool_engines(pool, c)
         _was_mining = bool(_targets)          # ★ 它当时是否在跑（以“有无目标进程”为准）✓
         for p in _targets:
-            r = subprocess.run(['taskkill', '/PID', str(p['pid']), '/T', '/F'],
-                               capture_output=True, text=True, encoding='utf-8', errors='replace',
-                               creationflags=_NO_WIN)
+            # ★ 2026-09-29（§1.40.3）：杀进程搬进 `engine/os_compat.kill_tree()` ✓
+            #   （Windows 仍是 `taskkill /PID … /T /F` 的**逐字搬运** ✓，`rc` 语义一致 ✓；
+            #    ⚠ `taskkill /F` 返回 ≠ 进程已退出 ✗ ⇒ 下面的"轮询等它真没"**照旧保留** ✓）
+            _rc, _txt = _OC().kill_tree(p['pid'])
             killed.append({'pid': p['pid'], 'kind': 'engine', 'pools': p.get('pools'),
-                           'rc': r.returncode, 'out': (r.stdout or r.stderr or '').strip()[:160]})
+                           'rc': _rc, 'out': (_txt or '').strip()[:160]})
         # ★★★ 残留检查：**必须等进程真的消失**（2026-09-19 修）——
         #   `taskkill /F` **返回 ≠ 进程已退出**（Windows 上回收要一点时间）✗
         #   原实现只 `sleep(1)` 就查 ⇒ 经常仍扫到旧 pid ⇒ 接口 `ok=False`
@@ -775,11 +787,10 @@ def stop(pool=None, **kw):
     clear_crashes()
     killed = []
     for p in engines():
-        r = subprocess.run(['taskkill', '/PID', str(p['pid']), '/T', '/F'],
-                           capture_output=True, text=True, encoding='utf-8', errors='replace',
-                           creationflags=_NO_WIN)
+        # ★ 2026-09-29（§1.40.3）：同上——杀进程搬进 `engine/os_compat.kill_tree()` ✓
+        _rc, _txt = _OC().kill_tree(p['pid'])
         killed.append({'pid': p['pid'], 'kind': 'engine', 'pools': p.get('pools'),
-                       'rc': r.returncode, 'out': (r.stdout or r.stderr or '').strip()[:160]})
+                       'rc': _rc, 'out': (_txt or '').strip()[:160]})
         time.sleep(0.4)
 
     sched = scheduler()

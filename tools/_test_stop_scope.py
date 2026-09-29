@@ -92,6 +92,12 @@ def setup(engines, active, cur_pool='50', enabled=None, survive=False):
                         'active': list(active), 'running': True, 'stopAll': False}
     mine._write_ctl = lambda **kw: kw                          # ★ 绝不写真实 _control.json ✓
     mine.subprocess = FakeSubprocess
+    # ★★ 2026-09-29（`loop_todo §1.40.3` 可移植性平台化）：杀进程已搬进
+    #   `engine/os_compat.kill_tree()` ✓ ⇒ **那个模块的 `subprocess` 也必须打桩** ✗
+    #   否则 `KILLS` 永远是空的 ⇒ 本测试就**再也证明不了"只杀目标池"** ✗✗（防护会静默失效 ✗）
+    #   ⚠ 用被测代码自己的取件函数 `mine._OC()`（顺带把"它真能取到那个模块"也证了 ✓）
+    _oc = mine._OC()
+    _oc.subprocess = FakeSubprocess
     mine.time = ft
     return ft
 

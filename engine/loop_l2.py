@@ -34,6 +34,10 @@ def _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style,
     """单候选剥风格 + 副口径评估 -> (strip_rec, rr2, strip2, ok2)"""
     strip_rec = None
     rr2, strip2, ok2 = None, None, False
+    # ★ 2026-09-29（`loop_todo §1.40 ②`）：两份口径（主 ✓ / 副 `--dual_fwd` ✓）的"剥风格"输入
+    #   **完全相同**（同一个 `f` ✓ + 同一对 `STYLE_FULL` ✓）⇒ 下面**只算一次**、副口径直接复用 ✓
+    #   ⚠ 先置 None：主口径那次在 `try` 里算，异常会被吞 ⇒ 副口径必须能**按原语义补算** ✓（不静默降级 ✗）
+    _fn = None
     # ---- 剥风格(2026-09-12, --strip_style; 见 docs/log/2026-09.md §8.13) ----
     #  口径与 standard_test.py【6】逐位一致: rank(因子) 对 rank(lncap)+rank(lnamt)
     #  逐日截面 OLS 取残差 -> **再 rank** -> 重跑同一套费后回测。
@@ -83,9 +87,17 @@ def _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style,
                                 cost=args.cost, window=args.window,
                                 with_ex=True, with_daily=True)
             if _strip_style and rr2 is not None:
-                _fn2 = neutral_rank(f.values.astype('float64'),
-                                    [STYLE_FULL['lncap'], STYLE_FULL['lnamt']])
-                rr_s2 = evaluate_real(pd.DataFrame(_fn2, index=dates, columns=cols),
+                # ★ 2026-09-29（`loop_todo §1.40 ②`）：主口径那次**已经算过同一份**（入参逐字相同 ✓）
+                #   ⇒ 直接复用 ✓（旧写法在这里**又算一遍** ✗：每次 `neutral_rank` 内部 4 个**全量**
+                #     `rank_rows` ✓，实测 9s/候选 ✗ ⇒ 一次一代白烧约 3 分钟 ✓）；
+                #   ⚠ 复用必须给一份**独立数组**（`np.array(..., copy=True)` ✗）：旧代码这里是**独立算出来**的 ✓，
+                #     万一 `evaluate_real` 就地改了入参（它开头是 `fac = fac.reindex(...)` ✓ 只重绑局部名 ✓），
+                #     复用**同一块 buffer** 就会让第二路的输入被第一路影响 ✗✗ ⇒ 拷一份 = **逐字同旧** ✓（代价仅一次 memcpy ✓）；
+                #   ⚠ 主口径那次若**抛异常**（`except` 吞掉 ✓）⇒ `_fn` 仍是 None ⇒ 这里**按原语义补算** ✓
+                if _fn is None:
+                    _fn = neutral_rank(f.values.astype('float64'),
+                                       [STYLE_FULL['lncap'], STYLE_FULL['lnamt']])
+                rr_s2 = evaluate_real(pd.DataFrame(np.array(_fn, copy=True), index=dates, columns=cols),
                                       close, f"{nd}#h{int(args.dual_fwd)}#strip",
                                       cost=args.cost, window=args.window, with_daily=True)
                 if rr_s2 is not None:

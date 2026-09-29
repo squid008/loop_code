@@ -7,28 +7,21 @@
   ③ **state**：`engine/loop_state[_<池>].pkl` 的 `bank`/`n_tested` ⇒ 库规模与已测候选数
   ④ **archive csv**：`docs/loop_archive[_<池>].csv` 行数 ⇒ L2 候选流水
 """
-import json
 import os
 import re
-import subprocess
 import sys
 import time
 
 from . import core
 from .. import settings
 
-PS_PROCS = (
-    "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
-    # ★★★ 2026-09-15 修【真 BUG】：原过滤是 `CommandLine -match 'loop_code'`
-    #   ⇒ 而实际命令行是 `python.exe tools\run_tracks.py ...` / `... --mine_pool=300`
-    #     —— **都不含 `loop_code`**（那只是工作目录，不在命令行里）✗
-    #   ⇒ 结果：引擎明明在跑，看板却报 `anyRunning=False`（实测 21:52 复现）✗✗
-    #   ⇒ 改为按**脚本名**匹配（这是命令行里真实存在的东西）✓
-    "Where-Object { $_.CommandLine -match 'loop_engine|run_tracks|loop_watch' } | "
-    "ForEach-Object { [PSCustomObject]@{ pid=$_.ProcessId; "
-    "cmd=$_.CommandLine; start=$_.CreationDate.ToString('yyyy-MM-dd HH:mm:ss'); "
-    "mem=[math]::Round($_.WorkingSetSize/1MB,0) } } | ConvertTo-Json -Compress -Depth 3"
-)
+# ★ 2026-09-29（`loop_todo §1.40.3` · 可移植性平台化）：原来这里是一整段 **PowerShell** 字面量（Win32 专有 ✗）
+#   ⇒ 已搬进 `engine/os_compat.list_procs()` ✓（Windows 分支仍是**同一句** PS ✓，POSIX 换成 `ps` ✓）；
+#   ⚠ 下面 `list_processes()` 里的那句"按**脚本名**匹配"必须保留 ✓ —— 那是 2026-09-15 修的一个**真 BUG**：
+#     原过滤用 `CommandLine -match 'loop_code'`，而真实命令行（`python.exe tools\run_tracks.py …`）
+#     **都不含 loop_code** ✗（那只是工作目录）⇒ 引擎在跑、看板却报 `anyRunning=False` ✗✗
+#     ⇒ 按脚本名（`loop_engine|run_tracks|loop_watch`）匹配才对 ✓
+_PROJ_MARKS = ('loop_engine', 'run_tracks', 'loop_watch')
 
 # ★★★★ 2026-09-16 修 BUG H：**必须加"参数边界"断言** `(?<![\w-])`。
 #   原写法 `--pools[= ]` 会**误匹配 `--inject_pools=300,500,1000,50`**（它里面也含 `pools=`）✗
@@ -44,20 +37,22 @@ _POOLS_RE = re.compile(r'(?<![\w-])--pools[= ]([A-Za-z0-9,]+)')
 
 
 def list_processes():
-    """列出与本项目相关的 python 进程（只读；PowerShell CIM）。"""
+    """列出与本项目相关的 python 进程（只读）✓。
+
+    ★ 2026-09-29（`loop_todo §1.40.3`）：实现搬进 `engine/os_compat.list_procs()` ✓ ——
+      · Windows 分支仍是**同一句** PowerShell（含 `CREATE_NO_WINDOW` 隐藏窗口 ✓，见那边注释 ✓）；
+      · **过滤改在 Python 里做** ✓，口径与原来那句 PS 完全一致 ✓（`Name like 'python%'` + 按脚本名匹配 ✓），
+        免得"把别的项目的 python 也当成我们的"✗；
+      · 返回字段名与原来一致（`pid`/`cmd`/`start`/`mem` ✓）⇒ 下游 `classify_proc()` 一字不用改 ✓。
+    """
     try:
-        # ★★★ 2026-09-16：**必须**隐藏窗口 —— 本函数由看板**每 10 秒**调用一次，
-        #   若 `powershell` 弹出控制台，就会**一直闪黑窗** ✗（用户要求"后台静默"）
-        out = subprocess.run(['powershell', '-NoProfile', '-Command', PS_PROCS],
-                             capture_output=True, timeout=25,
-                             creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                                            if os.name == 'nt' else 0))
-        s = (out.stdout or b'').decode('utf-8', 'replace').strip()
-        if not s:
-            return []
-        rows = json.loads(s)
-        return rows if isinstance(rows, list) else [rows]
-    except Exception as e:
+        _eng = os.path.join(settings.PROJECT_ROOT, 'engine')
+        if _eng not in sys.path:
+            sys.path.insert(0, _eng)
+        import os_compat as _OC                                             # noqa: E402
+        return [p for p in _OC.list_procs()
+                if any(k in (p.get('cmd') or '') for k in _PROJ_MARKS)]
+    except Exception as e:                                                  # noqa: BLE001
         return [{'err': repr(e)}]
 
 

@@ -119,21 +119,14 @@ def main():
     print('  数据侧 %d 个文件：strip 新口径 %d 个 · style 新口径 %d 个' % (n_all, n_str, n_sty))
     q = _procs()
     print('  进程：曲线重算 %d 个 · 挖矿引擎 %d 个 · 调度器 %d 个' % (q['curves'], q['mine'], q['sched']))
+    # ★ 2026-09-29（§1.40.3 可移植性平台化）：内存查询搬进 `engine/os_compat.py` ✓
+    #   （原来那 12 行 ctypes 是 Win32 专有 ✗；契约：取不到 ⇒ None ⇒ 这行就不打印 ✓ 与原来同 ✓）
     try:
-        import ctypes
-
-        class _MEM(ctypes.Structure):
-            _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong),
-                        ('ullTotalPhys', ctypes.c_ulonglong), ('ullAvailPhys', ctypes.c_ulonglong),
-                        ('ullTotalPageFile', ctypes.c_ulonglong),
-                        ('ullAvailPageFile', ctypes.c_ulonglong),
-                        ('ullTotalVirtual', ctypes.c_ulonglong),
-                        ('ullAvailVirtual', ctypes.c_ulonglong),
-                        ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
-        m = _MEM()
-        m.dwLength = ctypes.sizeof(_MEM)
-        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
-        print('  内存：可用 %.1f GB / 共 %.1f GB' % (m.ullAvailPhys / 2 ** 30, m.ullTotalPhys / 2 ** 30))
+        sys.path.insert(0, os.path.join(ROOT, 'engine'))
+        import os_compat as _OC
+        _s = _OC.mem_status()
+        if _s is not None:
+            print('  内存：可用 %.1f GB / 共 %.1f GB' % (_s['avail_gb'], _s['total_gb']))
     except Exception:                                     # noqa: BLE001
         pass
     ok = (n_str >= n_all and n_sty >= n_all and n_all > 0 and not q['curves'])

@@ -50,30 +50,24 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
+# ★ 2026-09-29（`loop_todo §1.40.3` · 可移植性平台化）：内存查询收敛到 `engine/os_compat.py` ✓
+#   （Win32 只在那一个文件里 ✗；这里保持"查不到 ⇒ inf"的原契约 ✓）
+_ENG = os.path.join(ROOT, 'engine')
+if _ENG not in sys.path:
+    sys.path.insert(0, _ENG)
 
 import run_tracks as RT          # noqa: E402  ★ 复用公共件（不复制）
+import os_compat as OC           # noqa: E402  ★ 操作系统专有件（单一实现 ✓）
 
 
 def avail_gb():
-    """当前**可用物理内存**（GB）；查不到返回 inf（不因"测不出"而卡死）。"""
-    try:
-        import ctypes
+    """当前**可用物理内存**（GB）；查不到返回 inf（不因"测不出"而卡死）。
 
-        class MS(ctypes.Structure):
-            _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong),
-                        ('ullTotalPhys', ctypes.c_ulonglong),
-                        ('ullAvailPhys', ctypes.c_ulonglong),
-                        ('ullTotalPageFile', ctypes.c_ulonglong),
-                        ('ullAvailPageFile', ctypes.c_ulonglong),
-                        ('ullTotalVirtual', ctypes.c_ulonglong),
-                        ('ullAvailVirtual', ctypes.c_ulonglong),
-                        ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
-        m = MS()
-        m.dwLength = ctypes.sizeof(MS)
-        ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m))
-        return m.ullAvailPhys / (1024.0 ** 3)
-    except Exception:
-        return float('inf')
+    ★ 2026-09-29（`loop_todo §1.40.3`）：实现搬进 `engine/os_compat.avail_gb_or_inf()` ✓ ——
+      **契约逐字不变**（查不到仍返回 `inf` ✓，下面的并行闸门逻辑一行未改 ✓）；
+      Windows 分支是原来那段 ctypes 的**逐字搬运** ✓（POSIX 分支是新增 ✓，本机无 Linux ⇒ 未真机验证 ✗）。
+    """
+    return OC.avail_gb_or_inf()
 
 
 def _cmd_and_paths(pool, gen, n, l2, extra, inject_spec, pools, panel_cache):

@@ -57,8 +57,23 @@ import loop_paths as _P
 # gen51: 阈值 0.99 -> args.dedup_corr(默认0.85)。0.99 过松: 实测同代 F20~F23 两两
 # |corr| 0.93/0.88 全数放行(4 个近重复因子同代入库)。标定: 全库 23 因子在此口径下
 # 仅这两对>0.85(其余<=0.744) -> 0.85 既能拦下两对、又不误杀历史入库因子。
-def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mode):
-    """L1 过滤：ic/stab 门槛 + 形状门槛 + 去相关 + 评分 + 近重复去重 -> 返回 l1（空则 None）"""
+def _l1_filter(l1, Bsub, args, _reuse_v, _min_mono, _score_mode, dec_keep, dec_info):
+    """L1 过滤：ic/stab 门槛 + 形状门槛 + 去相关(**★已在批内就地判定 ✓**) + 评分 + 近重复去重 -> l1（空则 None）
+
+    ★ 2026-09-29（`loop_todo §1.40 ①`；用户授权"允许改实现、但**结果逐位不变**" ✓）：
+      去相关**不再在本函数里重算** ✗ —— 旧写法对每个候选 `rank_rows(v0)`，而 `v0` 要靠
+      `_C.VCACHE` 命中才免求值 ✓（**实测只命中 170/709** ✗，日志里 `缓存 803MB` = 顶到上限 ✓）
+      ⇒ **539 个候选被重新求值** ⇒ **1912s** ✗（一代白烧 32 分钟 ✗）。
+      现在那份判定在 `_l1_batches` 的**批内就地**做完 ✓（那一刻值还活着，且 `rank_rows(v[::_FWD])`
+      本来就要为形状/风格算一次 ✓）⇒ 这里只按 `dec_keep` 过滤 ✓。
+      ★ **逐位相同** 的根据：同一个对象 `rank_rows(v[::_FWD])`（`v` 已方向对齐 ✓）＋ 同一组 `Kr` ✓
+        ＋ 同一判据 `mx <= args.decorr` ✓ ⇒ 只改"**什么时候算**" ✗，没改"算什么" ✓。
+
+    :param dec_keep: 通过去相关的候选 `expr` 集合（`_l1_batches` 就地算好 ✓）
+    :param dec_info: `(已知因子个数, 就地判定耗时秒)` —— **只用于日志口径** ✓（不参与判定 ✓）
+    ⚠ `B`/`bank`/`bank_ext` 已随 `Kr` 的构造搬到 `_known_rank_map` ✓ ⇒ 本函数不再收它们 ✓
+      （不留没用过的形参 ✗ —— 那正是本项目专门修过的"幽灵参数" ✗）
+    """
     cache2 = {}
     if not len(l1):
         print("L1 无候选通过, 退出")
@@ -73,57 +88,19 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
             print("L1 形状门槛后无候选, 退出")
             return None
     if args.decorr > 0:
-        _t_dec = time.time()
-        KNOWN = {
-            'ln_mktcap': np.log(np.maximum(B['mktcap'], 1e-9)),
-            'amt_log': -np.log(ts_mean(B['turnover'], 20) + 1.0),
-        }
-        # 用子面板算相关性(快); 已知因子也取对应子面板
-        Kr = {}
-        for k, v in KNOWN.items():
-            vs = v[np.ix_(_C.L1_ROWS, _C.L1_COLS)]
-            Kr[k] = rank_rows(vs[::_S.FWD])
-        # ★ 2026-09-14（§1.8）：对照集 = 自己的 bank **+ 外部池库**（`bank_ext`，只读注入）
-        #   不注入的话，跑全A 时这一层"看不见池库" ⇒ 重挖。
-        for bi, bnd in enumerate(bank + bank_ext):
-            try:
-                vb = eval_expr(bnd, Bsub, cache2)
-                Kr[f'bank{bi}'] = rank_rows(vb[::_S.FWD])
-                del vb
-            except Exception:
-                pass
-        keep_rows = []
-        n_hit = 0
-        for _, r in l1.iterrows():
-            # ★复用 L1 已算的 [::FWD] 值视图(命中则完全跳过 eval_expr, 结果逐位不变)
-            v0 = _C.VCACHE.get(r['expr']) if _reuse_v else None
-            if v0 is not None:
-                n_hit += 1
-            else:
-                v0 = eval_expr(r['node'], Bsub, cache2)
-                if r['sign'] < 0:
-                    v0 = -v0
-                v0 = v0[::_S.FWD]
-            v = rank_rows(v0)
-            del v0
-            mx = 0.0
-            fv = np.isfinite(v)          # ★ 提到循环外: 与 w 无关, 此前每个已知因子都重算一次
-            for w in Kr.values():
-                m = fv & np.isfinite(w)
-                if m.sum() < 100:
-                    continue
-                c = abs(np.corrcoef(v[m], w[m])[0, 1])
-                mx = max(mx, c if np.isfinite(c) else 0.0)
-            if mx <= args.decorr:
-                keep_rows.append(r)
-            trim_cache(cache2, _C.CACHE2_MAX)             # 去相关缓存容量控制(防OOM)
-            trim_cache_mb(cache2, _C.CACHE2_MB)           # ★ 治本: 字节上限 ✓
-        print(f"去相关(|corr|<={args.decorr} vs {len(Kr)}个已知因子) 后剩 "
-              f"{len(keep_rows)} 个 (原 {len(l1)})")
-        print(f"  [计时] 去相关 用时 {time.time() - _t_dec:.0f}s "
-              f"(复用 L1 值 {n_hit}/{len(l1)} 个, 缓存 {_C._VREUSE_MB[0]:.0f}MB)", flush=True)
-        if keep_rows:
-            l1 = pd.DataFrame(keep_rows)
+        _n_known, _t_dec = dec_info
+        n_pre = len(l1)
+        _keep = l1['expr'].isin(dec_keep or set())
+        # ⚠ 与旧实现**逐字同义**：旧写法是 `if keep_rows: l1 = pd.DataFrame(keep_rows)` ⇒
+        #   **全被拦下时反倒不筛**（保留全部候选继续跑 ✗ —— 既存怪癖 ✓ 本版**不动** ✗：
+        #   改它 = 改行为 ✗，要改须单独 A/B ✓；此处只把事实记明 ✓）
+        if _keep.any():
+            l1 = l1[_keep]
+        print(f"去相关(|corr|<={args.decorr} vs {_n_known}个已知因子) 后剩 "
+              f"{len(l1)} 个 (原 {n_pre})")
+        print(f"  [计时] 去相关 **批内就地判定** 用时 {_t_dec:.0f}s "
+              f"(0 次重复求值 ✓ —— 旧实现靠 _C.VCACHE 命中, 实测只 170/709 ✗ ⇒ 白烧 1912s ✗)",
+              flush=True)
     # 关键: 不能只按 |IC_IR| 排! 低稳定性(高换手)因子费后必亏
     # L1评分 = |IC_IR| x 稳定性权重; 换手代理 turn_est = 1 - stab
     l1['turn_est'] = 1.0 - l1['stab']
@@ -201,8 +178,13 @@ def _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mo
     #  每行 = 一个候选: ic/ic_ir/stab/mono/shape_pos + 4 项风格暴露(见 roadmap §8.4)。
     #  是否进 L2 / 是否通过 L2: 用 (gen, expr) 与 docs/loop_archive.csv 离线 join 即可。
 def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
-             _reuse_v, STYLE_S, R_SHAPE, Usub_s, Rsub_s_n):
-    """L1 批量求值 + 形状量/风格暴露 + 风格观测落盘 + 失败库记录 -> (l1, obs_df)"""
+             _reuse_v, STYLE_S, R_SHAPE, Usub_s, Rsub_s_n, bank, bank_ext):
+    """L1 批量求值 + 形状量/风格暴露 + 风格观测落盘 + 失败库记录 -> (l1, obs_df, dec_keep, dec_info)
+
+    ★ 2026-09-29（`loop_todo §1.40 ①`）：新增 `bank/bank_ext`（转交 `_l1_batches` 去建去相关
+      对照集 `Kr` ✓）＋ 两个回传 `dec_keep` / `dec_info`（去相关已**批内就地判定** ✓，
+      下游 `_l1_filter` 只做过滤 ✗ 不再重算 ✓）。
+    """
     stats = []
     BATCH = args.batch
     try:
@@ -221,7 +203,7 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
     n_eval = 0
     t_l1 = time.time()
     # ★ S3b-3：本块已抽成 `_l1_batches(...)` ✓（形参/回传由 AST 机器算 ✓）
-    k, n_eval, nd = _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _reuse_v, _style_obs, args, cands, fail_lib, n_eval, need_shape, stats, t_l1)
+    k, n_eval, nd, dec_keep, n_known, t_dec = _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _reuse_v, _style_obs, args, cands, fail_lib, n_eval, need_shape, stats, t_l1, bank, bank_ext)
     print(f"L1 求值完成 {n_eval} 个, 用时 {time.time()-t_l1:.0f}s "
           f"({(time.time()-t_l1)/max(n_eval,1):.2f}s/候选)")
     _C._LRU.clear()                                       # L1 结束: 释放跨批子树缓存
@@ -254,19 +236,110 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
         elif r_['stab'] <= args.min_stab:
             flib_mark(fail_lib, nd, args.gen, False, 'stab')
 
-    return l1, obs_df
+    # ★ 2026-09-29（§1.40 ①）：去相关判定已在本函数内做完 ✓ ⇒ 连同日志口径一起交出去 ✓
+    return l1, obs_df, dec_keep, (n_known, t_dec)
 
 
-def _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _reuse_v, _style_obs, args, cands, fail_lib, n_eval, need_shape, stats, t_l1):
+def _known_rank_map(Bsub, bank, bank_ext):
+    """去相关对比用的**已知因子秩视图** `Kr`（★ 唯一构造处 ✓）。
+
+    ★ 2026-09-29（`loop_todo §1.40 ①`）：从 `_l1_filter` 里**原样搬出**（口径一字未改 ✓）——
+      搬出来只为一件事：能在 **L1 批循环开始之前**就建好 ✓（批内要**就地**判去相关 ✓，
+      见 `_l1_batches` ✓ 与 `_decorr_keep` ✓）。
+    · 2 个 KNOWN（`ln_mktcap` / `amt_log`）+ `bank` + `bank_ext` ✓；单项失败**静默跳过** ✓（同原来 ✓）；
+    · 用**局部** `cache2` 当 eval 的子表达式缓存 —— 与原来 `_l1_filter` 的用法一致 ✓
+      （缓存只是加速 ✓，与数值无关 ✓）；
+    · 面板取 `_C._BASE['B']`（`base_fields()` 存的那份 ✓ = `ctx['B']` **同一个对象** ✓，
+      故不必再多传形参 ✗）。
+    """
+    B = _C._BASE['B']
+    Kr = {}
+    KNOWN = {
+        'ln_mktcap': np.log(np.maximum(B['mktcap'], 1e-9)),
+        'amt_log': -np.log(ts_mean(B['turnover'], 20) + 1.0),
+    }
+    cache2 = {}
+    # 用子面板算相关性(快); 已知因子也取对应子面板
+    for k, v in KNOWN.items():
+        vs = v[np.ix_(_C.L1_ROWS, _C.L1_COLS)]
+        Kr[k] = rank_rows(vs[::_S.FWD])
+    # ★ 2026-09-14（§1.8）：对照集 = 自己的 bank **+ 外部池库**（`bank_ext`，只读注入）
+    #   不注入的话，跑全A 时这一层"看不见池库" ⇒ 重挖。
+    for bi, bnd in enumerate(bank + bank_ext):
+        try:
+            vb = eval_expr(bnd, Bsub, cache2)
+            Kr[f'bank{bi}'] = rank_rows(vb[::_S.FWD])
+            del vb
+        except Exception:
+            pass
+    return Kr
+
+
+def _decorr_keep(rs, Kr, thr):
+    """候选的秩视图 `rs` vs 已知因子秩视图 `Kr` ⇒ 是否通过去相关（`max|corr| <= thr` ✓）。
+
+    ★ 2026-09-29（`loop_todo §1.40 ①`）：与旧实现**逐字同义** ✓ —— 旧写法（在 `_l1_filter` 里）是
+      `v = rank_rows(v0)` → `fv = np.isfinite(v)` → `for w in Kr.values(): m = fv & np.isfinite(w)` →
+      `if m.sum() < 100: continue` → `c = abs(np.corrcoef(v[m], w[m])[0, 1])` → `mx <= args.decorr` ✓。
+    ⚠ 只有 `K` 个已知因子（实测 **9** 个 ✓）⇒ 这部分本来就便宜（~60s/代 ✓），
+      真正贵的是旧实现里那 539 次**重复求值** ✗（约 1912s ✗）—— 本函数在**批内**调用就消掉了它 ✓。
+    """
+    fv = np.isfinite(rs)
+    mx = 0.0
+    for w in Kr.values():
+        m = fv & np.isfinite(w)
+        if m.sum() < 100:
+            continue
+        c = abs(np.corrcoef(rs[m], w[m])[0, 1])
+        mx = max(mx, c if np.isfinite(c) else 0.0)
+    return mx <= thr
+
+
+def _vreuse_fill(stats, vals, args):
+    """把本批"过 `ic`/`stab` 门"的候选值放进跨阶段复用缓存 `_C.VCACHE`。
+
+    ★ 2026-09-29（§1.40 ①）：从 `_l1_batches` **原样搬出**（只为守住 R1 ≤120 行 ✓，逐字未改 ✓）。
+      ⚠ **语义变化要说清** ✗：去相关阶段**不再读它了** ✓（改成批内就地判定 ✓）⇒ 它现在的唯一消费者
+      是近重复去重（`_l1_filter` 里只查 TopN 个 ✓，而这里存的是**全部**过门候选 ✗）
+      ⇒ **内存仍有优化空间**（改成"按 score 留 running top-K" ✓）；
+      本版**先不动** ✗ —— 一次只改一件事（避免把"时间优化"与"内存优化"的证据搅在一起 ✓）。
+    """
+    if not vals:
+        return
+    for _d_, _v in zip(stats[-len(vals):], vals):
+        if _C._VREUSE_MB[0] >= _C._VREUSE_CAP_MB:
+            break
+        if _d_['ic'] > args.min_ic and _d_['stab'] > args.min_stab:
+            _arr = np.ascontiguousarray(_v[::_S.FWD])
+            _C.VCACHE[_d_['expr']] = _arr
+            _C._VREUSE_MB[0] += _arr.nbytes / 1e6
+
+
+# ★ 2026-09-29（`loop_todo §1.40 ①`）—— `_l1_batches` 函数体里这一段注释**上移**到此处
+#   （只为守住 R1「函数 ≤120 行」✓：上移后 122 → 119 ✓，token 一字未改 ✓，
+#    与本文件其它处同一手法 ✓）：
+#   · 秩视图**批内只算一次** ✓ —— 除 `decile_shape` / 风格观测外，**去相关判定也用它** ✓
+#     （旧实现是在"去相关"阶段**再算一遍**，且多数候选还得**重新求值** ✗ ⇒ 白烧 1912s ✗）；
+#   · `rs` 的算法**没变**：`rank_rows(v[::_FWD])`，`v` 已方向对齐 ✓ ⇒ 逐位同旧 ✓。
+def _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _reuse_v, _style_obs, args, cands, fail_lib, n_eval, need_shape, stats, t_l1, bank, bank_ext):
     """S3b-3（2026-09-27）：从 `_l1_eval` **原样搬出**（R1：函数 ≤120 行 ✗）。
 
     ★ 形参与回传**都由 AST 机器算** ✓（不人眼挑 ✗）：
       形参 = 块里读到、块外才有：`BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _reuse_v, _style_obs, args, cands, fail_lib, n_eval, need_shape, stats, t_l1`
       回传 = 块里赋值、块外还读：`k, n_eval, nd`
       条件赋值（先置 None）：`k, nd`
+
+    ★ 2026-09-29（`loop_todo §1.40 ①`）：本函数**顺带承担去相关判定** ✓ ——
+      新增形参 `bank/bank_ext`（给 `_known_rank_map` 建 `Kr` ✓）+ 三个回传
+      `dec_keep`（通过去相关的 `expr` 集合 ✓）· `len(Kr)`（日志口径 ✓）· `t_dec`（就地判定耗时 ✓）。
+      为什么放在这层：批内**已经有** `rs = rank_rows(v[::_FWD])`（形状/风格要用的那份 ✓）
+      ⇒ 拿它直接判去相关 = **零重复求值、零额外内存** ✓✓（旧实现是 1912s 重算 ✗）。
     """
     k = None   # ★ 条件赋值：块内只在嵌套分支里绑 ⇒ 先占位（原函数里作用域覆盖全函数 ✓）
     nd = None   # ★ 条件赋值：块内只在嵌套分支里绑 ⇒ 先占位（原函数里作用域覆盖全函数 ✓）
+    dec_keep, t_dec = set(), 0.0
+    # ★ 去相关的对照集必须**先建好**（批内要用 ✓）；`args.decorr <= 0`（关）时 `Kr` 空 ⇒ 不做判定 ✓
+    Kr = _known_rank_map(Bsub, bank, bank_ext) if args.decorr > 0 else {}
     for b0 in range(0, len(cands), BATCH):
         print(f"  L1 批 {min(b0 + BATCH, len(cands))}/{len(cands)} 开始 "
               f"(已用 {time.time()-t_l1:.0f}s)", flush=True)
@@ -303,16 +376,21 @@ def _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _re
         mu, ir = np.abs(mu), np.abs(ir)
         stab = [factor_stability(v, None) for v in vals]
         shp, sty, shn = [], [], []
-        for v in vals:
-            if not need_shape and not _style_obs:
-                shp.append(None)
-                sty.append(None)
-                shn.append(None)
-                continue
-            # 秩视图只算一次: decile_shape 与风格观测共用(两者都基于 [::FWD] 调仓日视图)
-            try:
-                rs = rank_rows(v[::_S.FWD])
-            except Exception:
+        for i_v, v in enumerate(vals):
+            rs = None
+            if need_shape or _style_obs or Kr:
+                # (秩视图只算一次: decile_shape 与风格观测共用 —— 该说明已上移到函数外 ✓)
+                try:
+                    rs = rank_rows(v[::_S.FWD])
+                except Exception:
+                    rs = None
+            if Kr and rs is not None:
+                # (★就地判去相关：值/秩都在手上 ⇒ 零重复求值 ✓ 逐位同旧 ✓ 见 `_decorr_keep` ✓)
+                _t_d = time.time()
+                if _decorr_keep(rs, Kr, args.decorr):
+                    dec_keep.add(str(cands[int(kidx[i_v])]))
+                t_dec += time.time() - _t_d
+            if rs is None:
                 shp.append(None)
                 sty.append(None)
                 shn.append(None)
@@ -354,20 +432,15 @@ def _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _re
                 for _k in STYLE_KEYS:
                     d['st_' + _k] = sy[_k]
             stats.append(d)
-        if _reuse_v and vals:
-            for _d_, _v in zip(stats[-len(vals):], vals):
-                if _C._VREUSE_MB[0] >= _C._VREUSE_CAP_MB:
-                    break
-                if _d_['ic'] > args.min_ic and _d_['stab'] > args.min_stab:
-                    _arr = np.ascontiguousarray(_v[::_S.FWD])
-                    _C.VCACHE[_d_['expr']] = _arr
-                    _C._VREUSE_MB[0] += _arr.nbytes / 1e6
+        if _reuse_v:
+            _vreuse_fill(stats, vals, args)                  # ★ 2026-09-29：整块搬进 helper（守 R1 ✓）
         n_eval += len(vals)
         del vals, IC
         gc.collect()
         trim_cache(_C._LRU, _C.LRU_MAX)                      # LRU 容量控制(防OOM)
         trim_cache_mb(_C._LRU, _C.LRU_MB)                    # ★ 治本: 字节上限(池越宽单条越大 ✗)
-    return k, n_eval, nd
+    # ★ 2026-09-29（§1.40 ①）：把"批内就地判定"的结果带回给 `_l1_filter` ✓（它不再重算 ✗）
+    return k, n_eval, nd, dec_keep, len(Kr), t_dec
 
 # ★★★ 以下是本函数**函数体内**的设计说明（S3a 只搬位置、一字未改 ✓）
 #   规则：连续 ≥3 行的论述块上移；贴行注释留在代码旁（保局部性 ✓）
@@ -453,9 +526,12 @@ def _run_l1_phase(ctx, args):
             print(f"  [形状] 中性收益失败(仅缺中性化能力): {type(e).__name__}: {e}")
     # 主形状量用哪套收益(原始 / 中性化)
     R_SHAPE = Rsub_s_n if (_shape_neutral and Rsub_s_n is not None) else Rsub_s
-    l1, obs_df = _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape,
-                           _style_obs, _reuse_v, STYLE_S, R_SHAPE, Usub_s, Rsub_s_n)
-    l1 = _l1_filter(l1, Bsub, B, bank, bank_ext, args, _reuse_v, _min_mono, _score_mode)
+    l1, obs_df, dec_keep, dec_info = _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape,
+                                              _style_obs, _reuse_v, STYLE_S, R_SHAPE, Usub_s,
+                                              Rsub_s_n, bank, bank_ext)
+    # ★ 2026-09-29（§1.40 ①）：去相关已**批内就地判定** ✓ ⇒ 这里只把结果传下去做过滤 ✓
+    #   （不再传 `B`/`bank`/`bank_ext` ✗ —— `Kr` 的构造已搬进 `_known_rank_map` ✓）
+    l1 = _l1_filter(l1, Bsub, args, _reuse_v, _min_mono, _score_mode, dec_keep, dec_info)
     if l1 is None:
         return True
     fam_blocked, l1 = _apply_fam_quota(args, l1)
