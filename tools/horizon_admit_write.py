@@ -36,6 +36,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(ROOT, 'engine'))
+import os_compat as OC      # noqa: E402  ★ 2026-09-29（§1.40.3）：操作系统专有件（单一实现 ✓）
 DOCS = os.path.join(ROOT, 'docs')
 ENG = os.path.join(ROOT, 'engine')
 try:
@@ -98,12 +99,15 @@ def main():
     # ---- 0) 安全：引擎必须在停 ----
     running = []
     try:
-        import subprocess
-        r = subprocess.run(['powershell', '-NoProfile', '-Command',
-                            "(Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
-                            "Where-Object { $_.CommandLine -match 'loop_engine|run_tracks' }).ProcessId"],
-                           capture_output=True, text=True, timeout=30)
-        running = [x for x in (r.stdout or '').split() if x.strip()]
+        # ★ 2026-09-29（`loop_todo §1.40.3` 可移植性平台化）：原为内联 PowerShell
+        #   `(Get-CimInstance Win32_Process … -match 'loop_engine|run_tracks').ProcessId` ✗（Win32 专有）
+        #   ⇒ 改走 `os_compat.list_procs()` ✓（Windows 分支仍是同一句 PS 的语义 ✓，POSIX 用 `ps` ✓），
+        #     过滤判据与原 PS **逐条对齐** ✓。
+        #   ⚠ 原实现**查不到时 `running=[]` ⇒ 放行** ✓ —— 本版**照旧** ✗：改成"查询失败即拒写"
+        #     属于**行为变化** ✗（虽然更安全 ✓），得单独决定 ✓，此处只把事实写明 ✓。
+        running = [str(p.get('pid')) for p in OC.list_procs()
+                   if 'loop_engine' in (p.get('cmd') or '')
+                   or 'run_tracks' in (p.get('cmd') or '')]
     except Exception:                                            # noqa: BLE001
         pass
     if running and a.write:

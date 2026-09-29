@@ -40,6 +40,9 @@ except Exception:
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+# ★ 2026-09-29（`loop_todo §1.40.3` 可移植性平台化）：探活改走 `os_compat`（Win32 只在那一个文件里 ✗）
+sys.path.insert(0, os.path.join(ROOT, 'engine'))
+import os_compat as OC       # noqa: E402
 DOCS = os.path.join(ROOT, 'docs')
 CURVE_DIR = os.path.join(DOCS, 'factor_curves')
 
@@ -59,15 +62,17 @@ def _lock_path():
 
 
 def _pid_alive(pid):
-    """非破坏性探活（⚠ 不能用 `os.kill(pid, 0)` —— Windows 上它**会真的杀进程** ✗）。"""
+    """非破坏性探活（⚠ 不能用 `os.kill(pid, 0)` —— Windows 上它**会真的杀进程** ✗）。
+
+    ★ 2026-09-29（`loop_todo §1.40.3` 可移植性平台化）：实现搬进 `os_compat.alive()` ✓ ——
+      它**正是同一条设计**（Windows 用 `tasklist … /NH` ✓，POSIX 才用 `os.kill(pid, 0)` ✓），
+      所以上面那条"Windows 上不许 os.kill"的教训**没有丢** ✓，只是不再散落在这里 ✗。
+      ⚠ 契约对齐：`alive()` 查不出时回 `None` ⇒ 这里 `bool(...)` ⇒ **False = 视为已死** ✓
+        （与原实现"任何异常都 `return False`" **逐字同义** ✓）。
+      ⚠ 本文件在 `tools/` ⇒ 需要 engine 在 `sys.path`（见文件头的路径装配 ✓）。
+    """
     try:
-        if os.name == 'nt':
-            import subprocess
-            r = subprocess.run(['tasklist', '/FI', 'PID eq %d' % pid, '/NH'],
-                               capture_output=True, text=True, errors='replace')
-            return str(pid) in (r.stdout or '')
-        os.kill(pid, 0)
-        return True
+        return bool(OC.alive(pid))
     except Exception:                                          # noqa: BLE001
         return False
 

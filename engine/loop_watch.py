@@ -25,6 +25,11 @@ import sys
 import time
 from datetime import datetime
 
+try:
+    import os_compat as OC          # ★ 2026-09-29：进程查询的单一实现（见 §1.40.3 可移植性平台化）
+except Exception:                   # noqa: BLE001
+    OC = None                       # 取不到 ⇒ 各调用方按自己的保守策略兜底 ✓（见 `_count_procs`）
+
 # ★ 2026-09-15：原为硬编码仓库路径 + 写死的解释器路径 ⇒ 换机器即崩 ✗
 #   ① 本文件就在 `engine/` 里 ⇒ `HERE` 即 engine 目录 ✓
 #   ② `PY` 改用 `sys.executable` = **当前正在跑的解释器**（比写死路径更正确）✓
@@ -69,31 +74,42 @@ def now_s() -> int:
     return int(time.time())
 
 
+def _count_procs(need, forbid=None) -> int:
+    """命令行**同时**含 `need` 里每一项、且不匹配 `forbid` 正则的进程数 ✓。
+
+    ★ 2026-09-29（`loop_todo §1.40.3` 可移植性平台化）：下面两个探测原先各自拼一段 PowerShell
+      （`Get-CimInstance Win32_Process … | Where-Object {…} | Measure-Object` ✗ Win32 专有、还带 `shell=True` ✗）
+      ⇒ 现在统一走 `os_compat.list_procs()` ✓（**Windows 分支仍是同一句 PS** ✓，POSIX 换成 `ps` ✓），
+      过滤改在 Python 里做、判据**逐条对齐原 PS 表达式** ✓（`-match` ⇒ 子串匹配 ✓；
+      `-notmatch '--mine_pool=(?!all)'` ⇒ 同一个负向前瞻 ✓）。
+    ⚠ `OC is None`（`sys.path` 里没有 `engine/`）时**抛异常** ⇒ 由各调用方按自己的保守策略兜底 ✓
+      （引擎探测 ⇒ 当成"在跑" ✓；watcher 探测 ⇒ 当成"没在跑" ✓）—— **不在这里替它们决定** ✗。
+    """
+    if OC is None:
+        raise RuntimeError('取不到 engine/os_compat.py（sys.path 里没有 engine/ ?）')
+    n = 0
+    for p in OC.list_procs():
+        cmd = p.get('cmd') or ''
+        if all(x in cmd for x in need) and not (forbid and re.search(forbid, cmd)):
+            n += 1
+    return n
+
+
 def is_engine_running() -> bool:
-    """WMI 查 loop_engine 进程。查不到时保守返回 True（宁可不启也不重复启）。
+    """查 loop_engine 进程。查不到时保守返回 True（宁可不启也不重复启）。
 
     池轨迹下只认**本池**的引擎(命令含 `--mine_pool=<池>`); all 轨迹只认**不带**该参数的引擎
     —— 否则三条轨迹会互相误判(一个在跑就都不启动 / 或不带池的会撞进池轨迹)。
+
+    ★ 2026-09-29：查询改走 `_count_procs`（判据与原 PS 逐条对齐 ✓，见那里的说明 ✓）。
     """
     if _POOL == "all":
-        cond = ("($_.CommandLine -match 'loop_engine') "
-                "-and ($_.CommandLine -notmatch '--mine_pool=(?!all)')")
+        need, forbid = ["loop_engine"], r"--mine_pool=(?!all)"
     else:
-        cond = (f"($_.CommandLine -match 'loop_engine') "
-                f"-and ($_.CommandLine -match '--mine_pool={_POOL}')")
-    ps = (
-        'powershell -NoProfile -Command "Get-CimInstance Win32_Process '
-        "-Filter \\\"Name like 'python%'\\\" "
-        f"| Where-Object {{ {cond} }} "
-        '| Measure-Object | Select-Object -ExpandProperty Count"'
-    )
+        need, forbid = ["loop_engine", "--mine_pool=%s" % _POOL], None
     try:
-        out = subprocess.run(ps, shell=True, capture_output=True, text=True, timeout=60,
-                             creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                                            if os.name == 'nt' else 0))
-        n = int((out.stdout or "").strip())
-        return n > 0
-    except Exception as e:
+        return _count_procs(need, forbid) > 0
+    except Exception as e:                                               # noqa: BLE001
         log(f"[WARN] is_engine_running 异常({e})，保守视为运行中")
         return True
 
@@ -163,26 +179,15 @@ def already_running() -> bool:
     """防多实例：**同一个池**已有一个 loop_watch 进程则本实例退出。
 
     ★ 必须按池区分 —— 否则 300 轨迹的 watcher 会把 500 轨迹的当成自己、直接退出(静默停摆)。
+    ★ 2026-09-29：查询改走 `_count_procs`（判据与原 PS 逐条对齐 ✓，见那里的说明 ✓）。
     """
     if _POOL == "all":
-        cond = ("($_.CommandLine -match 'loop_watch') "
-                "-and ($_.CommandLine -notmatch '--pool=(?!all)')")
+        need, forbid = ["loop_watch"], r"--pool=(?!all)"
     else:
-        cond = (f"($_.CommandLine -match 'loop_watch') "
-                f"-and ($_.CommandLine -match '--pool={_POOL}')")
-    ps = (
-        'powershell -NoProfile -Command "Get-CimInstance Win32_Process '
-        "-Filter \\\"Name like 'python%'\\\" "
-        f"| Where-Object {{ {cond} }} "
-        '| Measure-Object | Select-Object -ExpandProperty Count"'
-    )
+        need, forbid = ["loop_watch", "--pool=%s" % _POOL], None
     try:
-        out = subprocess.run(ps, shell=True, capture_output=True, text=True, timeout=60,
-                             creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                                            if os.name == 'nt' else 0))
-        n = int((out.stdout or "").strip())
-        return n > 1   # 含本进程自身
-    except Exception:
+        return _count_procs(need, forbid) > 1   # 含本进程自身
+    except Exception:                                                     # noqa: BLE001
         return False   # 查不到不阻塞（宁可多轮询也不停摆）
 
 

@@ -2,7 +2,12 @@
 """Loop 挖掘进度查询：进程存活 + 当前阶段 + 最近日志/档案尾行。
 用法:  D:\\miniconda3\\envs\\rqdata\\python.exe D:\\loop_code\\engine\\loop_status.py
 """
-import glob, io, json, os, re, subprocess, datetime
+import glob, io, os, re, datetime      # ★ 2026-09-29：json/subprocess 随 PS 查询一起下岗（死码 ✗）
+
+try:
+    import os_compat as OC          # ★ 2026-09-29：操作系统专有件（单一实现 ✓，见 §1.40.3）
+except Exception:                   # noqa: BLE001
+    OC = None                       # 取不到就按"查询失败"如实回传，不静默当成"没在跑" ✗
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 JOURNAL = os.path.join(os.path.dirname(HERE), 'docs', 'loop_journal.md')
@@ -25,20 +30,36 @@ def read_tail(path, n=10):
 
 
 def running_engine():
-    ps = ("Get-CimInstance Win32_Process -Filter \"Name='python.exe'\" | "
-          "Where-Object { $_.CommandLine -match 'loop_engine' } | "
-          "ForEach-Object { [PSCustomObject]@{ pid=$_.ProcessId; "
-          "run=[int](((Get-Date)-$_.CreationDate).TotalMinutes); "
-          "mem=[math]::Round($_.WorkingSetSize/1MB,0) } } | ConvertTo-Json -Compress")
+    """在跑的引擎 ⇒ `[{pid, run(已跑分钟), mem(MB)}, …]`；查失败 ⇒ `[{'err': …}]` ✓（旧契约 ✓）。
+
+    ★ 2026-09-29（`loop_todo §1.40.3` 可移植性平台化）：原实现是 PowerShell
+      `Get-CimInstance Win32_Process` ✗（Win32 专有）⇒ 改走 `os_compat.list_procs()` ✓
+      （Windows 分支仍是**同一句** PS ✓，POSIX 换成 `ps` ✓）。
+    ⚠ 两处口径微差，都无害，据实记明 ✓：
+      ① 进程名过滤由 `Name='python.exe'` 放宽为 `Name like 'python%'` ✓
+         （与看板/其它工具**统一** ✓；多出来的 `pythonw.exe` 不影响"跑没跑引擎"的判断 ✓）；
+      ② `run` 改在 Python 里按 `start` 算 ✓ —— 与 PS 的 `(Get-Date)-CreationDate` **语义等价** ✓，
+         但不是同一条算式（本函数只供**人肉看进度** ✓，不参与任何判定 ✓）；算不出时返回 `-1`
+         ⇒ `main()` 会显示 `?` ✓（**不**编造一个假的分钟数 ✗）。
+    """
+    if OC is None:
+        return [{'err': '取不到 engine/os_compat.py（sys.path 里没有 engine/ ?）'}]
     try:
-        out = subprocess.run(['powershell', '-NoProfile', '-Command', ps],
-                             capture_output=True, timeout=30, creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000) if os.name == 'nt' else 0))
-        s = out.stdout.decode('utf-8', 'replace').strip()
-        if not s:
-            return []
-        rows = json.loads(s)
-        return rows if isinstance(rows, list) else [rows]
-    except Exception as e:
+        now = datetime.datetime.now()
+        rows = []
+        for p in OC.list_procs():
+            cmd = p.get('cmd') or ''
+            if 'loop_engine' not in cmd:
+                continue                        # 只认引擎（口径与旧 PS 的 -match 'loop_engine' 一致 ✓）
+            run = -1
+            try:
+                _t0 = datetime.datetime.strptime(p.get('start') or '', '%Y-%m-%d %H:%M:%S')
+                run = int((now - _t0).total_seconds() // 60)
+            except Exception:                   # noqa: BLE001
+                run = -1                        # 时间戳解析不了 ⇒ 如实标"未知" ✓
+            rows.append({'pid': p.get('pid'), 'run': run, 'mem': p.get('mem_mb')})
+        return rows
+    except Exception as e:                      # noqa: BLE001
         return [{'err': str(e)}]
 
 
@@ -47,7 +68,8 @@ def main():
     procs = running_engine()
     if procs and 'err' not in procs[0]:
         for p in procs:
-            print(f"[引擎] PID {p['pid']}  已运行 {p['run']} 分钟  "
+            # ★ 2026-09-29：`run` 为 -1 = 拿不到开工时刻 ⇒ 显示 `?` ✓（不编造假分钟数 ✗）
+            print(f"[引擎] PID {p['pid']}  已运行 {'?' if p['run'] < 0 else p['run']} 分钟  "
                   f"内存 {p['mem']} MB  -> 运行中")
     elif procs and 'err' in procs[0]:
         print(f"[引擎] 进程查询失败: {procs[0]['err']}")

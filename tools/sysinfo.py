@@ -6,8 +6,7 @@
   ⇒ ★ 启动前必须确认内存够，否则会**互相挤爆（OOM）** ✗
 """
 import os
-import subprocess
-import sys
+import sys            # ★ 2026-09-29：subprocess 随 wmic/PowerShell 一起下岗（死码 ✗）
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 
@@ -28,14 +27,12 @@ else:
     print('  ⇒ 单引擎约需 6~9 GB ⇒ 可用内存最多支持约 **%d** 个引擎并行'
           % max(int(_s['avail_gb'] / 9), 0))
 
-try:
-    out = subprocess.run(['wmic', 'cpu', 'get', 'NumberOfCores,NumberOfLogicalProcessors', '/format:list'],
-                         capture_output=True, text=True, encoding='utf-8', errors='replace')
-    for l in (out.stdout or '').splitlines():
-        if l.strip():
-            print('  CPU %s' % l.strip())
-except Exception as e:
-    print('  CPU ✗ %r' % (e,))
+# ★ 2026-09-29（§1.40.3 可移植性平台化）：改用 `os.cpu_count()` ✓
+#   （原为 `wmic cpu get NumberOfCores,NumberOfLogicalProcessors` ✗ —— wmic 是 Win32 专有，
+#    且在新版 Windows 上**已被移除** ✗）
+#   ⚠ 如实记账：这**只报逻辑核** ✗（物理核要 wmic / psutil —— 本工具不再依赖它们 ✓，
+#     想看物理核请用别的工具 ✓）。
+print('  CPU 逻辑核数：%s' % (os.cpu_count() if os.cpu_count() else '?'))
 
 print()
 print('=' * 90)

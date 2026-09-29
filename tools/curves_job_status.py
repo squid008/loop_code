@@ -15,9 +15,8 @@ import io
 import json
 import os
 import re
-import subprocess
 import sys
-import time
+import time            # ★ 2026-09-29：subprocess 随 wmic 一起下岗（死码 ✗）
 
 try:
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -26,7 +25,9 @@ except Exception:                                        # noqa: BLE001
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
+sys.path.insert(0, os.path.join(ROOT, 'engine'))
 from factor_curves import ALLSTY_CAL                      # noqa: E402  ★ 口径标记单一来源
+import os_compat as _OC                                    # noqa: E402  ★ 2026-09-29（§1.40.3）
 
 
 def _read_any(path):
@@ -58,27 +59,28 @@ def _tail(path, pat, n=1):
 
 
 def _procs():
-    """在跑的 python 进程（用 wmic 更省事；拿不到就返回空 —— 状态脚本**不该因为查不到进程就挂** ✗）"""
-    try:
-        out = subprocess.run(['wmic', 'process', 'where', "name like '%python%'",
-                              'get', 'ProcessId,CommandLine', '/format:list'],
-                             capture_output=True, text=True, timeout=30,
-                             errors='replace').stdout
-    except Exception:                                     # noqa: BLE001
-        return {}
+    """在跑的 python 进程分类计数：`{'curves','mine','sched'}` ✓。
+
+    ★ 2026-09-29（`loop_todo §1.40.3` 可移植性平台化）：原实现调 `wmic`（Win32 专有 ✗，
+      而且 `wmic` 在新版 Windows 上**已被移除** ✗ ⇒ 迟早查不到）⇒ 改走 `os_compat.list_procs()` ✓，
+      分类判据**逐条照旧** ✓（`factor_curves` / `run_tracks|parallel_runner` / `loop_engine` ✓）。
+    ⚠ 一处**行为修正**（据实记明 ✓）：旧实现在异常时 `return {}` ✗，而调用方紧接着
+      `q['curves']` ⇒ **会 KeyError 崩掉** ✗✗（与函数自己的注释"状态脚本不该因为查不到进程就挂"
+      自相矛盾 ✗）⇒ 现在**返回全 0** ✓（照它所声明的意图 ✓，不再崩 ✓）。
+    """
     res = {'curves': 0, 'mine': 0, 'sched': 0}
-    cur = ''
-    for ln in out.splitlines():
-        ln = ln.strip()
-        if ln.startswith('CommandLine='):
-            cur = ln[12:]
-        elif ln.startswith('ProcessId='):
-            if 'factor_curves' in cur:
-                res['curves'] += 1
-            elif 'run_tracks' in cur or 'parallel_runner' in cur:
-                res['sched'] += 1
-            elif 'loop_engine' in cur:
-                res['mine'] += 1
+    try:
+        rows = _OC.list_procs()
+    except Exception:                                     # noqa: BLE001
+        return res
+    for p in rows:
+        cur = p.get('cmd') or ''
+        if 'factor_curves' in cur:
+            res['curves'] += 1
+        elif 'run_tracks' in cur or 'parallel_runner' in cur:
+            res['sched'] += 1
+        elif 'loop_engine' in cur:
+            res['mine'] += 1
     return res
 
 
@@ -122,9 +124,7 @@ def main():
     # ★ 2026-09-29（§1.40.3 可移植性平台化）：内存查询搬进 `engine/os_compat.py` ✓
     #   （原来那 12 行 ctypes 是 Win32 专有 ✗；契约：取不到 ⇒ None ⇒ 这行就不打印 ✓ 与原来同 ✓）
     try:
-        sys.path.insert(0, os.path.join(ROOT, 'engine'))
-        import os_compat as _OC
-        _s = _OC.mem_status()
+        _s = _OC.mem_status()          # ★ 模块级已 import（见文件头 ✓，不再这里重复 import ✗）
         if _s is not None:
             print('  内存：可用 %.1f GB / 共 %.1f GB' % (_s['avail_gb'], _s['total_gb']))
     except Exception:                                     # noqa: BLE001

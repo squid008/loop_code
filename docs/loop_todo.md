@@ -890,6 +890,24 @@ stdout **归一化后 0 差异** ✓✓（比①还干净 ✓）。
 
 #### 1.40.3 可移植性：真卡住的只有 **3 件事 / 9 个文件**（其余已平台化 ✓）
 
+> ★★ **2026-09-29 收官（v1.33.0）**：**全部收进 `engine/os_compat.py` 了** ✓ ⇒ 现在有一条
+> **可机器检查的不变量** ✓：**全仓库专有代码只剩 `os_compat` 的 Windows 分支** ✓
+> （常驻守门 **`tools/_test_win32_residue.py`** ✓ —— 已进全量回归 ✓，以后谁再散落一处，
+> **发版守门当场报出来** ✓；它自带"判据自证"两条 ⇒ 证明自己**有鉴别力** ✓，不是写死了的"零违规" ✓）。
+> **本版替换的 6 处**：`loop_status.running_engine()` ✓ · `loop_watch.is_engine_running()`＋`already_running()`
+> （新增 `_count_procs(need, forbid)` ✓，判据逐条对齐 ✓，顺带去掉 `shell=True` ✗）·
+> `tracks_status` 引擎列表＋可用内存 ✓ · `horizon_admit_write` 安全闸 ✓；
+> **顺手 5 处** ✗：`curves_job_status`（`wmic` ✗）· `factor_curves._pid_alive`（`tasklist` ✗ ⇒ `OC.alive()` ✓）·
+> `sysinfo` CPU（`wmic` ✗ ⇒ `os.cpu_count()` ✓）· `_verify_port_change` · `_test_dynamic_add` ✓。
+> ★ **证据**：① **旧 PS ←→ 新 Python 逐条对拍** `ai_test/_chk_proc_dual.py` ✓ ——
+> **造合成进程**（`loop_engine --mine_pool=999` ✓）让池视角/all 视角（含**负向前瞻** ✗）
+> 都真走到，**新旧完全一致** ✓；② 不变量脚本 ⇒ 只剩 `os_compat` 5 处 Windows 分支 ✓；
+> ③ 四个工具真跑冒烟 ✓；④ 名字守门 0 处 ✓。
+> ⚠ **如实记账**（详见 `change_log [1.33.0]` 第四/五节 ✗）：三处**开发工具输出微调**（故记 MINOR ✓）；
+> `ai_test/` 下一次性筛查脚本仍有 PS ✗（scratch，不进正式路径 ✓）；
+> **无 Linux 机 ⇒ POSIX 分支仍未真机验证** ✗ ⇒ **仍不宣称"可移植性达标"** ✗
+> —— 真要跑 Linux 时，还需一台 Linux 机把 POSIX 分支 + 看板端到端过一遍 ✓。
+
 | 类型 | 位置 | 备注 |
 |---|---|---|
 | **杀进程** `taskkill` | `dashboard/api/app/mine.py` ×3（+3 个测试脚本） | 需 `kill -TERM/-KILL` 分支 |

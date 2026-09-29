@@ -8,9 +8,8 @@
 import io
 import os
 import re
-import subprocess
 import sys
-import time
+import time                # ★ 2026-09-29：subprocess 随两处 PS 查询一起下岗（死码 ✗）
 
 try:
     sys.stdout.reconfigure(encoding='utf-8', errors='replace')
@@ -31,6 +30,11 @@ LOGD_CANDS = [os.path.join(ROOT, 'ai_test', '_tracks'),   # 现址（与 run_tra
               os.path.join(ROOT, 'ai_test', '_night')]    # 更早的夜间跑
 LOGD = next((d for d in LOGD_CANDS if os.path.isdir(d)), LOGD_CANDS[0])
 sys.path.insert(0, os.path.join(ROOT, 'engine'))
+import os_compat as OC                                                        # noqa: E402
+# ★ 2026-09-29（`loop_todo §1.40.3` 可移植性平台化）：本文件原有两段 Win32 专有查询 ✗ ——
+#   ① 进程列表 `Get-CimInstance Win32_Process`（看"正在跑的引擎" ✓）
+#   ② 可用内存 `Get-CimInstance Win32_OperatingSystem | FreePhysicalMemory` ✓
+#   ⇒ 都改走 `os_compat`（**Windows 分支逐字搬** ✓，POSIX 分支新增 ✓）
 
 
 def bank_counts():
@@ -137,17 +141,18 @@ def main():
 
     # 3) 正在跑的池
     print('\n[3] 正在跑的引擎（看 mine_pool 参数）')
-    ps = ("Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -and "
-          "($_.CommandLine -match 'loop_engine|run_tracks') } | "
-          "ForEach-Object { $_.ProcessId.ToString() + '  ' + $_.CommandLine }")
+    # ★ 2026-09-29（§1.40.3）：改走 `os_compat.list_procs()` ✓ —— Windows 分支仍是同一句 PS ✓，
+    #   POSIX 换成 `ps` ✓；过滤在 Python 里做、判据与原 PS 的 `-match 'loop_engine|run_tracks'` 一致 ✓。
+    #   ⚠ 一处**有意的收窄**（据实记明 ✓）：原 PS 未限进程名 ⇒ 连**命令行里含这俩词的 shell 包装进程**
+    #     也会列出来 ✗；现在只列 python 进程 ✓（那正是我们关心的 ✓，包装进程纯噪音 ✓）。
     try:
-        out = subprocess.run(['powershell', '-NoProfile', '-Command', ps],
-                             capture_output=True, text=True, encoding='utf-8',
-                             errors='replace',
-                             creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                                            if os.name == 'nt' else 0)).stdout.strip()
-        print('\n'.join('    ' + x[:150] for x in out.splitlines()) if out
-              else '    (无)')
+        rows = [p for p in OC.list_procs()
+                if 'loop_engine' in (p.get('cmd') or '') or 'run_tracks' in (p.get('cmd') or '')]
+        if rows:
+            for p in rows:
+                print('    ' + ('%s  %s' % (p.get('pid'), p.get('cmd') or ''))[:150])
+        else:
+            print('    (无)')
     except Exception as e:
         print('    查询失败:', type(e).__name__, e)
 
@@ -183,15 +188,15 @@ def main():
             print('    ' + gen_progress(os.path.join(LOGD, f)))
 
     # 7) 内存
+    # ★ 2026-09-29（§1.40.3）：改走 `os_compat.mem_status()` ✓（原为 Win32 的
+    #   `Get-CimInstance Win32_OperatingSystem | FreePhysicalMemory` ✗）。单位仍是 **GB** ✓
+    #   （旧写法拿的是 kB ÷ 1e6 ✓；新写法直接是 GB ✓ —— 显示同为 `{:.1f} GB` ✓）。
+    #   ⚠ POSIX 分支读 `/proc/meminfo` 的 `MemAvailable` ✓（与 Windows 的"可用物理内存"口径
+    #     不完全等价 ✗，本机无 Linux ⇒ **未真机验证** ✗，见 `os_compat` 顶部说明 ✓）。
     try:
-        o = subprocess.run(['powershell', '-NoProfile', '-Command',
-                            'Get-CimInstance Win32_OperatingSystem | '
-                            'Select-Object -ExpandProperty FreePhysicalMemory'],
-                           capture_output=True, text=True,
-                           creationflags=(getattr(subprocess, 'CREATE_NO_WINDOW', 0x08000000)
-                                          if os.name == 'nt' else 0)).stdout.strip()
-        if o.isdigit():
-            print('\n[7] 可用内存 {:.1f} GB'.format(float(o) / 1e6))
+        _m = OC.mem_status()
+        if _m is not None:
+            print('\n[7] 可用内存 {:.1f} GB'.format(_m['avail_gb']))
     except Exception:
         pass
     return 0

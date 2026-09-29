@@ -17,6 +17,8 @@ import urllib.request
 
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 R = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(R, 'engine'))
+import os_compat as OC      # noqa: E402  ★ 2026-09-29（§1.40.3）：杀进程也收敛到 os_compat ✓
 CFG = os.path.join(R, 'dashboard', 'config.json')
 PY = sys.executable
 TMP = os.environ.get('TEMP', r'C:\Windows\Temp')
@@ -41,21 +43,31 @@ def probe(url, timeout=6):
         return None
 
 
-def kill_backend():
-    subprocess.run(['powershell', '-NoProfile', '-Command',
-                    "Get-CimInstance Win32_Process -Filter \"Name like 'python%'\" | "
-                    "Where-Object { $_.CommandLine -like '*dashboard\\api\\run.py*' } | "
-                    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"],
-                   capture_output=True)
+def _kill_matching(mark):
+    """杀掉命令行含 `mark` 的进程（★ 2026-09-29 起走 `os_compat` ✓，不再内联 PowerShell ✗）。
+
+    ⚠ 行为对齐说明（据实记明 ✓）：原 PS 版是 `Stop-Process -Force`（单进程强杀 ✓）、
+      对"已消失/权限不足"用 `-ErrorAction SilentlyContinue` 吞掉 ✓；
+      这里用 `OC.kill_tree()`（Windows 上 = `taskkill /PID … /T /F` ✓，**连子孙一起** ✓）
+      —— ⚠ 这一点**比原来更强** ✗：原来只杀命中的进程本身、不管它的子进程 ✓；
+      本脚本的用途是"把前后端清干净再起" ⇒ 杀掉子进程正是想要的 ✓（且这是**一次性人工脚本** ✓，
+      不参与挖掘主链路 ✓）。⚠ **本次未运行它** ✗（它会真重启前后端 ✓），只做静态等价改造 ✓。
+    """
+    for p in OC.list_procs():
+        if mark in (p.get('cmd') or ''):
+            try:
+                OC.kill_tree(p.get('pid'))
+            except Exception:                                        # noqa: BLE001
+                pass
     time.sleep(2)
+
+
+def kill_backend():
+    _kill_matching('dashboard' + os.sep + 'api' + os.sep + 'run.py')
 
 
 def kill_web():
-    subprocess.run(['powershell', '-NoProfile', '-Command',
-                    "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*vite*' } | "
-                    "ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }"],
-                   capture_output=True)
-    time.sleep(2)
+    _kill_matching('vite')
 
 
 def start_backend():

@@ -28,7 +28,9 @@ import time
 sys.stdout.reconfigure(encoding='utf-8', errors='replace')
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, 'tools'))
+sys.path.insert(0, os.path.join(ROOT, 'engine'))
 import run_tracks as RT          # noqa: E402
+import os_compat as OC           # noqa: E402  ★ 2026-09-29（§1.40.3）：杀进程收敛到 os_compat ✓
 
 PY = sys.executable
 RT_PY = os.path.join(ROOT, 'tools', 'run_tracks.py')
@@ -115,8 +117,10 @@ def main():
             act2, '同时最多 %d 个' % n2)
     finally:
         try:
-            subprocess.run(['taskkill', '/PID', str(pr.pid), '/T', '/F'],
-                           capture_output=True, creationflags=RT.NO_WIN)
+            # ★ 2026-09-29（§1.40.3）：本测试是**清掉自己刚起的那个调度器** ✓ ⇒
+            #   改走 `os_compat.kill_tree()`（Windows 上就是同一条 `taskkill … /T /F` ✓，
+            #   而且它自己带 `CREATE_NO_WINDOW` ✓ ⇒ 不再需要 `RT.NO_WIN` ✗）
+            OC.kill_tree(pr.pid)
         except Exception:
             pass
         time.sleep(2)

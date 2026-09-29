@@ -28,6 +28,90 @@
 > ⚠ **归档动作（2026-09-29）**：本文件头部承诺"只保留最近 15 个版本" ✓，而当时已累积 **16 条** ✗（约定只在 v1.24.0 执行过一次 ⇒ 之后每版漂一格 ✗）
 > ⇒ 已把最旧的 1 条**整段原文**搬进 `history/change_log_archive.md` ✓（逐字校验 ✓：条目数 旧 = 新 + 搬走、无重复、版本号集合不变 ✓）。
 
+> ⚠ **归档动作（2026-09-29）**：本文件头部承诺"只保留最近 15 个版本" ✓，而当时已累积 **16 条** ✗（约定只在 v1.24.0 执行过一次 ⇒ 之后每版漂一格 ✗）
+> ⇒ 已把最旧的 1 条**整段原文**搬进 `history/change_log_archive.md` ✓（逐字校验 ✓：条目数 旧 = 新 + 搬走、无重复、版本号集合不变 ✓）。
+
+---
+
+## [1.33.0] — 2026-09-29
+
+> 主题：**可移植性平台化「收尾」** —— 把上一版留下的 **6 处** PowerShell/Win32 专有查询
+> **全部收进 `engine/os_compat.py`** ✓，于是有了一条**可机器检查的不变量** ✓：
+> 「全仓库专有代码只剩 `os_compat` 的 **Windows 分支** ✓（Linux 走它的 POSIX 分支 ✓）」
+> ⚠ **引擎数值路径零改动** ✓（本版没碰 `loop_engine`/`loop_eval`/`loop_l1`/`loop_l2` ✗）；
+> 三处**开发工具**的输出细节有微调 ⇒ 按 SemVer **MINOR** 如实记 ✓（逐条列在第四节 ✗）。
+
+### 一、为什么要收尾（上一版留下的账）
+
+v1.32.0 已把「可用内存 / 列进程 / 杀进程 / 判存活」四件收敛进 `os_compat` ✓，并替换 5 个文件 ✓；
+但当时**如实记账**还剩 4~6 处 PS 查询在调用方各自拼字符串 ✗（`loop_status` · `loop_watch` **×2** ·
+`tracks_status` **×2** · `horizon_admit_write` ✓）——它们的**输出字段各不相同** ✗，
+所以不能"换个函数名"了事，得逐处改**消费端** ✓。本版就是把这些账结清 ✓。
+
+### 二、本版替换的 6 处（+ 顺手 3 处同源残留 ✗）
+
+| 文件 | 原实现 | 现在 |
+|---|---|---|
+| `engine/loop_status.py` `running_engine()` | `Get-CimInstance … -match 'loop_engine'` ⇒ `{pid, run, mem}` | `OC.list_procs()` + Python 侧过滤 ✓（**字段不变** ✓） |
+| `engine/loop_watch.py` `is_engine_running()` | 同上 + **`shell=True`** ✗ ⇒ 只要**个数** | 新增 `_count_procs(need, forbid)` ✓（判据逐条对齐 ✓） |
+| `engine/loop_watch.py` `already_running()` | 同上（`loop_watch`/`--pool`）| 同上 ✓（**`> 1` 含自身** 的语义照旧 ✓） |
+| `tools/tracks_status.py` 引擎列表 | `Get-CimInstance … -match 'loop_engine\|run_tracks'` | `OC.list_procs()` ✓ |
+| `tools/tracks_status.py` 可用内存 | `Win32_OperatingSystem \| FreePhysicalMemory` ✗ | `OC.mem_status()` ✓ |
+| `tools/horizon_admit_write.py` 安全闸 | PS 取 pid 列表 | `OC.list_procs()` ✓ |
+| （顺手 ✗）`tools/curves_job_status.py` | **`wmic`** ✗ 进程表 | `OC.list_procs()` ✓ |
+| （顺手 ✗）`tools/factor_curves.py` `_pid_alive` | `tasklist /FI "PID eq …"` ✗ | `OC.alive()` ✓（**同一条设计** ✓） |
+| （顺手 ✗）`tools/sysinfo.py` CPU 核数 | **`wmic cpu get …`** ✗ | `os.cpu_count()` ✓ |
+| （顺手 ✗）`tools/_verify_port_change.py` | PS `Stop-Process` | `OC.kill_tree()` ✓ |
+| （顺手 ✗）`tools/_test_dynamic_add.py` | 裸 `taskkill`（清自己起的调度器） | `OC.kill_tree()` ✓ |
+
+★ **两条"值得单独说"的**：
+1. `factor_curves._pid_alive` 的 docstring 里存着一条**血泪教训** ✓：_"不能用 `os.kill(pid, 0)` ——
+   Windows 上它**会真的杀进程**"_ ✗ —— 而 `os_compat.alive()` **正是同一条设计** ✓（Windows 用
+   `tasklist` ✓、POSIX 才用 `os.kill(pid,0)` ✓）⇒ 那条教训**没丢** ✓，只是不再散落在各处 ✗；
+2. `curves_job_status._procs()` 原来在异常时 `return {}` ✗，而调用方紧接着 `q['curves']` ⇒
+   **会 KeyError 崩掉** ✗✗（与它自己注释里写的"状态脚本不该因为查不到进程就挂"**自相矛盾** ✗）
+   ⇒ 现改为**返回全 0** ✓（照它声明的意图 ✓）。⚠ 这是一处**行为修正**，如实记账 ✗。
+
+### 三、验证（★ 逐条对拍，不是"看着对"）
+
+1. ★★ **旧 PS 版 ←→ 新 Python 版「逐条对拍」**（`ai_test/_chk_proc_dual.py` ✓，**全过** ✓）：
+   空跑对拍没意义 ✗（没有引擎时两边都是 0 ✓）⇒ 脚本**造一个合成进程**（命令行带
+   `loop_engine --mine_pool=999` ✓）让三条判据都真的走到 ✓：
+   · 池视角：旧 == 新 == 基线 + 1 ✓；
+   · **all 视角：必须排除它** ✓ —— 旧 PS 的负向前瞻 `--mine_pool=(?!all)` 最容易实现错 ✗，
+     对拍确认新旧一致（都 0 ✓）✓；
+   · `curves_job_status._procs()` 认得出它是"挖矿"（`{'mine': 1}` ✓）；
+   · `is_engine_running()` 池视角 True / all 视角 False ✓；
+   · 杀掉后两边都回落一致 ✓。
+2. ★★ **常驻守门**（`tools/_test_win32_residue.py` ✓ ⇒ **已进全量回归** ✓）：扫
+   `engine/`+`tools/`+`dashboard/`（排除注释与说明文字 ✓，判据按**命中位置** ✓）⇒
+   **只剩 `engine/os_compat.py` 的 5 处 Windows 分支** ✓✓
+   ⇒ 以后谁再散落一处，**发版守门当场报出来** ✓（不再依赖"记得别写" ✗）。
+   守门自带两条**判据自证** ✓（喂一行专有代码 ⇒ 必须判违规 ✓；喂一行注释 ⇒ 必须判说明文字 ✓）
+   —— 否则"零违规"可能是判据写死了 ✗（本项目一贯要求守门先证明自己有鉴别力 ✓）。
+3. **冒烟**：`loop_status.py` / `tracks_status.py` / `sysinfo.py` / `curves_job_status.py` 各真跑一次 ✓
+   （输出正常 ✓、`[3] 正在跑的引擎` 正确显示"无" ✓、CPU 逻辑核 12 ✓）。
+4. `tools/_test_undefined_names.py` ⇒ **0 处** ✓（181 文件）· `_audit_deadcode`（清掉 4 个变死的 import ✓）·
+   `tools/release_check.py`（**55/55**）✓。
+
+### 四、⚠ 如实记账：三处**开发工具的可观察微调**（故本版记 MINOR ✗）
+
+1. `tracks_status` 的进程列表**有意收窄** ✗：原 PS 不限进程名 ⇒ 连**命令行里含这俩词的 shell 包装进程**
+   也会列出来 ✗；现在只列 python 进程 ✓（那正是不关心的 ✓，包装进程是噪音 ✓）。
+2. `sysinfo` 的 CPU 只报**逻辑核** ✗（原 `wmic` 还给物理核 ✓）—— wmic 在新版 Windows 上**已被移除** ✗，
+   换 `os.cpu_count()` 顺带修了这个隐患 ✓；想看物理核请用别的工具 ✓。
+3. `horizon_admit_write` 的"安全闸"**原样保留** ✓：查询失败时 `running=[]` ⇒ **放行** ✓ ——
+   本版**照旧** ✗（改成"查询失败即拒写"更安全 ✓，但那是**行为变化** ✗，得单独决定 ✓，已在注释里写明 ✓）。
+
+### 五、⚠ 未做 / 不在范围内（不许当成已做 ✗）
+
+* **`ai_test/` 下一次性的排查脚本**（`_kill_mine.py` · `_measure_parallel_mem.py` · `_memprof_1000.py` ·
+  `_probe_dynamic_add.py` · `_watch_mining.py` ✓）里仍有 PS/`taskkill` ✗ —— 它们是一次性 scratch ✓
+  **不进正式路径** ✓（不变量脚本已按设计排除该目录 ✓）；要用它们请先自己改 ✓。
+* **无 Linux 机 ⇒ POSIX 分支仍未真机验证** ✗（`os_compat` 顶部与每个函数都写明了这一点 ✓，
+  **不假装验证过** ✗）。⇒ 本版**仍不宣称"可移植性达标"** ✗：真正要跑 Linux 时，
+  还需一台 Linux 机把 `os_compat` 的 POSIX 分支 + 看板端到端过一遍 ✓。
+
 ---
 
 ## [1.32.0] — 2026-09-29
@@ -993,94 +1077,6 @@ v1.30.0 的验收文字引用的是 `ai_test/_ab/after3`（＋ `base3` ✓），
 - **工程纪律 9 → 8**：`v1.23.0` **验收不完整**（Step 4 漏了同 seed A/B）⇒ 发版即崩 ✗（现已补规则 ✓）
 
 ⇒ 综合 **6.4 → 7.4**（59 / 8 = 7.375）；结构短板（巨型文件/God function）确实已补齐 ⇒ 分数较基线仍显著上升 ✓
-
----
-
-## [1.23.0] — 2026-09-26
-
-> 主题：**易维护性整治上线（L1 死码清理 → L2 大函数拆分 → L3 上帝模块拆分）**
-> —— **纯结构改动，引擎行为逐字不变**（每步都用「同 seed 复跑 + `state` 逐字段对照」守住）
-
-### 背景
-
-2026-09-25 全项目体检结论：**「纪律/测试 A 级、结构 C 级的高质量单体」** —— 八维评分综合 **≈6.4/10**，
-短板全在**结构**（单点巨人 `loop_engine.py` 3917 行 · `run()` 单个函数 1079 行 · 加 1 个算子要同步 10 处）。
-本次按 `docs/maintainability.md` 的 **R1~R8** 规则分三轮整治（**未验收不进下一步**）。
-
-### L1 死代码清理（净删约 856 行）
-
-- `factor_miner.py` 删 6 个零引用旧实现（`ts_decay` / `evaluate_dual` / `fmt_dual` /
-  `run_round_real` / `load_lib` / `save_lib`）
-- `loop_engine.py` 删 6 个死 pandas 老算子（`ts_std` / `ts_sum` / `ts_rank` / `ts_corr` / `ts_max` / `ts_min`，−28 行）
-  ★ 死/活判定以 `ops_registry.py` 为**唯一事实源**（`ts_delay`/`ts_delta` 绑 `'le'` ⇒ 活；`ts_mean` 被去相关闸门直接调 ⇒ 活）
-- 删 `engine/ml_common.py`（共享数据层，live 代码无人 import）+ 5 个归档研究脚本
-  ★ **教训**：删任何"疑似死码"前，`grep` 要**连 `history/` 归档一起搜**（`_audit_deadcode` 只扫 `engine/tools/standard`）
-
-### L2 次级大函数拆分（行为不变）
-
-| 函数 | 前 | 后 | 做法 |
-|---|---|---|---|
-| `run_tracks.main` | 433 | **76** | 抽 `_parse_args`(191) + `_rotate_schedule` / `_finalize_schedule` |
-| `factor_curves.main` | 370 | **42** | 抽 7 个纯函数 + 模块级 `_path` |
-| `combo_constrain.run` | 369 | **10** | 抽 `_parse_args`/`_load_and_prep`/`_simulate`/`_report` |
-| `combo_build.main` | 304 | **40** | 抽 7 个纯函数（顺带删死 import `datetime`）|
-| `parallel_runner.run` | 390 | **344** | 抽 `_setup_parallel`/`_cleanup_parallel`（调度状态机保留）|
-| `loop_critic.suggest` | 308 | **207** | 抽 `_init_sug`/`_apply_rules`/`_finalize_sug`（闭包网 ctx 化留第二步）|
-
-### L3 上帝模块拆分（★ 本次大头）
-
-- **Step 1**：`Node` + `collect` → `engine/loop_expr.py`（顺带根治「一份代码里并存两个 `Node` 类」，82 个 `import loop_engine as LE` 全透明）
-- **Step 2**：拆段落模块 —— `loop_dims`（跨量纲审查）· `loop_faillib`（失败模式库）·
-  `loop_ops`（算子表接线）· `loop_gen`（亲本选择/变异/交叉）· `loop_llm_guide`（LLM 引导解析）+ 骨架/结构族并入 `loop_expr`
-- **Step 3**：`run()` **ctx 化**拆 5 个子步骤（`_run_prepare` / `_run_gen` / `_run_l1_phase` / `_run_l2_phase` / `_run_finalize`）
-  ⇒ **`run()` 1079 → 10 行**纯编排
-- **Step 4**：文件级拆分 ⇒ `loop_paths`（路径常量 + `MINE_POOL`）· `loop_cache`（缓存 + L1 状态）·
-  `loop_data`（面板构造）· `loop_persist`（落盘 + 库文档同步）· `loop_eval`（评估/审查/生成辅助）·
-  `loop_stage`（9 个阶段函数）⇒ **`loop_engine.py` 3917 → 619 行**（只剩 `run()` 8 行编排 + import + argparse + main）
-
-**成果**：**`>1500 行巨型文件 1 → 0 个`** · **`>300 行函数 6 → 2 个`**；
-引擎拆成 **12 个单一事实源模块**，依赖**严格单向（无环）**：
-`loop_engine` → `loop_stage` →（`loop_eval`/`loop_persist`/`loop_data`/`loop_cache`/`loop_paths`/`loop_gen`/`loop_dims`/`loop_faillib`/`loop_llm_guide`）→ `loop_expr`/`loop_ops`。
-
-### 验证（★ 每步都做，不是最后补的）
-
-- 每步 `py_compile` + **同 `seed=777` 复跑 + `state` 逐字段对照**
-  （`bank` / `seeds` / `cfg` / `fail_lib` / `fsa` / `last_l1` / `last_l2` 全 OK；
-  ★ 对照方法：`Node` 用 `str(node)` **值比对** —— `==` 是身份比较会**假阳性**）
-- 全量回归 **51/51**（含端到端真跑）；`_audit_deadcode` 的「彻底无引用」除动态注册例外已清零
-
-### 顺带修的既有隐患（只有完整跑 `run()` 才暴露，`--gen_only` 冒烟覆盖不到）
-
-- `loop_llm` 未绑定（`--llm_guide=off` 时崩）· `_agg_style_diag` 死透传 `_k` 未绑定
-- 4 个死透传兜底（`k` / `v` / `_v` / `f`）—— ctx 化后它们的兜底赋值点移走了，显式给 `None`
-- **3 个「值拷贝陷阱」全部规避**：`_P.STATE` / `_P.MINE_POOL` / `_C.VCACHE` / `_FM.FWD` 一律
-  **模块引用运行时取**（`import X as _P` + `_P.X`），**不再 `from X import CONST`**
-  （同 `FWD` / `LLM_MAX_SIZE` 踩过的坑：`from` 是 import 时值拷贝，运行期改不到）
-
-### 重打分（八维 · 2026-09-26 发版时重评；口径 = 八项**简单平均**，与 09-15 基线同口径）
-
-| 维度 | 09-15 | **09-26** | 依据 |
-|---|---|---|---|
-| 功能性 | 8 | **8** | 行为逐字不变，功能未增减 |
-| 可测试性 | 8 | **9** | 51 条守门 + 每步 seed 对照法 + 模块可独立 `py_compile`/单测 |
-| 工程纪律 | 9 | **9** | 一功能一提交 + 编码自检（0 U+FFFD）+ 台账 |
-| 性能 | 6 | **6** | 未做性能优化（重构要求行为不变）|
-| 可读性 | 6 | **8** | God function 消失、`run()` 8 行、模块单一职责；⚠ 扣分项见下 |
-| 可移植性 | 5 | **7** | 路径全 `__file__` 派生 + `loop_paths` 单一来源 |
-| 文档 | 5 | **6** | 规则 + 台账 + README 同步；`change_log` 偏流水 |
-| 可维护性 | 4 | **8** | 3917→619 行 · 12 模块 · 依赖单向 · R1~R8 落地；⚠ 扣分项见下 |
-| **综合** | **6.4** | **7.6** | 结构短板补齐（8 项简单平均：61/8 = 7.625）|
-
-⚠ **诚实的剩余（扣分项，不假装满分）**：`loop_stage.py` 现为 **1332 行** ——
-① **违 R2**（新文件应 ≤800）；② 其中 **6 个函数仍超 R1**（`_run_l2_phase` 248 · `_run_l1_phase` 197 ·
-`_l1_eval` 173 · `_run_prepare` 150 · `_run_gen` 134 · `_l1_filter` 132）。
-它们是「深度耦合的单候选处理 + 20 个口径参数」，抽纯函数会**参数爆炸**
-（试拆 `_l2_judge` 已确认 13 参数 ⇒ **回退**）。
-⇒ **`loop_engine.py` 文件级达标（≤800 ✓），函数级收益递减，本轮在此收口** ✓
-
-### 规则落地
-
-- 新增 `docs/maintainability.md`（**R1~R8 唯一规则源** + 违规台账 + 执行方案 L0~L3）
 
 ---
 
