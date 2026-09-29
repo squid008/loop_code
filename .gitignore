@@ -124,3 +124,6 @@ history/codebuddy_nested_20260915/
 # ★ 批量改数据时的**临时备份**（2026-09-25：`docs/*.bak_before_*` 曾出现在 git status ✗）
 #   备份本身有用（要能回滚 ✓），但**不该入库** —— 统一放 ai_test/ 或就地忽略 ✓
 *.bak_before_*
+
+# ★ 本机专属配置（含飞书 app_secret 等密钥 ✗ 绝不入库）：
+config.local.json
