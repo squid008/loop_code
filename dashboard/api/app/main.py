@@ -8,6 +8,7 @@
        uvicorn app.main:app --port <n>       （手动，n 要与 config.json 一致）
 文档:  http://<host>:<port>/docs
 """
+import io
 import os
 import sys
 import time
@@ -41,6 +42,33 @@ app.add_middleware(
     allow_methods=['*'],
     allow_headers=['*'],
 )
+
+# ================================================================ ★ 慢请求日志（2026-10-01）
+# **为什么加**：用户 2026-09-30 报前端弹「signal is aborted without reason」✗ —— 那是
+#   **前端自己的定时器把请求取消了** ✓（GET 30/40 秒 · POST 60 秒，见 `web/src/api.ts` ✓），
+#   而后端**当时没有任何请求耗时记录** ✗ ⇒ 只能靠猜"到底是哪个请求慢了" ✗。
+# **加了以后**：凡耗时 **≥ 2 秒** 的请求都会在 `ai_test/_tracks/_api_slow.log` 留一行
+#   （时间 / 方法 / 路径 / 状态 / 耗时）✓ ⇒ 下次再出现就能**直接指名** ✓，不必再猜 ✗。
+# ⚠ 只写一行文本、异常**全吞** ✓ —— **绝不允许**它影响任何请求 ✗（日志失败就当没发生 ✓）。
+_SLOW_S = 2.0
+_SLOW_LOG = os.path.join(settings.PROJECT_ROOT, 'ai_test', '_tracks', '_api_slow.log')
+
+
+@app.middleware('http')
+async def _log_slow_request(request, call_next):
+    _t0 = time.time()
+    resp = await call_next(request)
+    _dt = time.time() - _t0
+    if _dt >= _SLOW_S:
+        try:
+            os.makedirs(os.path.dirname(_SLOW_LOG), exist_ok=True)
+            with io.open(_SLOW_LOG, 'a', encoding='utf-8') as f:
+                f.write('%s %-5s %-34s %s  %.2fs\n' % (
+                    time.strftime('%Y-%m-%d %H:%M:%S'), request.method,
+                    request.url.path, resp.status_code, _dt))
+        except Exception:                                                    # noqa: BLE001
+            pass
+    return resp
 
 
 @app.get('/api/health')

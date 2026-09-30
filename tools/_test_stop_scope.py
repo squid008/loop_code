@@ -86,7 +86,8 @@ def setup(engines, active, cur_pool='50', enabled=None, survive=False):
     LIVE[:] = list(engines)
     FakeSubprocess.survive = survive
     ft = FakeTime()
-    mine.engines = lambda: list(LIVE)                          # ← 看的是"此刻还活着"的 ✓
+    # ★ 2026-10-01：桩要收下 `fresh=` ✓（`stop()` 现在传 `fresh=True` ⇒ 杀谁必须准，见 `_procs` ✓）
+    mine.engines = lambda *a, **k: list(LIVE)                  # ← 看的是"此刻还活着"的 ✓
     mine.ctl = lambda: {'enabled': enabled or ['1000', '300', '50', '500'],
                         'stopped': [], 'curPool': cur_pool,
                         'active': list(active), 'running': True, 'stopAll': False}

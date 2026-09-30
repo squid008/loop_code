@@ -293,16 +293,35 @@ def _alive(pid):
         return None
 
 
-def _procs():
-    core._CACHE.pop('procs', None)
+def _procs(fresh=False):
+    """在跑的、属于本项目的 python 进程（引擎 / 调度器 / 曲线作业）✓。
+
+    ★★ 2026-10-01：**按用途分流** —— 原来这里**无条件** `core._CACHE.pop('procs', None)` ✗：
+
+    · `fresh=False`（默认，**只读轮询**用 ✓）：走 `core.cached` 的 **2 秒缓存** ✓；
+    · `fresh=True`（**启停/等待动作**用 ✓）：先 `pop` ⇒ 立刻真查 ✓。
+
+    ⚠ **为什么要分流**（实测，用户报"signal is aborted without reason"✗）：
+      `/api/mine/state` 每几秒被前端轮询一次 ✓，而它每次都真起一次 **PowerShell** 扫进程 ✗
+      ⇒ 实测 **1.3 秒/次** ✗（机器一忙就顶到前端 40 秒超时 ⇒ 界面弹那句无意义的红条 ✗✗）。
+
+    ⚠ ⚠ **那行 `pop` 不是随手写的** ✗：它是 **2026-09-16 v1.2.0**（"每池一个独立进程 + 修「停止没反应」"）
+      为**"点停止要立刻看见引擎"** 加的 ✓ —— 正确性优先 ✓ ⇒ 本版**没有**删掉这个语义 ✗，
+      只是让**只读路径**不再替它付代价 ✓：启停/等待路径照旧强制刷新 ✓（见 `stop()` / `start()` ✓）。
+    """
+    if fresh:
+        core._CACHE.pop('procs', None)
     raw = core.cached('procs', 2.0, pools.list_processes)
     return [pools.classify_proc(p) for p in raw if not p.get('err')]
 
 
-def scheduler():
-    """★ 找调度器进程：`run_tracks.py` 且**不含 `--no_global`**（旧"每池一进程"模式才带它）。"""
+def scheduler(fresh=False):
+    """★ 找调度器进程：`run_tracks.py` 且**不含 `--no_global`**（旧"每池一进程"模式才带它）。
+
+    :param fresh: 见 `_procs()` ✓（**启停闸门**传 True ✓、**只读展示**用默认 ✓）。
+    """
     out = []
-    for p in _procs():
+    for p in _procs(fresh):
         if p['kind'] != 'driver':
             continue
         cmd = p.get('cmd') or ''
@@ -312,17 +331,21 @@ def scheduler():
     return out
 
 
-def engines():
-    return [p for p in _procs() if p['kind'] == 'engine']
+def engines(fresh=False):
+    """此刻在跑的引擎 ✓（`:param fresh:` 同上 ✓）。"""
+    return [p for p in _procs(fresh) if p['kind'] == 'engine']
 
 
-def engine_of(pool):
+def engine_of(pool, fresh=False):
     """当前正在跑某池的那一代引擎（用于「立即停」只杀它）✓"""
-    return [p for p in engines() if pool in (p.get('pools') or [])]
+    return [p for p in engines(fresh) if pool in (p.get('pools') or [])]
 
 
-def pool_engines(pool, c=None):
+def pool_engines(pool, c=None, fresh=False):
     """★ 池 → 它**此刻在跑**的引擎列表（改「只停这一个池」用）—— **唯一权威口径** ✓
+
+    :param fresh: ★ 2026-10-01：`True` ⇒ **强制真查**（`stop()` 用它 ✓ —— 点是/不是它必须准 ✗）；
+                  `False`（默认）⇒ 用 2 秒缓存（只读展示 ✓，见 `_procs()` ✓）。
 
     ## 为什么需要它（2026-09-19 真事故，用户："我本来就想要跑 3 个池，那 3 个池我不想停呀"）
     原实现用 `curPool == pool` 做兜底，而 **`curPool` = "最后启动过的那个池"** ✗：
@@ -341,8 +364,8 @@ def pool_engines(pool, c=None):
        这与 `state()` 里同一条纪律（宁可少报、不可谎报 ✓）
     """
     c = ctl() if c is None else c
-    live = {p['pid'] for p in engines()}
-    out = list(engine_of(pool))
+    live = {p['pid'] for p in engines(fresh)}
+    out = list(engine_of(pool, fresh))
     seen = {x['pid'] for x in out}
     for a in (c.get('active') or []):
         if not isinstance(a, dict):
@@ -607,7 +630,7 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
         max_parallel = _PR().slot_cap(free0, len(pool_list), mem_per_engine, panel_cache)
         _mp_auto = True
 
-    sched = scheduler()
+    sched = scheduler(fresh=True)        # ★ 2026-10-01：启动闸门 ⇒ **强制真查**（不许吃缓存 ✗）
     if sched:
         # ★★ 已在跑：**启动参数不能热改** ⇒ 与真实命令行不一致就 409（不静默 no-op）✗
         _cmd = ((sched[0].get('cmd') if sched else '') or '')
@@ -763,7 +786,7 @@ def stop(pool=None, **kw):
         #   （如旧进程没传 `--mine_pool`）⇒ 需要第二路来源。**但 2026-09-19 修**：
         #   原第二路用的是 `curPool`（**陈旧标记** ✗，见 `pool_engines` 的说明）
         #   ⇒ 误杀其它池 ✗✗ ⇒ 改用 `pool_engines()`（命令行 + `active` 表，**逐池**归属 ✓）
-        _targets = pool_engines(pool, c)
+        _targets = pool_engines(pool, c, fresh=True)   # ★ 2026-10-01：杀谁必须准 ⇒ 真查 ✗
         _was_mining = bool(_targets)          # ★ 它当时是否在跑（以“有无目标进程”为准）✓
         for p in _targets:
             # ★ 2026-09-29（§1.40.3）：杀进程搬进 `engine/os_compat.kill_tree()` ✓
@@ -779,7 +802,7 @@ def stop(pool=None, **kw):
         #   ⇒ 改成**轮询等待**（最多 5s）：进程真没了就通过，真杀不掉才算失败 ✓
         left = []
         for _ in range(20):
-            left = pool_engines(pool)
+            left = pool_engines(pool, fresh=True)      # ★ 等它真消失 ⇒ 每拍都要真查 ✗
             if not left:
                 break
             time.sleep(0.25)
@@ -806,14 +829,14 @@ def stop(pool=None, **kw):
     # ★ 2026-09-26：全部停 ⇒ 撤掉**所有**过期的"启动即崩"徽标 ✓（理由同 `clear_crashes` ✓）
     clear_crashes()
     killed = []
-    for p in engines():
+    for p in engines(fresh=True):        # ★ 2026-10-01：全部停止 ⇒ 真查（别漏杀 ✗）
         # ★ 2026-09-29（§1.40.3）：同上——杀进程搬进 `engine/os_compat.kill_tree()` ✓
         _rc, _txt = _OC().kill_tree(p['pid'])
         killed.append({'pid': p['pid'], 'kind': 'engine', 'pools': p.get('pools'),
                        'rc': _rc, 'out': (_txt or '').strip()[:160]})
         time.sleep(0.4)
 
-    sched = scheduler()
+    sched = scheduler(fresh=True)        # ★ 2026-10-01：决定"要不要兜底收尾" ⇒ 真查 ✗
     tail = None
     if sched:
         # ★ 调度器在 ⇒ 它读到 `stopAll` 会**自己收尾后退出** ✓（清标记由它负责）
@@ -875,7 +898,7 @@ def start_pool(pool, rounds=None):
     rl = int(rounds if rounds is not None else (c.get('rounds') or DEFAULT_ROUNDS))
     if not (ROUNDS_MIN <= rl <= ROUNDS_MAX):
         raise MineError('轮数必须在 %d~%d 之间（收到 %s）' % (ROUNDS_MIN, ROUNDS_MAX, rounds))
-    if scheduler():
+    if scheduler(fresh=True):            # ★ 2026-10-01：走哪条分支必须准 ⇒ 真查 ✗
         _write_ctl(stopped=st, enabled=en, stopAll=False, rounds=rl)
         return {'ok': True, 'pool': pool, 'enabled': en, 'stopped': st, 'restarted': False,
                 'rounds': rl,                       # ★ 面板要回读"实际生效的上限" ✓
@@ -910,7 +933,7 @@ def start_pool(pool, rounds=None):
 def run_global():
     """跑**一次性全局收尾**（`--rounds=0`）。⚠ 要求当前无任何挖掘在跑。"""
     c = ctl()
-    if scheduler() or engines() or (c.get('running') and (c.get('phase') == 'mine')):
+    if scheduler(fresh=True) or engines(fresh=True) or (c.get('running') and (c.get('phase') == 'mine')):
         raise MineError('仍有挖掘在跑，拒绝收尾（收尾要求无人写），请先全部停止', 409)
     args = [sys.executable, RUN_TRACKS, '--pools=%s' % ','.join(core.POOL_KEYS), '--rounds=0']
     os.makedirs(LOGD, exist_ok=True)

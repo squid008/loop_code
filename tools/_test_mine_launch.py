@@ -122,7 +122,7 @@ def main():
                                        if not k.startswith('_')})
         _ft.sleep = lambda *a: None
         mine.time = _ft
-        mine.scheduler = lambda: []
+        mine.scheduler = lambda *a, **k: []     # ★ 2026-10-01：桩要收下 `fresh=` 参数 ✓（见 `_procs` ✓）
         mine.avail_gb = lambda: 20.0
 
         print('=' * 96)
@@ -202,8 +202,8 @@ def main():
         print('=' * 96)
         _set_ctl({'running': True, 'enabled': ['all'], 'stopped': [], 'rounds': 5,
                   'execMode': 'rotate', 'panelCache': 'off'})
-        mine.scheduler = lambda: [{'pid': 1, 'cmd': 'python tools\\run_tracks.py --pools=all --rounds=5',
-                                   'pools': None}]
+        mine.scheduler = lambda *a, **k: [{'pid': 1, 'cmd': 'python tools\\run_tracks.py --pools=all --rounds=5',
+                                           'pools': None}]
         try:
             mine.start(['all'], rounds=5, exec_mode='parallel', max_parallel=3,
                        mem_per_engine=3.0, panel_cache='off')
@@ -218,7 +218,7 @@ def main():
         print()
         print('【6】★★ 并行数**自动算**（用户："一键启动就全部五池，万一会爆内存就自动少一个池"）')
         print('=' * 96)
-        mine.scheduler = lambda: []
+        mine.scheduler = lambda *a, **k: []     # ★ 2026-10-01：桩要收下 `fresh=` 参数 ✓（见 `_procs` ✓）
         # ★★★★★ 2026-09-23 修本节（**它钉的是一批写死的旧常数** ✗）：
         #   v1.21.39「统一槽位口径」把"每引擎按几 GB 算 + 能跑几个 + 护栏"全改由
         #   `tools/parallel_runner.py` 的 `per_engine_gb()/slot_cap()` 决定（**单一事实源** ✓），
@@ -252,7 +252,7 @@ def main():
         print()
         print('【7】★★★ 「启动本池」：**调度器不在时只启动这一个池**（用户："我挨个池子点启动"）')
         print('=' * 96)
-        mine.scheduler = lambda: []
+        mine.scheduler = lambda *a, **k: []     # ★ 2026-10-01：桩要收下 `fresh=` 参数 ✓（见 `_procs` ✓）
         mine.avail_gb = lambda: 20.0
         _set_ctl({'running': False, 'enabled': ['all', '300', '500'], 'stopped': [], 'rounds': 50,
                   'execMode': 'parallel', 'panelCache': 'use'})
@@ -289,7 +289,7 @@ def main():
         print('=' * 96)
         # ★ 真因两处：① 前端/接口不传 rounds ② 调度器把上限启动时拍死（写 ctl 也不生效 ✗）
         #   本节只测**后端这一半**（接线那一半在 `_test_frontend_wiring.py`【9】/ hot-read 在代码注释 ✓）
-        mine.scheduler = lambda: []
+        mine.scheduler = lambda *a, **k: []     # ★ 2026-10-01：桩要收下 `fresh=` 参数 ✓（见 `_procs` ✓）
         mine.avail_gb = lambda: 20.0
         # ① 调度器不在 ⇒ 自动重启时，命令行必须带面板轮数（原来只会沿用 ctl 里的旧值 ✗）
         _set_ctl({'running': False, 'enabled': ['300'], 'stopped': [], 'rounds': 1})
@@ -308,8 +308,8 @@ def main():
         _set_ctl({'running': True, 'enabled': ['300'], 'stopped': [], 'rounds': 1,
                   'execMode': 'parallel'})
         _real_sched = mine.scheduler
-        mine.scheduler = lambda: [{'pid': 1, 'cmd': 'python tools\\run_tracks.py --pools=300',
-                                   'pools': None}]
+        mine.scheduler = lambda *a, **k: [{'pid': 1, 'cmd': 'python tools\\run_tracks.py --pools=300',
+                                           'pools': None}]
         r2 = mine.start_pool('300', rounds=50)
         chk('★★ 已在跑 ⇒ `rounds` 被就地更新为 50（原来这条分支**完全不写** ✗）',
             mine.ctl().get('rounds') == 50, str(mine.ctl().get('rounds')))

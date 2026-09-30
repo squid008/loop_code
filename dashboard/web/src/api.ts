@@ -8,13 +8,59 @@
 
 const BASE = '/api'
 
+/** 请求错误 —— ★ 2026-10-01：**区分"超时"与"真错误"** ✓，且消息一律是**人话** ✓。 */
+export class ApiError extends Error {
+  /** `timeout` = 前端**自己的定时器**取消了请求（**不是**服务器报错 ✓）；`http` = 状态码非 2xx；`network` = 连不上 */
+  kind: 'timeout' | 'http' | 'network'
+  status?: number
+  constructor(msg: string, kind: 'timeout' | 'http' | 'network', status?: number) {
+    super(msg)
+    this.kind = kind
+    this.status = status
+  }
+}
+
+function secs(ms: number): string {
+  return String(Math.round(ms / 1000))
+}
+
+/**
+ * ★★★ 2026-10-01（用户报错截图）：把"请求被取消"翻译成**人话** ✓。
+ *
+ * 为什么：以前超时是 `ctl.abort()` **不带原因** ✗ ⇒ 浏览器抛出的原始文案是
+ * 「**signal is aborted without reason**」✗ ⇒ 界面把**实现细节**当错误弹给用户 ✗✗（完全看不懂 ✓）。
+ * ⇒ 现在两件事一起做：① `abort()` **带上原因** ✓；② 这里按 `kind` 给可读文案 ✓ ——
+ *   并明确告诉用户"**动作可能已经成功**"（例如启动/停止）✓，别让人以为白点了 ✗。
+ */
+function toApiError(e: unknown, path: string, timeoutMs: number): ApiError {
+  const msg = (e as { message?: string } | null)?.message ?? String(e)
+  const name = (e as { name?: string } | null)?.name ?? ''
+  if (name === 'TimeoutError' || name === 'AbortError' || /abort/i.test(msg)) {
+    return new ApiError(
+      `请求超时（${secs(timeoutMs)} 秒）：${path} 没能在时限内返回 —— 看板后端正忙`
+      + '（例如同时在做别的重活）。界面会继续自动刷新；若刚才点的是启动或停止，'
+      + '刷新后看一眼实际状态即可，动作通常已经生效。', 'timeout')
+  }
+  if (/Failed to fetch|NetworkError|load failed/i.test(msg)) {
+    return new ApiError(
+      `连不上看板后端（${path}）：它可能没在跑、或刚重启。界面会继续自动重试。`, 'network')
+  }
+  return new ApiError(msg, 'http')
+}
+
 async function get<T>(path: string, timeoutMs = 30000): Promise<T> {
   const ctl = new AbortController()
-  const t = setTimeout(() => ctl.abort(), timeoutMs)
+  // ★ 取消**必须带原因** ✓ —— 否则浏览器抛的就是那句「signal is aborted without reason」✗（见上 ✓）
+  const t = setTimeout(
+    () => ctl.abort(new DOMException(`超时（${secs(timeoutMs)} 秒）`, 'TimeoutError')),
+    timeoutMs)
   try {
     const r = await fetch(BASE + path, { signal: ctl.signal })
-    if (!r.ok) throw new Error(`${r.status} ${r.statusText} — ${path}`)
+    if (!r.ok) throw new ApiError(`${r.status} ${r.statusText} — ${path}`, 'http', r.status)
     return (await r.json()) as T
+  } catch (e) {
+    if (e instanceof ApiError) throw e
+    throw toApiError(e, path, timeoutMs)
   } finally {
     clearTimeout(t)
   }
@@ -23,7 +69,9 @@ async function get<T>(path: string, timeoutMs = 30000): Promise<T> {
 /** ★ POST：后端把业务错误放在 `detail` 里（HTTP 400/409），这里把它抬成异常消息 ⇒ UI 直接可展示 */
 async function post<T>(path: string, body: unknown, timeoutMs = 60000): Promise<T> {
   const ctl = new AbortController()
-  const t = setTimeout(() => ctl.abort(), timeoutMs)
+  const t = setTimeout(
+    () => ctl.abort(new DOMException(`超时（${secs(timeoutMs)} 秒）`, 'TimeoutError')),
+    timeoutMs)
   try {
     const r = await fetch(BASE + path, {
       method: 'POST',
@@ -33,8 +81,11 @@ async function post<T>(path: string, body: unknown, timeoutMs = 60000): Promise<
     })
     const txt = await r.text()
     const j = txt ? JSON.parse(txt) : {}
-    if (!r.ok) throw new Error(j?.detail || `${r.status} ${r.statusText}`)
+    if (!r.ok) throw new ApiError(j?.detail || `${r.status} ${r.statusText}`, 'http', r.status)
     return j as T
+  } catch (e) {
+    if (e instanceof ApiError) throw e
+    throw toApiError(e, path, timeoutMs)
   } finally {
     clearTimeout(t)
   }
