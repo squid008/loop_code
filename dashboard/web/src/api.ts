@@ -340,6 +340,13 @@ export interface MineStateDto {
   knownPools: string[]
   enabled: string[]
   stopped: string[]
+  /**
+   * ★★★ 2026-09-30：**调度器正卡在"启用池全被停用"上原地等待**的池名表
+   * （运行时状态 ✓，不是用户配置 ⇒ 与 `stopped` 分开报 ✓）。
+   * 为什么要有它：用户实录「起了两次才把全A池开起来，第一次停在待启动」——
+   * 旧界面把"调度器已经不在跑"也显示成"待启动"⇒ 用户白等 ✗（详见 `App.tsx` 徽标分支 ✓）。
+   */
+  pausedAll?: string[]
   byPool: Record<string, PoolSlot>
   /** ★ 2026-09-17：各池最近几次"启动即崩"的代数（{池: [gen, ...]}） */
   crashes?: Record<string, number[]>

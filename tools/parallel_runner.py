@@ -588,20 +588,54 @@ def run(pools, rounds, n, l2, extra, inject_spec, no_global,
         #   ⇒ 改成无限循环 + **每轮从 ctl 读当前上限** ✓ —— 与 `enabled/stopped` 同一套"每轮重读"语义 ✓
         #   ⚠ 缺省回落：ctl 里没有 / 被清成 0 ⇒ 用启动参数 `rounds`（旧行为不丢 ✓）
         rnd = 0
+        _PAUSE_WAIT_S = 20        # ★★★ 2026-09-30：全被停用时**等待重读**的间隔（不消耗轮次 ✓）
+        _PAUSE_LOG_S = 600        # ★ 同一状态最多每 10 分钟提醒一次（防刷屏 ✓）
+        _paused_at = None         # ★ 进入"启用池全被停用"的时刻（None ⇒ 不在该状态 ✓）
+        _paused_log = 0.0
         while True:
-            rnd += 1
             ctl = RT.read_ctl()
+            # ★★★★★ 2026-09-30（用户实录：「我刚才起了两次才把全A池开起来…第一次停在待启动」）：
+            #   根因链（已用日志逐条坐实 ✓）：点「启动本池」的冷启动路径里，**调度器先起来** ✓、
+            #   "把该池从 stopped 摘掉"那次**修正写稍后**才落地 ✓ ⇒ 新调度器的**第一轮**读到
+            #   `enabled=['all']` 却 `stopped=[…,'all']`（自相矛盾 ✗）⇒ 下游"没候选 ⇒ break"，
+            #   而 `rnd` 照样 +1 ⇒ **50 轮在同一秒烧光** ✗✗ ⇒ 撞上限退出。
+            #   ⚠ 更坏的是：用户看到的界面反而说"待启动"（因为那次修正写**已经**落地了 ✓）
+            #     ⇒ **界面说在等、调度器其实已经死了** ✗✗ —— 这就是"起两次才好"的全部真相 ✓。
+            #   ⇒ 修法：这种情况**绝不往下走**（不烧轮次 ✓），原地等一拍重读 ✓。
+            if ctl.get('stopAll'):                # ★ 等待期间也必须能"全部停止" ✓
+                RT.log('[CTL] ★ 收到「全部停止」⇒ 结束轮转（随后自动收尾）')
+                stopped_by_user = True
+                break
+            _en_now = ctl.get('enabled') or [p for p, _, _ in plan]
+            if RT.all_pools_paused(_en_now, ctl.get('stopped')):
+                _t = time.time()
+                if _paused_at is None:
+                    _paused_at, _paused_log = _t, _t
+                    RT.write_ctl(pausedAll=sorted(set(_en_now)))   # ★ 让看板能如实提示 ✓
+                    RT.log('')
+                    RT.log('[CTL] ⚠⚠ **启用池全都带「停用」标记**（%s）⇒ 此刻一个都跑不了；'
+                           '本调度器**原地等待、不消耗轮次**（每 %ds 重读一次）—— '
+                           '点「启动本池」或「一键启动全部」即可继续 ✓'
+                           % (sorted(set(_en_now)), _PAUSE_WAIT_S))
+                elif _t - _paused_log > _PAUSE_LOG_S:
+                    _paused_log = _t
+                    RT.log('[CTL] ⚠ 仍在等待（启用池全被停用；已等 %.0f 分钟，**未消耗任何轮次** ✓）'
+                           % ((_t - _paused_at) / 60.0))
+                time.sleep(_PAUSE_WAIT_S)
+                continue
+            if _paused_at is not None:              # ★ 恢复 ⇒ 清状态、清看板提示 ✓
+                RT.log('[CTL] ✓ 启用池又有可跑的了（等待 %.1f 分钟，**未消耗任何轮次** ✓）'
+                       % ((time.time() - _paused_at) / 60.0))
+                _paused_at, _paused_log = None, 0.0
+                RT.write_ctl(pausedAll=[])
+            rnd += 1
             _r_now = int(ctl.get('rounds') or rounds or 1)        # ★ 热读轮数上限
             if _r_now < 1:
                 _r_now = 1
             if rnd > _r_now:
                 RT.log('[CTL] ★ 轮数上限 %d 已跑满 ⇒ 结束轮转（随后自动收尾）' % _r_now)
                 break
-            if ctl.get('stopAll'):
-                RT.log('[CTL] ★ 收到「全部停止」⇒ 结束轮转（随后自动收尾）')
-                stopped_by_user = True
-                break
-            en = set(ctl.get('enabled') or [p for p, _, _ in plan])
+            en = set(_en_now)
             st = set(ctl.get('stopped') or [])
             if not en:
                 RT.log('[CTL] 启用池为空 ⇒ 无池可跑，结束轮转')

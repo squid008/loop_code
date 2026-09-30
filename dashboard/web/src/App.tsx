@@ -646,6 +646,9 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
   // ★★ `mining && !inRotation` = **在跑但已移出轮转**（它那一代还没结束，跑完就会停）
   const leaving = mining && !inRotation
   const stopped = !!slot?.stopped || (slot != null && !slot.enabled)
+  // ★★★ 2026-09-30：**调度器正在等你去点启动**（它卡在"启用池全被停用"上原地等待 ✓，
+  //   由后端 `pausedAll` 如实报出 ⇒ 这条**不是**用户配置、而是运行时状态 ✓）。
+  const paused = (mine?.pausedAll ?? []).includes(p.key)
   const isRunning = mining || p.running
   const cls = mining ? 'card run' : (inRotation ? 'card armed' : 'card')
   // ★ 2026-09-16（用户："怎么它又加入轮转、没有马上开挖？"）：**文案要跟实际模式一致**
@@ -671,10 +674,19 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
   const cap = mine?.slotCap ?? null
   const waitWhy = (cap !== null && nRot >= cap) ? '等槽位' : '等内存'
   const badge = mining ? (leaving ? '运行中·已移出'
-                                  : (myGen !== null ? `挖掘中 · gen${myGen}` : '挖掘中'))
+                                 : (myGen !== null ? `挖掘中 · gen${myGen}` : '挖掘中'))
     : (reviewing ? '审查中'
       : (inRotation ? (ranGens > 0 ? `已跑 ${ranGens} 代 · 等其它池` : `排队中 · ${waitWhy}`)
-        : (configured ? '待启动' : (stopped ? '已停止' : '空闲'))))
+        // ★★★ 2026-09-30（用户实录：「起了两次才把全A池开起来，第一次停在待启动」）：
+        //   这一支（`configured` 但 `!inRotation`）其实**只剩一种可能** ——
+        //   `inRotation = schedRunning && configured` 已在上面挡掉"调度器在跑"✓
+        //   ⇒ 走到这里 = **已配置、但调度器没在跑** ✗ ⇒ 那个池**永远不会自己站起来** ✗✗。
+        //   旧文案写"待启动"⇒ 用户合理地以为"在排队、等一下就好"⇒ 白等 ✗（这就是被卡住的真因 ✓）。
+        //   ⇒ 改成分两种如实说：
+        //     · 调度器**在等你去点启动**（它在"启用池全被停用"上空转等待 ✓，见 `pausedAll` ✓）
+        //     · 调度器**根本没在跑** ⇒ 必须点「启动」✓
+        : (paused ? '已停用 · 调度器在等'
+          : (configured ? '已配置 · 未启动' : (stopped ? '已停止' : '空闲')))))
   // ★★★★ 2026-09-17（用户实测："几个池子显示蓝点、只有 300 是绿点，像轮转"）：
   //   那几个池其实是**每代秒崩**（`None * float`）⇒ 永远等不到绿点 ✗
   //   ⇒ 卡片必须**明说"启动即崩"**，否则"蓝点（并行中）"会被误读成"在排队/轮转" ✗✗

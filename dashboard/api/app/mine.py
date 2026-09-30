@@ -491,6 +491,10 @@ def state():
         'knownPools': known,
         'enabled': en,
         'stopped': st,
+        # ★★★ 2026-09-30：调度器**此刻正卡在"启用池全被停用"上等你去点启动** ⇒ 看板要如实说 ✗
+        #   （它由 `tools/parallel_runner.py` 在进入/离开该状态时写回 ✓，是**运行时状态**、
+        #    不是用户配置 ⇒ 所以与 `stopped` 分开报 ✓）。
+        'pausedAll': sorted(set(c.get('pausedAll') or [])),
         'byPool': by_pool,
         'runningPools': [k for k in known if by_pool[k]['mining']],
         'freeGB': (round(free, 1) if free is not None else None),
@@ -521,14 +525,22 @@ def state():
 
 # ---------------------------------------------------------------- 启动
 def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
-          exec_mode=None, max_parallel=None, mem_per_engine=None, panel_cache=None):
+          exec_mode=None, max_parallel=None, mem_per_engine=None, panel_cache=None,
+          stopped=None):
     """启动（或调整）调度器。**已在跑 ⇒ 只更新启用集合/轮数**，不重复起进程 ✓
 
     :param reset_stopped: ★★★ 2026-09-16 新增（修用户报的"启动一个池，**其它池的剔除全被取消**"）：
         · `True`（默认，**"一键启动全部"用**）⇒ **清空 `stopped`** ✓
           —— 用户的意图是"**让这些池全部参与**"，所以清掉剔除是**对的** ✓
         · `False`（**`start_pool()` 内部重启时用**）⇒ **保留 `stopped`** ✓
-          —— 否则"启动 500"会把用户刚停掉的 all/1000 **又拉回来** ✗✗
+        —— 否则"启动 500"会把用户刚停掉的 all/1000 **又拉回来** ✗✗
+        :param stopped: ★★★ 2026-09-30 新增 —— **显式指定**要写进控制文件的 `stopped`（`None` ⇒ 不管它 ✓）。
+          ⚠ 为什么必须加（用户实录：「起两次才把全A池开起来…第一次停在待启动」✗）：
+            `start_pool()` 冷启动原来是"**先** `start()` 起调度器 ✗ ⇒ **后**再写一次
+            `_write_ctl(stopped=…)` 把该池摘掉" ⇒ **新调度器的第一轮读到的还是旧值**
+            （`enabled=['all']` 却 `stopped=[…,'all']` ✗）⇒ 而"没候选"会把轮次**瞬间烧光** ⇒ 会话直接死 ✗✗。
+            ⇒ 现在把修正值**并进同一次写入**（起进程之前就写好 ✓）⇒ 从第 1 轮起就不可能自相矛盾 ✓。
+          ⚠ 语义：**显式给了它就以它为准**（优先于 `reset_stopped` ✓）—— 调用方只有 `start_pool()` ✓
         ⚠ 原实现**无条件 `stopped=[]`** ⇒ 所以 `start_pool` 里"先 start() 再写 stopped"
           会被 start() 覆盖**一半**，且**清掉了其它池的剔除** ✗
     :param exec_mode / max_parallel / mem_per_engine / panel_cache: ★★★ 2026-09-16 新增
@@ -621,6 +633,8 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
                   memPerEngine=mem_per_engine, panelCache=panel_cache)
         if reset_stopped:
             kw['stopped'] = []
+        if stopped is not None:                     # ★ 2026-09-30：显式给定 ⇒ 以它为准 ✓
+            kw['stopped'] = list(stopped)
         _write_ctl(**kw)
         return {'ok': True, 'started': [], 'reused': True,
                 'schedulerPids': [p['pid'] for p in sched],
@@ -658,6 +672,12 @@ def start(pool_list, rounds=DEFAULT_ROUNDS, reset_stopped=True,
               autoParallel=('1' if _mp_auto else ''))
     if reset_stopped:
         kw['stopped'] = []
+    if stopped is not None:
+        # ★★★ 2026-09-30：显式给定 ⇒ **以它为准**，而且**就在起进程之前**写 ✓ ——
+        #   这就是"第一次点启动会停在待启动"的修法：以前这句修正写**在起进程之后** ✗，
+        #   新调度器第一轮读到的还是旧 `stopped` ⇒ 自相矛盾 ⇒ 轮次被瞬间烧光 ✗✗
+        #   （详见本函数 `:param stopped:` 与 `tools/run_tracks.all_pools_paused` ✓）。
+        kw['stopped'] = list(stopped)
     _write_ctl(**kw)
     env = dict(os.environ)
     env['PYTHONIOENCODING'] = 'utf-8'
@@ -874,8 +894,11 @@ def start_pool(pool, rounds=None):
     #   想全部参与 ⇒ 用「一键启动全部」（它走 `start(reset_stopped=True)`）✓
     rounds = rl
     en = [pool]
-    r = start(en, rounds, reset_stopped=False)
-    _write_ctl(stopped=st, enabled=en, rounds=rounds)   # ★ 重启后把"只移除该池"的 stopped 写回 ✓
+    # ★★★ 2026-09-30：把"只移除该池"的 `stopped` **并进 `start()` 的同一次写入** ✓ ——
+    #   旧写法是"先起调度器、再补写一次" ✗ ⇒ 新调度器的**第一轮**读到的仍是旧 `stopped`
+    #   （`enabled=[pool]` 却 `stopped=[…,pool]` ✗）⇒ 而"没候选"会把轮次**瞬间烧光** ✗✗
+    #   —— 2026-09-30 21:06:51 实录：50 轮在同一秒走完 ⇒ 撞上限退出 ⇒ 用户看到"停在待启动" ✓。
+    r = start(en, rounds, reset_stopped=False, stopped=st)
     return {'ok': True, 'pool': pool, 'enabled': en, 'stopped': st, 'restarted': True,
             'rounds': rounds,
             'started': r.get('started'), 'note':

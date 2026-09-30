@@ -348,9 +348,16 @@ chk('App.tsx：`rounds` 进了 `useCallback` 依赖（否则面板改了不生�
 chk('main.py：`PoolBody` 有 `rounds`，且路由把它传给 `start_pool`',
     re.search(r'rounds: int \| None = None', mainpy) is not None
     and 'mine.start_pool(body.pool, rounds=body.rounds)' in mainpy)
-chk('mine.py：`start_pool(pool, rounds=None)` 收轮数，且**两个分支都写** ctl',
+chk('mine.py：`start_pool(pool, rounds=None)` 收轮数，且**两个分支都写** ctl（`rounds` 不许静默丢弃 ✗）',
     re.search(r'def start_pool\(pool, rounds=None\)', minepy) is not None
-    and 'rounds=rl)' in minepy and 'enabled=en, rounds=rounds)' in minepy)
+    and 'rounds=rl)' in minepy
+    # ★★ 2026-09-30（v1.35.0 修「起两次才把池开起来」）：冷分支**不再**"起进程后补写 ctl" ✗ ——
+    #   改成把 `rounds` 与"摘掉本池的 stopped"**一起交给 `start()`**（它**同一次写入**就写 ctl ✓，
+    #   且**在起进程之前** ✓）⇒ 断言跟着搬 ✓；**防护内容一字不减** ✓：
+    #   仍然要求"冷分支确实把 rounds 写进了 ctl" ✓（否则又是静默丢弃 ✗）。
+    #   ⚠ 为什么不能再坚持旧写法：旧写法**正是**那个 bug 的现场（新调度器第一轮读到旧 stopped ✗
+    #   ⇒ 没候选 ⇒ 轮次被瞬间烧光 ✗✗，见 change_log [1.35.0] ✓）。
+    and re.search(r'start\(en, rounds, reset_stopped=False, stopped=st\)', minepy) is not None)
 chk('★★ parallel_runner：轮数上限**每轮热读**（`_r_now = int(ctl.get(\'rounds\')` ✓）',
     re.search(r"_r_now = int\(ctl\.get\('rounds'\)", prpy) is not None)
 chk('★★ parallel_runner：**没有**启动时拍死的 `for rnd in range(1, rounds + 1)` ✗',
