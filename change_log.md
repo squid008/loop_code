@@ -45,6 +45,57 @@
 
 ---
 
+## [1.37.1] — 2026-10-08
+
+> 主题：**搬盘（`D:\loop_code` → `E:\quant\loop_code`）后的文档/注释校正** ✓ —— **纯文档版 · 代码零改动** ✗。
+> 起因：用户 2026-10-08 _"我把项目从D盘挪到E盘了，你读下各种MD，看看还有啥问题没"_ ⇒ 复核后修掉四处问题 ✓（§一~§四）。
+
+### 一、旧项目根（★ 最要紧：README 照抄会失败 ✗）
+
+`README.md` 的「运行」段仍写 `D:\loop_code\...` ✗ ⇒ **13 个文件 / 29 处**全部改为 `E:\quant\loop_code` ✓：
+
+| 文件 | 处数 | 落点 |
+|---|---|---|
+| `README.md` | 9 | 「运行」段：`cd` ×2 · `Start-Process -WorkingDirectory` · `loop_status` · `Get-Content` ×4 · 策略回测 `cd` |
+| `engine/loop_watch.py` | 3 | docstring「运行 / 日志 / 例」 |
+| `engine/loop_status.py` · `engine/audit_f11.py` · `engine/gen_f11_daily.py` | 3 | docstring 用法行 |
+| `engine/loop_llm.py` | 2 | `api_key()` docstring（改为 `<仓库根>/` ✓）+ `base = ...` 行尾注释（改为「仓库根（派生，不写死盘符）」✓）|
+| `strategies/all01/{all00,all03}.py` · `strategies/all04/{all04,all04_barra,all04_f11_idx}.py` | 9 | 头部用法注释 + `UNIV_PATH` 上方说明注释 |
+| `docs/factor_roadmap.md` | 3 | 「续跑方法」代码块 |
+| `docs/software_framework.md` | 1 | §0 对照表「本库」路径 |
+
+⚠ **有意不改（约 10 处）** ✗：`docs/log/*`·`.codebuddy/memory/*`（**当时实录** ✓）、`change_log.md` 历史条目 ✓，
+以及 `standard/qa_style_obs.py`·`standard/standard_test.py`·`tools/calib_dedup_leaf.py`·`tools/l1_shape_calib.py`·
+`tools/_test_pool_tail.py`·`tools/_test_sched_kgen.py` 里「★ 原为硬编码 ⇒ 改为从 `__file__` 派生」的**整改注解** ✓
+（改了反而丢掉「为什么这么写」的证据 ✗）。另：`D:\miniconda3\envs\rqdata\python.exe` **不用改** ✓（环境确实在 D 盘 ✓）。
+
+### 二、`待办.md`：两处事实错误 ✗ ＋ 一处自相矛盾
+
+1. **环境名写反** ✗：原写「家里 = conda 环境 `rq`；凡出现 `envs\rqdata\python.exe` 的都是**旧路径**」——
+   实测 `conda env list` **没有 `rq`** ✓，只有 **`rqdata`**（`D:\miniconda3\envs\rqdata\python.exe`：Python 3.11.15 /
+   numpy 1.26.4 / pandas 2.3.3 ✓）⇒ **`envs\rqdata` 才是能跑的那个** ✓ ⇒ §2 与 §3.1 已按实测更正 ✓。
+2. **统计低估** ✗：§3.1 原写「项目根 `E:\quant\loop_code`：仅 **1 处**（README）」——
+   实测旧根 **13 个文件 / 29 处** ✓ ⇒ 该表按实测重写 ✓。
+3. **自相矛盾**：§0 示例 `D:\work\loop_code` 与 §3.1 的 `E:\quant\loop_code` 打架 ⇒ 已统一 ✓；
+   §0 的「期望 HEAD = `d0fbecd`」已过期 ⇒ 改注「以 tag `v1.37.x` 为准」✓。
+
+### 三、顺带核实（不是新 bug，记账 ✓）
+
+* `engine/loop_state*.pkl` **6 个全在** ✓（1.7 / 1.9 / 1.1 / 0.5 / 0.45 / 0.39 MB ✓）⇒ `待办.md §4` 最担心的
+  「各池 `bank`/规则/参数**静默归零** ✗」**没有发生** ✓；`config.local.json` ✓ · `.deepseek_key` ✓ ·
+  数据盘 `E:\rq` ✓ · `_panel_cache` ✓ · `panel|barra|fa_pit|universe|industry.h5` ✓ · 前端 `node_modules` ✓ · 无残留进程 ✓。
+* 根目录残留（**未提交**，仅记录）：`_pull_backup_20261008/`（空目录）、`.log`（2026-09-16 的 uvicorn 日志，已被 `*.log` 忽略 ✓）、
+  `QuantaAlpha-main/`（外部参考项目，已忽略 ✓）。⚠ **未**擅自删除 ✗。
+
+### 四、验证
+
+* `python tools/_test_version_sync.py` ⇒ **[1]~[6] 全绿** ✓（VERSION / README / change_log / 后端无硬编码 /
+  `/api/meta` 动态读 / 前端 `package.json` / 最新 tag 一致 ✓）。
+* 本轮**未动任何运行代码** ✓ ⇒ 无行为变更 ⇒ 不适用「同 seed A/B 逐字节」那套 ✓（无行为可对拍 ✓）。
+* ⚠ **未做** ✗：`tools/release_check.py` 全量回归（59 条 / ≈20 min，须「没有挖掘在跑」✓）⇒ 本版**不宣称 59/59** ✗。
+
+---
+
 ## [1.37.0] — 2026-10-01
 
 > 主题：**性能 7 → 8**（八维综合 **8.5 → 8.6** ✓）—— 兑现 09-29 那句

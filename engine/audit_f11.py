@@ -2,7 +2,7 @@
 """
 audit_f11.py —— 复现 F11 引擎评测 + BUG①(涨停买入剔除不一致)/②(卖出顺延)敏感性
 只读验证: 不修改 factor_miner / loop_engine 任何代码。
-用法: cd D:\\loop_code\\engine && D:\\miniconda3\\envs\\rqdata\\python.exe audit_f11.py
+用法: cd E:\\quant\\loop_code\\engine && D:\\miniconda3\\envs\\rqdata\\python.exe audit_f11.py
 """
 import os
 import sys

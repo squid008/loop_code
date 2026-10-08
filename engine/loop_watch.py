@@ -9,13 +9,13 @@
    - 否则启动 gen N+1（防重复：对应 loop{N+1}C.log 不存在才启）。
 3. 每代启动后 sleep 20s 确认进程存活 + 日志头正常。
 
-运行: D:\\miniconda3\\envs\\rqdata\\python.exe D:\\loop_code\\engine\\loop_watch.py
-日志:  D:\\loop_code\\engine\\loop_watcher.log
+运行: D:\\miniconda3\\envs\\rqdata\\python.exe E:\\quant\\loop_code\\engine\\loop_watch.py
+日志:  E:\\quant\\loop_code\\engine\\loop_watcher.log
 
 ★ 三池并行挖掘(2026-09-12, roadmap §8.19): 加 `--pool=300|500` 即驱动对应池的**独立轨迹**
   (journal/日志名加 `_<池>` 后缀、启动引擎时透传 `--mine_pool`、进程探测按池区分)。
   三条轨迹**完全独立**, 可同时开三个 watcher(注意内存), 也可串行跑(见 ai_test/run_3pools.ps1)。
-  例: D:\\miniconda3\\envs\\rqdata\\python.exe D:\\loop_code\\engine\\loop_watch.py --pool=300
+  例: D:\\miniconda3\\envs\\rqdata\\python.exe E:\\quant\\loop_code\\engine\\loop_watch.py --pool=300
   不带 --pool 时 = 'all'(全A轨迹, **完全向后兼容**原行为)。
 """
 import os

@@ -10,7 +10,7 @@
 
 ## 0. 两个系统的分工与现状
 
-| | **loop_code**（本库 `D:\loop_code`） | **qlib_code**（`D:\quant\qlib_code`） |
+| | **loop_code**（本库 `E:\quant\loop_code`） | **qlib_code**（`D:\quant\qlib_code`） |
 |---|---|---|
 | 定位 | 自动**挖掘**（生成 → 筛选 → 入库） | **平台**（因子库 / 看板 / 回测 / 公式编辑器） |
 | 技术栈 | Python 自研引擎 + B角 LLM 审查 | FastAPI 后端 + 前端（React/TS） |

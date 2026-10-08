@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-cd D:\loop_code\strategies\all01; D:\miniconda3\envs\rqdata\python.exe all03.py
+cd E:\quant\loop_code\strategies\all01; D:\miniconda3\envs\rqdata\python.exe all03.py
 
 组合策略【基准版】all00 (单账户一体化, 一键运行)
 ================================================================

@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-cd D:\loop_code\strategies\all04; D:\miniconda3\envs\rqdata\python.exe all04_f11_idx.py --idx=300
+cd E:\quant\loop_code\strategies\all04; D:\miniconda3\envs\rqdata\python.exe all04_f11_idx.py --idx=300
 
 【F11 指数内增强回测】(rqalpha 真实撮合, 全摩擦)
 ================================================================
@@ -73,7 +73,7 @@ def load_index_items(path):
             out.append((int(d.replace('-', '')), mem))
     out.sort(key=lambda x: x[0])
     return out
-# 迁移后 universe.h5 随引擎放在 D:\loop_code\engine（相对定位，支持整仓搬迁）
+# 迁移后 universe.h5 随引擎放在 E:\quant\loop_code\engine（相对定位，支持整仓搬迁）
 UNIV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'engine', 'universe.h5')
 
 

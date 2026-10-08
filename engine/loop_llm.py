@@ -116,12 +116,12 @@ def _key_from_file(path):
 
 def api_key():
     """DeepSeek key: 环境变量 DEEPSEEK_API_KEY > 项目本地 .deepseek_key(不上传) > 桌面 1.txt。
-    项目 key 文件推荐放 d:/loop_code/.deepseek_key(与 .gitignore 配套), 单行裸 key 即可;
+    项目 key 文件推荐放 <仓库根>/.deepseek_key(与 .gitignore 配套), 单行裸 key 即可;
     文件若带中文说明/非 UTF-8 编码, 由 _key_from_file 智能挑 sk- token 兜底。"""
     env = os.environ.get('DEEPSEEK_API_KEY')
     if env:
         return env.strip()
-    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # d:/loop_code
+    base = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))  # 仓库根（派生，不写死盘符）
     for rel in ['.deepseek_key', 'engine/.deepseek_key']:
         key = _key_from_file(os.path.join(base, rel))
         if key:

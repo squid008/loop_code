@@ -1,6 +1,6 @@
 # loop_code — Loop 式因子自动挖掘引擎
 
-> **当前版本 v1.37.0**（2026-10-01）
+> **当前版本 v1.37.1**（2026-10-08）
 
 
 从 `D:\rqalpha_demo` 整理迁移（2026-09-08），原目录保留备份。机器外部数据依赖：米筐 bundle `E:\rq`（本地数据盘）。
@@ -68,7 +68,7 @@
 ## 运行
 ```powershell
 # 引擎一代（后台）：参数与三道闸详见 loop_engine.py argparse
-cd D:\loop_code\engine
+cd E:\quant\loop_code\engine
 D:\miniconda3\envs\rqdata\python.exe loop_engine.py --gen=13 --n=800 --l2=30 --seed=123
 #   LLM 双子开关（均默认 auto，可 on/off 强开/强关；无 key 或调用失败自动回退纯规则，不影响无人值守）：
 #     --llm_guide  A角生成引导：候选引导位由 loop_llm 解析语义候选，失败/无 key 回退本地 13 机制族
@@ -79,20 +79,20 @@ D:\miniconda3\envs\rqdata\python.exe loop_engine.py --gen=13 --n=800 --l2=30 --s
 # 无人值守多代接力（可选）：启动 watcher 后每 5min 轮询，空闲且该代无 err 自动启下一代
 #   停止条件：任一代 err 非空即停下等人工（铁律）；代数达 loop_watch.py 上限（默认 50）自动结束。
 #   防多实例/防重复代已内置；引擎在跑时 watcher 只等待不动作，可随时手动启动。
-cd D:\loop_code\engine
-Start-Process "D:\miniconda3\envs\rqdata\python.exe" -ArgumentList '-u','loop_watch.py' -WorkingDirectory 'D:\loop_code\engine' -WindowStyle Hidden
+cd E:\quant\loop_code\engine
+Start-Process "D:\miniconda3\envs\rqdata\python.exe" -ArgumentList '-u','loop_watch.py' -WorkingDirectory 'E:\quant\loop_code\engine' -WindowStyle Hidden
 
 # 进度查询（脚本在 engine/ 下且按自身路径定位：带全路径即可，从任意目录运行都行）
-D:\miniconda3\envs\rqdata\python.exe D:\loop_code\engine\loop_status.py
+D:\miniconda3\envs\rqdata\python.exe E:\quant\loop_code\engine\loop_status.py
 
 # 无人值守期间人工查看（代号 N 换成当前代，如 loop23C.*）：
-Get-Content D:\loop_code\engine\loop_watcher.log -Tail 20   # watcher 接力事件: [START]/[OK]/[RUN]/[SKIP]/[STOP]/[DONE]
-Get-Content D:\loop_code\engine\loop23C.log -Tail 20        # 当前代引擎进度（阶段字样见 loop_status.py）
-Get-Content D:\loop_code\engine\loop23C_err.log             # 当前代错误日志（空=正常）
-Get-Content D:\loop_code\docs\loop_journal.md -Tail 30      # B角每代诊断 + AI 审查落档
+Get-Content E:\quant\loop_code\engine\loop_watcher.log -Tail 20   # watcher 接力事件: [START]/[OK]/[RUN]/[SKIP]/[STOP]/[DONE]
+Get-Content E:\quant\loop_code\engine\loop23C.log -Tail 20        # 当前代引擎进度（阶段字样见 loop_status.py）
+Get-Content E:\quant\loop_code\engine\loop23C_err.log             # 当前代错误日志（空=正常）
+Get-Content E:\quant\loop_code\docs\loop_journal.md -Tail 30      # B角每代诊断 + AI 审查落档
 
 # 定稿策略回测（示例）
-cd D:\loop_code\strategies\all04
+cd E:\quant\loop_code\strategies\all04
 D:\miniconda3\envs\rqdata\python.exe all04.py
 ```
 
@@ -182,6 +182,7 @@ git tag -a v0.2 -F <说明文件>               # 建新版（说明按上表四
 
 | tag | 日期 | 提交 | 一句话内容 |
 |---|---|---|---|
+| **v1.37.1** | 2026-10-08 | `tag 自身` | ★ **搬盘后的文档/注释校正（纯文档版 · 代码零改动）** —— 项目 2026-10-08 由 **`D:\loop_code` 挪到 `E:\quant\loop_code`** ✓ ⇒ 把**活跃文档与当前代码注释**里的旧项目根改成新根 ✓（**13 个文件 / 29 处**：`README.md` 运行段 9 · `engine/loop_watch|loop_status|audit_f11|gen_f11_daily|loop_llm` 6 · `strategies/all01/all00|all03` 与 `all04/all04|all04_barra|all04_f11_idx` 9 · `docs/factor_roadmap|software_framework` 4）；`engine/loop_llm.py` 两处"写死盘符"的注释改成"仓库根（派生，不写死盘符）"✓。⚠ **约 10 处有意保留** ✗：`docs/log/*`·`.codebuddy/memory/*`（当时实录）、`change_log.md` 历史条目、以及 `standard/`·`tools/` 里"原为硬编码 ⇒ 改 `__file__` 派生"的**整改注解**（改了反而丢掉"为什么这么写"的证据）。**同时更正 `待办.md` 两处事实错误**：① 环境名**不是 `rq`** —— 本机 `conda env list` 只有 **`rqdata`**（`D:\miniconda3\envs\rqdata\python.exe` ✓），文档早先"已改名 rq、`envs\rqdata` 是旧路径"的说法**与事实相反**；② §3.1 原写"项目根仅 1 处（README）"**低估**（实测 13 文件/29 处）⇒ 表格按实测重写；另统一 §0 里自相矛盾的 `D:\work\loop_code` ✓。**验证**：`tools/_test_version_sync.py` **6 项全绿** ✓；本轮**未动任何运行代码** ⇒ 无行为变更、不适用"同 seed A/B 逐字节" ✓。★ 搬盘完整性复核（未丢进度）：**`engine/loop_state*.pkl` 6 个全在** ✓ · `config.local.json` ✓ · `.deepseek_key` ✓ · 数据盘 `E:\rq` ✓ · `_panel_cache` 与 `panel|barra|fa_pit|universe|industry.h5` ✓ · 前端 `node_modules` ✓；无残留挖掘进程 ✓。⚠ **未做**：全量回归 `release_check.py`（59 条/≈20 min，需挖掘停）⇒ 本版**不宣称 59/59** ✗ |
 | **v1.37.0** | 2026-10-01 | `tag 自身` | ★★ **性能 7 → 8**（八维综合 **8.5 → 8.6**）—— 兑现 09-29 那句"让 mining 真跑一代 n=800，读 `[计时] 去相关` 那行即知" ✓。⚠ **纯文档版**：**代码零改动** ✗（只更新 `docs/maintainability.md §五` ＋ 记账）。★ **拿生产实测补上那一档**（09-29 只给 7 的原因是"省 ≈25 min 是**推算**"✗）：用户 09-30 跑到 gen205 ⇒ 实测 **去相关 1321~1838 s → 73~81 s** ✓（日志写「批内就地判定 · **0 次重复求值**」✓，**省 ≈21~29 min/代** ✓，与推算**吻合** ✓）；**整代 107~127 min → 68~81 min** ✓（**≈快 35%** ✓）；⚠ L2 精筛 1595~2561 → 1110~1710 s 但**候选数/负载不同 ⇒ 归因不清、不邀功** ✗。⚠ **不给 9**：**L1 仍占整代 ≈67%（52 min）且单核** ✗ ⇒ 再上一档须做 **L1 多进程并行**（≈2~4×，**要动架构+内存预算** ✗，且**必然改变运行期行为** ⇒ **不适用"逐位不变"** ✗ ⇒ **需单独授权** ✓）。另：**v1.36.0 的最终全量回归已跑完 ⇒ 59/59 全绿** ✓（39.8 分钟，据实补记 ✓）。**验证**：`_test_version_sync` ✓；本版**未动代码** ⇒ 提交后照例补跑全量 ✓（⚠ 机器上**另一个项目的重活**把全量从 ~20 min 拖到 **39.8 min** ✗，`/api/status` 也曾被压到 40 秒超时 ✗ ⇒ 与项目记忆里"外部重活造成假阳性"同源 ✓）|
 | **v1.36.0** | 2026-10-01 | `tag 自身` | ★★★ **修「signal is aborted without reason」**（用户 2026-09-30 报错截图）＋ **查明一个更大的问题**。**两个根因**：① 前端 `api.ts` 的 `ctl.abort()` **不带原因** ✗ ⇒ 浏览器抛出的原始文案就是那句 ✗ ⇒ 界面把**实现细节**当错误弹给用户 ✗✗；② 后端 `mine._procs()` **每次都先 `pop` 掉自己的缓存** ✗ ⇒ 每次轮询真起一次 PowerShell ⇒ `/api/mine/state` 实测 **1.3 秒/次** ✗ ⇒ 机器一忙顶到前端超时 ⇒ 被**前端自己的定时器**取消 ✓。★ **那行 `pop` 不是随手写的** ✗：`git log -S` 查到是 **2026-09-16 v1.2.0**（"每池一进程 + 修「停止没反应」"）为**"点停止要立刻看见引擎"**加的 ✓（正确性优先 ✓）⇒ 本版**没有**删掉该语义 ✗，而是**按用途分流** ✓。**改动**：(a) `api.ts` `abort()` **带原因** ✓ + 新增 `ApiError{kind:'timeout'|'http'|'network'}` ✓ ⇒ 超时/断连**翻译成人话** ✓（并说明"动作通常已生效"✓）· (b) `mine._procs(fresh=False)` **分流** ✓（**只读轮询**走 2 秒缓存 ✓；**启停/等待/闸门**传 `fresh=True` 强制真查 ✓，8 处调用点全在启停路径 ✓）· (c) `main.py` **慢请求日志** ✓（≥2 秒记一行到 `ai_test/_tracks/_api_slow.log` ✓ ⇒ 下次**直接指名** ✓；异常全吞**绝不影响请求** ✓）。★★ **顺带查明（比那条红字更要紧）**：看板后端 pid 26560 **自 09-27 00:22 连续跑 4 天** ✗ 且 `config.json` 里 `"reload": false` ✗ ⇒ **它跑的是旧代码** ⇒ **v1.31.0~v1.35.0 的后端改动全都没生效** ✗（含 v1.35.0 那个"起两次才开起来"的修复 ✗、`pausedAll` ✗），而前端是 Vite **热更新**（09-24 起 ✓）⇒ **前后端不一致** ⇒ **本版发布动作含重启前后端** ✓（**不影响挖掘** ✓ 调度器是独立进程 ✓）。**验证**：① 新守门 `tools/_test_api_speed.py` **4 组 13 条全过** ✓ 含**实测**：冷扫 **0.678s → 缓存读 0.0000s** ✓（**600+ 倍** ✓）、`fresh=True` 确实重扫 ✓、两者结果一致 ✓（⚠ 守门第一版**两条断言自己写错** ✗ 并当场暴露：`except` 后的 `# noqa` 没留位置 ✗、判无参 `abort` 时**匹配到自己注释里引用的旧写法** ✗ ⇒ 改成**先剔注释** ✓）· ② **重启后实测** `/api/mine/state` **1.3s → 0.795 / 0.005 / 0.049 秒** ✓✓（**缓存分流生效** ✓）· ③ 前端 `tsc --noEmit` **rc=0** ✓ · ④ `release_check` ⚠ **据实**：两轮各查出**两条真失败** ✗，都是**我改签名（加 `fresh=`）撞了守门的桩** ✗（`_test_mine_launch` / `_test_stop_scope` 的 lambda 不收参数 ✗）⇒ **桩已改**（`lambda *a, **k:` ✓ 防护不减 ✓）并**各自单独重跑全过** ✓；最终一轮跑到 **[40/59] 零失败** ✓（新守门 `_test_api_speed` 第 4/59 条通过 ✓）⇒ **本版不宣称 59/59** ✗（该轮提交时仍在跑：`_test_parallel_runner` 在**真跑一代引擎** ⇒ 慢，不是卡死 ✓）· ⑤ 名字守门 **0 处** ✓|
 | **v1.35.0** | 2026-09-30 | `tag 自身` | ★★★ **修「起两次才把池开起来」**（用户 2026-09-30：_「第一次启动的时候，全A池停在了待启动」_）。**根因两处**（日志坐实 ✓）：① `mine.start_pool()` 冷启动**先起调度器** ✓、**之后**才补写"把该池从 `stopped` 摘掉" ✗ ⇒ 新调度器**第一轮**读到 `enabled=[pool]` ∧ `stopped` 含 pool（自相矛盾 ✗）；② "没候选池 ⇒ break"却照样 `rnd += 1` ✗ ⇒ **50 轮在同一秒烧光** ⇒ 撞上限退出 ✗✗（而那时补写已落地 ⇒ 界面反而显示「待启动」✗ ⇒ **界面说在等、调度器其实已经死了** ✗）。★ 关键澄清：`enabled ∩ stopped` **是设计允许的** ✓（`stopped` = "暂时不跑"的配置 ✓；`mine.stop()` 的 2026-09-16 **BUG A** 修复刻意规定"单独停绝不动 `enabled`" ✗）⇒ 本版**没有**强行互斥（那会推翻既有修复 ✗），而是修**顺序**与**烧轮次** ✓。**改动 4 处**：`mine.start(…, stopped=None)` 新增"显式 stopped"⇒ 并进**同一次写入**（起进程前 ✓，优先于 `reset_stopped` ✓）+ `start_pool` 冷启动改用它并删掉滞后补写 ✗ · **调度器两条路**（`parallel_runner` ✓ ＋ `run_tracks` 轮转 ✓）在"启用池全被停用"时**原地等待+重读**（20 s ✓）**不消耗轮次** ✓ 并写/清 `pausedAll` ✓ · `run_tracks` 新增共用口径 `runnable_pools`/`all_pools_paused` ✓（调度器与看板不再各写一句 ✗）· 看板徽标**不再**把"调度器没在跑"说成「待启动」✗（改 `已配置 · 未启动` ✓ / `已停用 · 调度器在等` ✓）+ `api.ts` 声明 `pausedAll` ✓。**验证**：① ★★ **真跑实测** `ai_test/_livetest_ctl_fix.py`（故意摆成事故现场 ✓，**两条路各测一遍** ✓：`start_pool` ⇒ 第一轮就起引擎 ✓ 无告警 ✓；绕开它就 ⇒ 告警 ✓ + **45 秒一行轮次都没打** ✓ + 恢复后"未消耗任何轮次"✓ **立刻起引擎** ✓ 轮号仍 **第 1 轮** ✓；跑完按 pid 清理 + **逐字节还原** ctl ✓；⚠ 第一版实测**只覆盖并行** ✗ ⇒ 当场暴露"轮转路径也烧轮次"✗ ⇒ 才补上 ✓）· ② 新守门 `tools/_test_ctl_invariants.py` **4 组 20 条全过** ✓（纯函数 6 例 ✓ + **两条路**"等待分支必须在 `rnd += 1` 之前" ✓ + 冷启动同一次写入（且不许回到"起进程后补写"✗）+ 接线 ✓）· ③ 前端 `npx tsc --noEmit` **rc=0** ✓（项目无守门跑 tsc ✗，手工跑 ✓）· ④ `release_check` **58/58** ✓ · ⑤ 名字守门 **0 处** ✓。⚠ **记账**：`run_tracks --from_ctl=1` **不继承** ctl 里的 `execMode` ✗（明明写 parallel 却按轮转跑 ✓，看板路径显式传参故日常无碍 ✓ —— 实测脚本第一版正被它带偏 ✓ 也因此白捡了这个 bug ✓）；实测起的两代被中途杀 ⇒ `_engine_exits.log` 多两条"被停"✓（该代作废、下次重跑 ✓ 无脏数据 ✓）；**没有**把 `enabled ∩ stopped` 强行互斥 ✓（那不是 bug 而是设计 ✓）|

@@ -160,10 +160,10 @@ IC 仅 0.010~0.016, 但 IC_IR 0.20~0.32、Calmar 0.25~0.46 —— 已属可用�
 **续跑方法**（若日后要接着挖，从 gen23 起）：
 ```powershell
 # 1) 启动 watcher 自动接力（每 5min 轮询，空闲自动启下一代）
-cd D:\loop_code\engine
-Start-Process python -ArgumentList '-u','loop_watch.py' -WorkingDirectory 'D:\loop_code\engine' -WindowStyle Hidden
+cd E:\quant\loop_code\engine
+Start-Process python -ArgumentList '-u','loop_watch.py' -WorkingDirectory 'E:\quant\loop_code\engine' -WindowStyle Hidden
 # 2) 查看进度/阶段
-D:\miniconda3\envs\rqdata\python.exe D:\loop_code\engine\loop_status.py
+D:\miniconda3\envs\rqdata\python.exe E:\quant\loop_code\engine\loop_status.py
 ```
 如需改目标代数：编辑 `loop_watch.py` 中的上限（默认 50）；IDE automation「loop-gen50」已 PAUSED，可手动恢复/删除。
 如需重置目标（例如以新叶子池重跑），应新建 state 或先存档现有 `loop_state.pkl`。

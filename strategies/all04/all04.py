@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-cd D:\loop_code\strategies\all04; D:\miniconda3\envs\rqdata\python.exe all04.py
+cd E:\quant\loop_code\strategies\all04; D:\miniconda3\envs\rqdata\python.exe all04.py
 
 组合策略 all04 = all03 + 【小市值池内用 combo_g6 选股】
 ================================================================

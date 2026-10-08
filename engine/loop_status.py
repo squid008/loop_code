@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """Loop 挖掘进度查询：进程存活 + 当前阶段 + 最近日志/档案尾行。
-用法:  D:\\miniconda3\\envs\\rqdata\\python.exe D:\\loop_code\\engine\\loop_status.py
+用法:  D:\\miniconda3\\envs\\rqdata\\python.exe E:\\quant\\loop_code\\engine\\loop_status.py
 """
 import glob, io, os, re, datetime      # ★ 2026-09-29：json/subprocess 随 PS 查询一起下岗（死码 ✗）
 
