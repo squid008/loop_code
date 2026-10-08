@@ -92,7 +92,12 @@
 * `python tools/_test_version_sync.py` ⇒ **[1]~[6] 全绿** ✓（VERSION / README / change_log / 后端无硬编码 /
   `/api/meta` 动态读 / 前端 `package.json` / 最新 tag 一致 ✓）。
 * 本轮**未动任何运行代码** ✓ ⇒ 无行为变更 ⇒ 不适用「同 seed A/B 逐字节」那套 ✓（无行为可对拍 ✓）。
-* ⚠ **未做** ✗：`tools/release_check.py` 全量回归（59 条 / ≈20 min，须「没有挖掘在跑」✓）⇒ 本版**不宣称 59/59** ✗。
+* ★ **全量回归已跑**：`tools/release_check.py` ⇒ **59/59 全绿** ✓（**实测 6.6 分钟** ✓ —— 机器空闲 ⇒ 比历史那次 39.8 min 快得多 ✓；
+  最慢三条 `_test_e2e_l1l2` 106 s · `_test_parallel_runner` 96 s · `_test_daily_dd` 39 s ✓）；
+  两个快闸门（`_test_version_sync` / `_test_undefined_names`）先过 ✓；跑完**未留脏状态** ✓
+  （`ai_test/_tracks/_control.json` 仍是 `running=false / enabled=[1000,300,500] / stopped=[all] / updated 2026-09-24` ✓，无引擎进程残留 ✓）。
+  ⚠ **记账**：这一跑发生在**本版提交之前** ✓，而本条目初稿写的是「**未做**」✗ ⇒ 本行是**据实补记** ✓
+  （同 v1.36.0 那次的补记做法 ✓）。
 
 ---
 
