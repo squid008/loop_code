@@ -15,7 +15,7 @@
 | 定位 | 自动**挖掘**（生成 → 筛选 → 入库） | **平台**（因子库 / 看板 / 回测 / 公式编辑器） |
 | 技术栈 | Python 自研引擎 + B角 LLM 审查 | FastAPI 后端 + 前端（React/TS） |
 | 表达式 | 自有前缀式：`max(ts_min20(cs_rank(x)), y)` | **qlib ops**：`Mean/Std/Ref/Corr/Rank/Quantile/Slope` + `$close` |
-| 叶子 | **61** = 量价 7 + 派生 12 + 资金流 16 + **BARRA 11** + **财报PIT 15**（★ 2026-09-23 复核；单一事实源 `engine/loop_fields.py::LEAVES` ✓） | 量价 + 资金流（moneyflow3）+ L2 方言 `L2_AMO(n,b\|s)`；**无 BARRA / 财报PIT** |
+| 叶子 | **63** = 量价 7 + 派生 12 + 资金流 16 + **BARRA 11** + **财报PIT 17**（★ 2026-10-14：财报 +2 —— 自由现金流收益率 `fa_fcf_yield` / 现金 ROA `fa_ocf_ta`；单一事实源 `engine/loop_fields.py::LEAVES` ✓） | 量价 + 资金流（moneyflow3）+ L2 方言 `L2_AMO(n,b\|s)`；**无 BARRA / 财报PIT** |
 | 算子 | `ts_* / log/abs/neg/sign/cs_* / add/sub/mul/div/corr*/min/max`——**无比较/布尔算子，结构上产不出 0/1 因子** | 含益盟/通达信全套（`If/Gt/And/Count/FILTER/SMA/HHVBARS`…）→ **多 0/1 触发型** |
 | 评估 | `standard/standard_test.py`：Top10% 多头 + **十档分层** + 费后 + 分段 + 风格归因 + **多池** | M5 待开发（对齐聚宽：IC / **5 组** / 多空 / 衰减，1/5/20 日） |
 | 存储现状 | `loop_state.pkl` + `loop_archive.csv` + Markdown | 设计稿：每因子一 h5 + `<name>_meta.json`（**M6 未落地**） |

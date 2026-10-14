@@ -206,7 +206,8 @@ _GEN_SYSTEM_FALLBACK = (
     "{{LEAF_MF}}\n"
     "    风格族(前缀 barra_, 每日截面风格暴露, 已做截面处理): {{LEAF_BARRA}}\n"
     "    财报族(前缀 fa_, PIT口径按公告日对齐无未来函数; _yoy=TTM同比, gm=毛利率, "
-    "np_margin=净利率, roe=ROE, lev=杠杆, pb=市净率, accrual=应计, gw=商誉占比): "
+    "np_margin=净利率, roe=ROE, lev=杠杆, pb=市净率, accrual=应计, gw=商誉占比, "
+    "fcf_yield=自由现金流收益率((经营现金流−资本开支)/总市值), ocf_ta=现金ROA(经营现金流/总资产)): "
     "{{LEAF_FA}}\n"
     # ★ 算子名单同样**不手写** —— 由 `render_prompt()` 从 `ops_registry` 实时注入（P0-1）
     "  单目算子(1参): {{OPS_CORE}}\n"

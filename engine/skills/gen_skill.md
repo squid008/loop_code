@@ -5,7 +5,7 @@
     量价族: {{LEAF_PRICE}}
     资金流族(前缀 mf_, 原始拆分无未来函数; 带 _buy/_sell 结尾=主动买入/卖出金额(元, 量纲A), _bqty/_sqty 结尾=主动买入/卖出股数(量纲V); 净额请用 sub 自组合): {{LEAF_MF}}
     风格族(前缀 barra_, 每日截面风格暴露, 已做截面处理): {{LEAF_BARRA}}
-    财报族(前缀 fa_, PIT口径按公告日对齐无未来函数; _yoy=TTM同比, gm=毛利率, np_margin=净利率, roe=ROE, lev=杠杆, pb=市净率, accrual=应计, gw=商誉占比): {{LEAF_FA}}
+    财报族(前缀 fa_, PIT口径按公告日对齐无未来函数; _yoy=TTM同比, gm=毛利率, np_margin=净利率, roe=ROE, lev=杠杆, pb=市净率, accrual=应计, gw=商誉占比, fcf_yield=自由现金流收益率((经营现金流−资本开支)/总市值), ocf_ta=现金ROA(经营现金流/总资产)): {{LEAF_FA}}
   单目算子(1参): {{OPS_CORE}}
   ★指数均线(1参): {{OPS_EMA}} (指数加权, 衰减因子 2/(n+1)。与 ts_mean 的等权不同 ⇒ 提供另一条平滑通道; 注意 ema12/ema26 可组合出 MACD: sub(ema12(A), ema26(A)))
   ★回归族(1参): {{OPS_REG}} (对时间做滚动线性回归: slope=趋势斜率(方向+强度); rsqr=拟合度R²(路径多接近直线, 但不含方向 ⇒ 建议与 slope 组合: mul(ts_rsqr20(close), ts_slope20(close))); resi=最后一点相对趋势线的偏离。注意: 它们描述趋势而非水平, 与 ts_mean 是不同通道)

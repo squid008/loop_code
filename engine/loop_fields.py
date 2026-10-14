@@ -45,7 +45,18 @@ FA_LEAVES = ['fa_np_yoy', 'fa_rev_yoy', 'fa_op_yoy', 'fa_ocf_yoy',
              #     覆盖率不够：fa_int_cov(0.01%) · fa_rnd(9.95%) · fa_rnd_cap(2.29%)
              #     信息重复：  fa_roe_wa(与 fa_roe 截面 0.855) · fa_roa(与 fa_np_margin 0.867)
              'fa_pb', 'fa_accrual', 'fa_asset_turn', 'fa_gw',
-             'fa_inv_turn', 'fa_recv_turn', 'fa_sell_exp']
+             'fa_inv_turn', 'fa_recv_turn', 'fa_sell_exp',
+             # ★★ 2026-10-14 再 +2（用户："算子里有没有自由现金流/ROE/ROA？" ⇒
+             #   ① 加自由现金流 ② ROA 换口径重放）—— 口径**先实测后定**（逐日截面
+             #   rank 相关，引擎口径；脚本 `ai_test/dedup_check.py` + `--cand_out`）：
+             #   · `fa_fcf_yield` 自由现金流/总市值 = (经营现金流TTM − 资本开支TTM)/日 mktcap
+             #     实测与全部 61 个旧叶子的最大 |相关| 仅 **0.485**（barra_earnings_yield）✓
+             #     ⚠ 资本开支源里**没有 TTM 版** ⇒ 自己按 YTD 滚 4 季（`build_fa_pit._ttm`）✓
+             #   · `fa_ocf_ta` **现金 ROA** = 经营现金流TTM/总资产（实测 **0.553**，fa_accrual）✓
+             #   ⚠ **净利润口径的 ROA 实测全部共线、故本版不加** ✗（详见 build_fa_pit 顶部）：
+             #     np/总资产 0.844(fa_roe) · 营业利润/总资产 0.834 · np/(总资产−货币资金) 0.824
+             #     · ROA 同比 0.947(fa_np_yoy，总资产变化慢 ⇒ 数学必然)
+             'fa_fcf_yield', 'fa_ocf_ta']
 
 # ---- 派生/衍生叶子(loop_engine.base_fields 运行时计算, 生成与诊断均可见) ----
 LEAVES_DERIVED = ['vwap', 'ret', 'turn_ratio', 'ln_mktcap', 'ln_volume',
