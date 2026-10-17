@@ -228,6 +228,8 @@ def _l1_eval(cands, Bsub, Rsub, Usub, args, fail_lib, need_shape, _style_obs,
         except Exception as e:
             obs_df = None
             print(f"  [风格观测] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
+    # ★ 2026-10-17：费后收益代理观测（独立文件；不依赖 --style_obs，纯观测）
+    _write_obs_ret(stats, args)
     # 失败模式库: IC/稳定性不过线的候选按骨架记失败(过线者待 L2 后记 ok)
     for r_ in stats:
         nd = r_['node']
@@ -417,21 +419,7 @@ def _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _re
                     sty.append(None)
             else:
                 sty.append(None)
-        for m_, i_, s_, k_, sg, sh, sy, sn in zip(mu, ir, stab, kidx, sign, shp, sty, shn):
-            d = dict(idx=int(k_), node=cands[int(k_)],
-                     expr=str(cands[int(k_)]), ic=float(m_),
-                     ic_ir=float(i_), stab=float(s_), sign=float(sg))
-            if sh is not None:
-                d['mono'] = sh['mono']
-                d['best_grp'] = sh['best_grp']
-                d['shape_pos'] = sh['shape_pos']
-            if sn is not None:                      # 风格中性后的第二套形状量(仅观测)
-                d['mono_n'] = sn['mono']
-                d['shape_pos_n'] = sn['shape_pos']
-            if sy is not None:                      # 风格观测(仅 --style_obs 时非空)
-                for _k in STYLE_KEYS:
-                    d['st_' + _k] = sy[_k]
-            stats.append(d)
+        _append_stats(stats, cands, mu, ir, stab, kidx, sign, shp, sty, shn)
         if _reuse_v:
             _vreuse_fill(stats, vals, args)                  # ★ 2026-09-29：整块搬进 helper（守 R1 ✓）
         n_eval += len(vals)
@@ -441,6 +429,89 @@ def _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _re
         trim_cache_mb(_C._LRU, _C.LRU_MB)                    # ★ 治本: 字节上限(池越宽单条越大 ✗)
     # ★ 2026-09-29（§1.40 ①）：把"批内就地判定"的结果带回给 `_l1_filter` ✓（它不再重算 ✗）
     return k, n_eval, nd, dec_keep, len(Kr), t_dec
+
+
+def _append_stats(stats, cands, mu, ir, stab, kidx, sign, shp, sty, shn):
+    """把一批候选的 L1 指标装配成 stats 行。
+
+    ★ 2026-10-17 从 `_l1_batches` 抽出（新增 4 个观测字段后它顶到 125 行，破 R1 120 线）：
+      逐字搬运；唯一新增是 `ret_d1/ret_d10/std_top/std_spread`（费后收益代理的原料，
+      **不参与 score/门槛**，只被 `_write_obs_ret` 读取）。
+    """
+    for m_, i_, s_, k_, sg, sh, sy, sn in zip(mu, ir, stab, kidx, sign, shp, sty, shn):
+        d = dict(idx=int(k_), node=cands[int(k_)],
+                 expr=str(cands[int(k_)]), ic=float(m_),
+                 ic_ir=float(i_), stab=float(s_), sign=float(sg))
+        if sh is not None:
+            d['mono'] = sh['mono']
+            d['best_grp'] = sh['best_grp']
+            d['shape_pos'] = sh['shape_pos']
+            d['ret_d1'] = sh.get('d1', np.nan)
+            d['ret_d10'] = sh.get('d10', np.nan)
+            d['std_top'] = sh.get('std_top', np.nan)
+            d['std_spread'] = sh.get('std_spread', np.nan)
+        if sn is not None:                      # 风格中性后的第二套形状量(仅观测)
+            d['mono_n'] = sn['mono']
+            d['shape_pos_n'] = sn['shape_pos']
+        if sy is not None:                      # 风格观测(仅 --style_obs 时非空)
+            for _k in STYLE_KEYS:
+                d['st_' + _k] = sy[_k]
+        stats.append(d)
+
+
+_ANN_DAYS = 252.0     # 年化交易日数（仅用于费后收益代理观测，不参与判定）
+
+
+def _write_obs_ret(stats, args):
+    """把**费前多空/顶档收益 + 时序波动 + 费后年化代理**追加到独立观测文件。
+
+    ★ 为什么独立文件（不并入 `loop_style_obs.csv`）：后者已累积 5.5 万行 / 14 列，
+      append 新列会让新旧表头错位（pandas 按列顺序写、header 只写一次）✗。
+      独立文件按 (gen, expr) 与老表 join 即可 ✓。
+    ★ 纯观测：不参与任何判定/排序（`--score_mode` 与门槛都不读它），失败只告警
+      —— 无人值守铁律：宁可少观测，不可中断整代 ✓。
+    ★ 口径：`d1` 是**D1 = 因子值最高档（多头档）**、`d10` 是最低档，均为**每期**
+      （FWD 交易日）平均收益 ⇒ 年化 = ×252/FWD（⚠ 别把 d10 当顶档，2026-10-17 差点搞反）；
+      换手用 `turn_est = 1-stab` 代理 ✓（与现状换手代理同源），双边成本 = `cost×2×turn`。
+    """
+    if not stats:
+        return
+    try:
+        ann = _ANN_DAYS / float(_S.FWD)
+        cost = float(getattr(args, 'cost', 0.0) or 0.0)
+        rows = []
+        for d_ in stats:
+            if not d_.get('expr'):
+                continue
+            stab = float(d_.get('stab', np.nan))
+            turn = (1.0 - stab) if np.isfinite(stab) else np.nan
+            d1 = float(d_.get('ret_d1', np.nan))
+            d10 = float(d_.get('ret_d10', np.nan))
+            std_top = float(d_.get('std_top', np.nan))
+            top_ann = d1 * ann if np.isfinite(d1) else np.nan
+            spr_ann = ((d1 - d10) * ann
+                       if (np.isfinite(d10) and np.isfinite(d1)) else np.nan)
+            fee = cost * 2.0 * turn * ann if np.isfinite(turn) else np.nan
+            net_ann = (top_ann - fee
+                       if (np.isfinite(top_ann) and np.isfinite(fee)) else np.nan)
+            vol = std_top * np.sqrt(ann) if np.isfinite(std_top) else np.nan
+            rows.append(dict(
+                gen=args.gen, expr=d_['expr'], sign=d_.get('sign', np.nan),
+                fwd=_S.FWD, cost=cost, stab=stab, turn_est=turn,
+                ret_d1=d1, ret_d10=d10, std_top=std_top,
+                ret_top_ann=top_ann, ret_spread_ann=spr_ann, net_ann=net_ann,
+                net_sharpe=((net_ann / vol) if (np.isfinite(net_ann) and np.isfinite(vol)
+                                                and vol > 0) else np.nan)))
+        if not rows:
+            return
+        df = pd.DataFrame(rows)
+        need_h = ((not os.path.exists(_P.STYLE_OBS_RET))
+                  or os.path.getsize(_P.STYLE_OBS_RET) == 0)
+        df.to_csv(_P.STYLE_OBS_RET, index=False, mode='a', header=need_h,
+                  encoding='utf-8-sig')
+        print(f"已存 {_P.STYLE_OBS_RET} (追加, 本代 {len(df)} 条; 纯观测，不参与排序)")
+    except Exception as e:                                   # noqa: BLE001
+        print(f"  [收益观测] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
 
 # ★★★ 以下是本函数**函数体内**的设计说明（S3a 只搬位置、一字未改 ✓）
 #   规则：连续 ≥3 行的论述块上移；贴行注释留在代码旁（保局部性 ✓）

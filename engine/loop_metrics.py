@@ -44,10 +44,18 @@ def decile_shape(RS, R, U, n_grp=N_GRP):
       ⚠ R/U 必须与 RS 同行。调用方可自行 `[::FWD]` 抽样：
         `rank_rows` 逐行独立 ⇒ `rank_rows(F)[::FWD] ≡ rank_rows(F[::FWD])`，两者等价。
 
-    返回 dict(mono, best_grp, d1, d10, shape_pos, n_period)
+    返回 dict(mono, best_grp, d1, d10, shape_pos, n_period, std_top, std_spread)
       mono      : Spearman(档序 D1..D10, 各档平均收益)；>0 表示"因子值越高收益越高"
       best_grp  : 最优档下标（0 = D1）
       shape_pos : clip(mono,0,1) × (最优档==D1 ? 1.0 : 0.5)  ← 顶档污染降权；排序分用这个
+      d1 / d10  : **D1（因子值最高档，即多头档）** / D10（最低档）的每期平均收益
+                  （费前；×252/FWD 即年化）。⚠ 分档是 `floor((1-RS)*n_grp)` ⇒
+                  **D1 = RS 最大**，别把 d10 当顶档（2026-10-17 差点搞反）
+      std_top   : D1（多头档）收益的**时序标准差**（每期口径；×√(252/FWD) 即年化波动）
+      std_spread: 多空（**D1−D10**）收益的时序标准差
+    ★ 2026-10-17（用户：目标是费后年化收益，不是 IC）：d1/d10 本来就算了，只是此前
+      没返回给调用方 ⇒ 现补齐 + 两个波动量，供 L1 侧计算费后收益代理。**不改变任何
+      既有返回值语义**（只增键），故对现有 score/门槛**零行为影响** ✓
     """
     T = RS.shape[0]
     rows = []
@@ -64,8 +72,13 @@ def decile_shape(RS, R, U, n_grp=N_GRP):
                      for g in range(n_grp)])
     if not rows:
         return dict(mono=np.nan, best_grp=-1, d1=np.nan, d10=np.nan,
-                    shape_pos=np.nan, n_period=0)
-    ex = np.nanmean(np.array(rows), axis=0)
+                    shape_pos=np.nan, n_period=0, std_top=np.nan, std_spread=np.nan)
+    arr = np.array(rows, dtype='float64')
+    ex = np.nanmean(arr, axis=0)
+    _top = arr[:, 0]            # ★ D1 = 因子值最高档（多头档），不是 d10
+    _spr = arr[:, 0] - arr[:, -1]
+    std_top = float(np.nanstd(_top)) if np.isfinite(_top).sum() >= 5 else np.nan
+    std_spread = float(np.nanstd(_spr)) if np.isfinite(_spr).sum() >= 5 else np.nan
     # 档序 D1..D10 = 10,9,...,1（无并列）⇒ 与 ex 的 Pearson 即 Spearman
     mono = (float(np.corrcoef(np.arange(n_grp, 0, -1, dtype=float), ex)[0, 1])
             if np.isfinite(ex).all() else np.nan)
@@ -73,7 +86,8 @@ def decile_shape(RS, R, U, n_grp=N_GRP):
     sp = (min(max(mono, 0.0), 1.0) * (1.0 if best == 0 else 0.5)) \
         if np.isfinite(mono) else np.nan
     return dict(mono=mono, best_grp=best, d1=float(ex[0]), d10=float(ex[-1]),
-                shape_pos=(float(sp) if np.isfinite(sp) else np.nan), n_period=len(rows))
+                shape_pos=(float(sp) if np.isfinite(sp) else np.nan), n_period=len(rows),
+                std_top=std_top, std_spread=std_spread)
 
 
 def l1_score(stab, ic_ir, shape_pos=None, mode='old'):

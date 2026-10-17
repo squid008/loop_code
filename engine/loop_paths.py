@@ -16,6 +16,8 @@ DOCS = os.path.join(os.path.dirname(HERE), 'docs')
 STATE = os.path.join(HERE, 'loop_state.pkl')
 ARCHIVE = os.path.join(DOCS, 'loop_archive.csv')
 STYLE_OBS = os.path.join(DOCS, 'loop_style_obs.csv')
+# ★ 2026-10-17：费后收益代理观测（独立文件，理由见 loop_l1._write_obs_ret docstring）
+STYLE_OBS_RET = os.path.join(DOCS, 'loop_style_obs_ret.csv')
 STRIP_OBS = os.path.join(DOCS, 'loop_strip_style.csv')
 POOL_OBS = os.path.join(DOCS, 'loop_pool_obs.csv')
 JOURNAL = os.path.join(DOCS, 'loop_journal.md')
@@ -24,7 +26,7 @@ LIB_ENTRIES = os.path.join(DOCS, 'library_entries.jsonl')
 
 MINE_POOL = 'all'   # 当前挖掘池（set_mine_pool 运行期改）
 
-_PATH_KEYS = ('STATE', 'ARCHIVE', 'STYLE_OBS', 'STRIP_OBS', 'POOL_OBS', 'JOURNAL', 'LIBRARY')
+_PATH_KEYS = ('STATE', 'ARCHIVE', 'STYLE_OBS', 'STYLE_OBS_RET', 'STRIP_OBS', 'POOL_OBS', 'JOURNAL', 'LIBRARY')
 _ORIG_PATHS = {}
 
 
