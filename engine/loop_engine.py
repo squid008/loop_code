@@ -409,10 +409,12 @@ if __name__ == '__main__':
                     help='L1 形状门槛(批1 P0, 2026-09-11): 十档单调性 mono 低于该值则丢弃; 0=关闭(默认)。'
                          '标定(1150 条历史 L2 候选): 入库因子 mono 最小 0.770 -> 取 0.75 可拦下约 27%% '
                          '被判死的候选, 且对入库因子零误杀')
-    ap.add_argument('--score_mode', choices=['old', 'new'], default='old',
+    ap.add_argument('--score_mode', choices=['old', 'new', 'ic_n'], default='old',
                     help='L1 排序分(批1 P0, 2026-09-11): old=|IC_IR|×(0.25+0.75·stab) (默认, 原行为); '
                          'new=stab×(0.5+0.5·shape_pos)。标定: 与 L2 Calmar 的相关性 old +0.167 -> '
-                         'new +0.668; new 不含 ic_ir(IC 仅留作 ic>min_ic 准入门槛)')
+                         'new +0.668; new 不含 ic_ir(IC 仅留作 ic>min_ic 准入门槛)。'
+                         'ic_n(2026-10-19)=clip(风格中性IC,0,∞): 唯一与 strip_calmar 正相关的 L1 指标'
+                         '(ic −0.211 / new −0.157 / ic_n +0.197)；⚠ 需 --style_obs, 缺值自动回退 new')
     ap.add_argument('--style_obs', action='store_true',
                     help='风格暴露观测(2026-09-11, 默认关): 记录**每个被求值的 L1 候选**对 '
                          'lncap/lnamt/lntr/lnpx 的截面秩相关(L1 子面板[::FWD] 视图), 紧跟 L1 求值 '
