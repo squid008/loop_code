@@ -53,12 +53,17 @@ def decile_shape(RS, R, U, n_grp=N_GRP):
                   **D1 = RS 最大**，别把 d10 当顶档（2026-10-17 差点搞反）
       std_top   : D1（多头档）收益的**时序标准差**（每期口径；×√(252/FWD) 即年化波动）
       std_spread: 多空（**D1−D10**）收益的时序标准差
+      top20_ret / top20_std : **Top20%（D1+D2）**每期平均收益 / 时序标准差
+                  —— 比单档 D1 样本大一倍（≈60 只/期），降顶档噪声 ✓
+      turn_top  : **D1 名单的跨期换手**（= 1 − 相邻两期名单 Jaccard 重叠率，均值）
+                  —— 这是**真换手代理**，用来替代 `1−stab`（实测后者与 L2 结果无关 ✗）
+                  ⚠ 若中间有期被跳过（样本不足），相邻两期可能跨了更长间隔 ⇒ 换手略偏高
     ★ 2026-10-17（用户：目标是费后年化收益，不是 IC）：d1/d10 本来就算了，只是此前
       没返回给调用方 ⇒ 现补齐 + 两个波动量，供 L1 侧计算费后收益代理。**不改变任何
       既有返回值语义**（只增键），故对现有 score/门槛**零行为影响** ✓
     """
     T = RS.shape[0]
-    rows = []
+    rows, rows20, tops = [], [], []
     for t in range(T):
         f = R[t]
         if not np.isfinite(f).any():
@@ -70,15 +75,25 @@ def decile_shape(RS, R, U, n_grp=N_GRP):
         rr = f[m].astype('float64')
         rows.append([rr[dec == g].mean() if (dec == g).sum() >= 5 else np.nan
                      for g in range(n_grp)])
+        _m20 = dec < 2                                  # D1 + D2 = Top20%
+        rows20.append(float(rr[_m20].mean()) if _m20.sum() >= 10 else np.nan)
+        tops.append(set(np.flatnonzero(m)[dec == 0].tolist()))   # D1 名单（子面板列号）
     if not rows:
         return dict(mono=np.nan, best_grp=-1, d1=np.nan, d10=np.nan,
-                    shape_pos=np.nan, n_period=0, std_top=np.nan, std_spread=np.nan)
+                    shape_pos=np.nan, n_period=0, std_top=np.nan, std_spread=np.nan,
+                    top20_ret=np.nan, top20_std=np.nan, turn_top=np.nan)
     arr = np.array(rows, dtype='float64')
     ex = np.nanmean(arr, axis=0)
     _top = arr[:, 0]            # ★ D1 = 因子值最高档（多头档），不是 d10
     _spr = arr[:, 0] - arr[:, -1]
     std_top = float(np.nanstd(_top)) if np.isfinite(_top).sum() >= 5 else np.nan
     std_spread = float(np.nanstd(_spr)) if np.isfinite(_spr).sum() >= 5 else np.nan
+    _a20 = np.array(rows20, dtype='float64')
+    top20_ret = float(np.nanmean(_a20)) if np.isfinite(_a20).any() else np.nan
+    top20_std = float(np.nanstd(_a20)) if np.isfinite(_a20).sum() >= 5 else np.nan
+    _ovs = [len(a & b) / max(len(a | b), 1)
+            for a, b in zip(tops, tops[1:]) if a and b]
+    turn_top = float(1.0 - np.mean(_ovs)) if _ovs else np.nan
     # 档序 D1..D10 = 10,9,...,1（无并列）⇒ 与 ex 的 Pearson 即 Spearman
     mono = (float(np.corrcoef(np.arange(n_grp, 0, -1, dtype=float), ex)[0, 1])
             if np.isfinite(ex).all() else np.nan)
@@ -87,7 +102,8 @@ def decile_shape(RS, R, U, n_grp=N_GRP):
         if np.isfinite(mono) else np.nan
     return dict(mono=mono, best_grp=best, d1=float(ex[0]), d10=float(ex[-1]),
                 shape_pos=(float(sp) if np.isfinite(sp) else np.nan), n_period=len(rows),
-                std_top=std_top, std_spread=std_spread)
+                std_top=std_top, std_spread=std_spread,
+                top20_ret=top20_ret, top20_std=top20_std, turn_top=turn_top)
 
 
 def l1_score(stab, ic_ir, shape_pos=None, mode='old'):

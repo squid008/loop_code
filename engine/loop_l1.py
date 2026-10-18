@@ -450,9 +450,15 @@ def _append_stats(stats, cands, mu, ir, stab, kidx, sign, shp, sty, shn):
             d['ret_d10'] = sh.get('d10', np.nan)
             d['std_top'] = sh.get('std_top', np.nan)
             d['std_spread'] = sh.get('std_spread', np.nan)
+            # ★ 2026-10-18：纯多头口径（用户：多空不可交易，只看纯多头费后）
+            d['ret20'] = sh.get('top20_ret', np.nan)
+            d['std20'] = sh.get('top20_std', np.nan)
+            d['turn_top'] = sh.get('turn_top', np.nan)      # 真换手（D1 名单跨期重叠率）
         if sn is not None:                      # 风格中性后的第二套形状量(仅观测)
             d['mono_n'] = sn['mono']
             d['shape_pos_n'] = sn['shape_pos']
+            d['ret_d1_n'] = sn.get('d1', np.nan)            # 风格中性后的多头档收益
+            d['std_top_n'] = sn.get('std_top', np.nan)
         if sy is not None:                      # 风格观测(仅 --style_obs 时非空)
             for _k in STYLE_KEYS:
                 d['st_' + _k] = sy[_k]
@@ -460,6 +466,36 @@ def _append_stats(stats, cands, mu, ir, stab, kidx, sign, shp, sty, shn):
 
 
 _ANN_DAYS = 252.0     # 年化交易日数（仅用于费后收益代理观测，不参与判定）
+
+
+def _ensure_obs_schema(path, cols):
+    """表头与本次列不一致 ⇒ 把旧文件轮转成 `<name>.v1.csv`（数据保留），返回 True=要写 header。
+
+    ★ 2026-10-18：观测列从 14 增到 24。CSV 是 append + 只写一次表头的，
+      直接追加新列会让**旧行与新行按位置错位** ✗（v1.38.1 当初就是为避免这个才另开文件）
+      ⇒ 结构一变就改名归档，绝不就地混写 ✓。
+    """
+    if (not os.path.exists(path)) or os.path.getsize(path) == 0:
+        return True
+    try:
+        with open(path, encoding='utf-8-sig') as f:
+            head = f.readline().strip()
+    except Exception:                                        # noqa: BLE001
+        return False
+    if head == ','.join(cols):
+        return False
+    bak = os.path.splitext(path)[0] + '.v1.csv'
+    if os.path.exists(bak):
+        bak = (os.path.splitext(path)[0] + '.v1_'
+               + time.strftime('%Y%m%d_%H%M%S') + '.csv')
+    try:
+        os.replace(path, bak)
+        print('  [收益观测] 列结构变化 ⇒ 旧文件轮转为 {}（数据保留）'.format(
+            os.path.basename(bak)))
+    except Exception as e:                                   # noqa: BLE001
+        print('  [收益观测] 旧文件轮转失败（继续写新表头）: {}: {}'.format(
+            type(e).__name__, e))
+    return True
 
 
 def _write_obs_ret(stats, args):
@@ -484,10 +520,16 @@ def _write_obs_ret(stats, args):
             if not d_.get('expr'):
                 continue
             stab = float(d_.get('stab', np.nan))
-            turn = (1.0 - stab) if np.isfinite(stab) else np.nan
+            turn = (1.0 - stab) if np.isfinite(stab) else np.nan      # 旧代理（保留可比）
+            turn_top = float(d_.get('turn_top', np.nan))
+            turn_use = turn_top if np.isfinite(turn_top) else turn     # ★ 优先真换手
             d1 = float(d_.get('ret_d1', np.nan))
             d10 = float(d_.get('ret_d10', np.nan))
             std_top = float(d_.get('std_top', np.nan))
+            ret20 = float(d_.get('ret20', np.nan))
+            std20 = float(d_.get('std20', np.nan))
+            d1n = float(d_.get('ret_d1_n', np.nan))
+            stdn = float(d_.get('std_top_n', np.nan))
             top_ann = d1 * ann if np.isfinite(d1) else np.nan
             spr_ann = ((d1 - d10) * ann
                        if (np.isfinite(d10) and np.isfinite(d1)) else np.nan)
@@ -495,18 +537,34 @@ def _write_obs_ret(stats, args):
             net_ann = (top_ann - fee
                        if (np.isfinite(top_ann) and np.isfinite(fee)) else np.nan)
             vol = std_top * np.sqrt(ann) if np.isfinite(std_top) else np.nan
+            # ---- 2026-10-18：**纯多头费后**（用户：多空不可交易，只看纯多头）----
+            fee_t = cost * 2.0 * turn_use * ann if np.isfinite(turn_use) else np.nan
+            r20_ann = ret20 * ann if np.isfinite(ret20) else np.nan
+            net20 = (r20_ann - fee_t
+                     if (np.isfinite(r20_ann) and np.isfinite(fee_t)) else np.nan)
+            vol20 = std20 * np.sqrt(ann) if np.isfinite(std20) else np.nan
+            netn_ann = ((d1n * ann) - fee_t
+                        if (np.isfinite(d1n) and np.isfinite(fee_t)) else np.nan)
+            voln = stdn * np.sqrt(ann) if np.isfinite(stdn) else np.nan
             rows.append(dict(
                 gen=args.gen, expr=d_['expr'], sign=d_.get('sign', np.nan),
                 fwd=_S.FWD, cost=cost, stab=stab, turn_est=turn,
                 ret_d1=d1, ret_d10=d10, std_top=std_top,
                 ret_top_ann=top_ann, ret_spread_ann=spr_ann, net_ann=net_ann,
                 net_sharpe=((net_ann / vol) if (np.isfinite(net_ann) and np.isfinite(vol)
-                                                and vol > 0) else np.nan)))
+                                                and vol > 0) else np.nan),
+                turn_top=turn_top, ret20=ret20, std20=std20,
+                ret_d1_n=d1n, std_top_n=stdn, ret20_ann=r20_ann,
+                net20_ann=net20,
+                net20_sharpe=((net20 / vol20) if (np.isfinite(net20) and np.isfinite(vol20)
+                                                  and vol20 > 0) else np.nan),
+                net_n_ann=netn_ann,
+                net_n_sharpe=((netn_ann / voln) if (np.isfinite(netn_ann) and np.isfinite(voln)
+                                                    and voln > 0) else np.nan)))
         if not rows:
             return
         df = pd.DataFrame(rows)
-        need_h = ((not os.path.exists(_P.STYLE_OBS_RET))
-                  or os.path.getsize(_P.STYLE_OBS_RET) == 0)
+        need_h = _ensure_obs_schema(_P.STYLE_OBS_RET, list(df.columns))
         df.to_csv(_P.STYLE_OBS_RET, index=False, mode='a', header=need_h,
                   encoding='utf-8-sig')
         print(f"已存 {_P.STYLE_OBS_RET} (追加, 本代 {len(df)} 条; 纯观测，不参与排序)")
