@@ -376,6 +376,8 @@ def _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _re
         sign = np.sign(mu)
         vals = [(-v if s < 0 else v) for v, s in zip(vals, sign)]
         mu, ir = np.abs(mu), np.abs(ir)
+        # ★ 2026-10-18：**风格中性残差收益上的 IC**（纯观测；原料 Rsub_s_n 本就算好给 shape_pos_n 用）
+        mu_n = _ic_n(vals, Rsub_s_n, Usub_s)
         stab = [factor_stability(v, None) for v in vals]
         shp, sty, shn = [], [], []
         for i_v, v in enumerate(vals):
@@ -419,7 +421,7 @@ def _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _re
                     sty.append(None)
             else:
                 sty.append(None)
-        _append_stats(stats, cands, mu, ir, stab, kidx, sign, shp, sty, shn)
+        _append_stats(stats, cands, mu, ir, stab, kidx, sign, shp, sty, shn, mu_n=mu_n)
         if _reuse_v:
             _vreuse_fill(stats, vals, args)                  # ★ 2026-09-29：整块搬进 helper（守 R1 ✓）
         n_eval += len(vals)
@@ -431,17 +433,41 @@ def _l1_batches(BATCH, Bsub, R_SHAPE, Rsub, Rsub_s_n, STYLE_S, Usub, Usub_s, _re
     return k, n_eval, nd, dec_keep, len(Kr), t_dec
 
 
-def _append_stats(stats, cands, mu, ir, stab, kidx, sign, shp, sty, shn):
+def _ic_n(vals, Rsub_s_n, Usub_s):
+    """**风格中性残差收益**上的 IC（逐期 spearman 均值，按因子方向取绝对值）。
+
+    ★ 2026-10-18（用户："IC 高只是排序线性度好"）：真正该优化的是**剥掉风格后**的效果。
+      现在 L1 的 `ic` 用的是**原始收益** ⇒ 引擎一直在朝"风格 beta"优化
+      （证据：gen>=100 有 38 条过了 calmar2/ic2/sharpe2/neg_yr/相关性全部门槛的候选，
+       `strip_calmar` **38/38 全为负**，中位 −0.161）。
+    ★ 本函数只**观测**（不改排序/门槛）—— 先验证它与 `strip_calmar` 的相关是否高于原始 `ic`。
+    """
+    if Rsub_s_n is None:
+        return None
+    try:
+        mu, _ir, _ = batch_ic(vals, Rsub_s_n, Usub_s, None)
+        return np.abs(mu)
+    except Exception:                                        # noqa: BLE001
+        return None
+
+
+def _append_stats(stats, cands, mu, ir, stab, kidx, sign, shp, sty, shn, mu_n=None):
     """把一批候选的 L1 指标装配成 stats 行。
 
     ★ 2026-10-17 从 `_l1_batches` 抽出（新增 4 个观测字段后它顶到 125 行，破 R1 120 线）：
       逐字搬运；唯一新增是 `ret_d1/ret_d10/std_top/std_spread`（费后收益代理的原料，
       **不参与 score/门槛**，只被 `_write_obs_ret` 读取）。
+    ★ 2026-10-18：再加 `ic_n`（**风格中性残差收益上的 IC**，纯观测）——
+      原料 `Rsub_s_n` 原本就算好给 `shape_pos_n` 用，这里只多算一次 IC（成本≈0）。
+      ⚠ 为什么需要它：现有 `ic` 是**原始收益**的 IC ⇒ 搜索朝风格 beta 走
+      （实测 gen>=100 里 38 条过全部门槛的候选，`strip_calmar` **38/38 全为负** ✗）。
     """
-    for m_, i_, s_, k_, sg, sh, sy, sn in zip(mu, ir, stab, kidx, sign, shp, sty, shn):
+    for j, (m_, i_, s_, k_, sg, sh, sy, sn) in enumerate(
+            zip(mu, ir, stab, kidx, sign, shp, sty, shn)):
         d = dict(idx=int(k_), node=cands[int(k_)],
                  expr=str(cands[int(k_)]), ic=float(m_),
-                 ic_ir=float(i_), stab=float(s_), sign=float(sg))
+                 ic_ir=float(i_), stab=float(s_), sign=float(sg),
+                 ic_n=(float(mu_n[j]) if mu_n is not None else np.nan))
         if sh is not None:
             d['mono'] = sh['mono']
             d['best_grp'] = sh['best_grp']
@@ -520,6 +546,7 @@ def _write_obs_ret(stats, args):
             if not d_.get('expr'):
                 continue
             stab = float(d_.get('stab', np.nan))
+            ic_n = float(d_.get('ic_n', np.nan))                      # ★ 风格中性 IC（纯观测）
             turn = (1.0 - stab) if np.isfinite(stab) else np.nan      # 旧代理（保留可比）
             turn_top = float(d_.get('turn_top', np.nan))
             turn_use = turn_top if np.isfinite(turn_top) else turn     # ★ 优先真换手
@@ -560,7 +587,8 @@ def _write_obs_ret(stats, args):
                                                   and vol20 > 0) else np.nan),
                 net_n_ann=netn_ann,
                 net_n_sharpe=((netn_ann / voln) if (np.isfinite(netn_ann) and np.isfinite(voln)
-                                                    and voln > 0) else np.nan)))
+                                                    and voln > 0) else np.nan),
+                ic_n=ic_n))
         if not rows:
             return
         df = pd.DataFrame(rows)
