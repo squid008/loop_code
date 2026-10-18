@@ -445,7 +445,11 @@ def _ic_n(vals, Rsub_s_n, Usub_s):
     if Rsub_s_n is None:
         return None
     try:
-        mu, _ir, _ = batch_ic(vals, Rsub_s_n, Usub_s, None)
+        # ⚠ `Rsub_s_n` 是 **`[::FWD]` 调仓日视图**（`loop_stage`: `Rsub_s = Rsub[::FWD]` →
+        #   再 `neutralize_rows`）⇒ `vals` 必须先抽同样行，否则维度不匹配 ✗
+        #   （v1.38.3 首版就是漏了这一步，异常被 except 吞掉 ⇒ `ic_n` 全 NaN ✗）
+        vs = [v[::_S.FWD] for v in vals]
+        mu, _ir, _ = batch_ic(vs, Rsub_s_n, Usub_s, None)
         return np.abs(mu)
     except Exception:                                        # noqa: BLE001
         return None
