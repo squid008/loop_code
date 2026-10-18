@@ -55,6 +55,56 @@
 
 > ⚠ **归档动作（2026-10-18 第三次）**：承诺只保留最近 15 个版本，当时已累积 **16** 条 ⇒ 已把最旧的 1 条**整段原文**搬进 `history/change_log_archive.md` ✓。
 
+> ⚠ **归档动作（2026-10-19）**：承诺只保留最近 15 个版本，当时已累积 **16** 条 ⇒ 已把最旧的 1 条**整段原文**搬进 `history/change_log_archive.md` ✓。
+
+## [1.39.0] — 2026-10-19
+
+> 主题：**新增 `score_mode=ic_n`（按风格中性 IC 排序）** ✓
+> —— 这是目前**唯一与剥风格结果同向**的 L1 指标。
+> 起因：用户 _"加个排序跑1代"_（在 v1.38.4 修好 `ic_n` 观测之后）。
+
+### 一、依据（gen162 · 720 条观测 · 28 条 L2 候选）
+
+| 指标 | vs `strip_calmar` | vs `strip_ann_ex` |
+|---|---|---|
+| `ic`（现行排序的准入门槛） | **−0.211** | −0.161 |
+| 现行 `new`（`stab` 主导） | −0.157 | −0.241 |
+| **`ic_n`（本版新增）** | **+0.197** | **+0.231** |
+
+* `ic_n` 与 `ic` 仅 **0.536** 相关（中位 0.0064 vs 0.0175）⇒ **有独立信息** ✓
+* 全候选 **99 条 `ic_n>0.02`（13.8%）**，但现行排序没把它们送进 L2
+  （L2 只有 28 条、且 `strip_calmar` **全部为负**）⇒ 有货可选，是"选错了人" ✓
+
+⚠ **诚实标注**：样本仅 **28 条**（标准误 ±0.19）⇒ `+0.197` **还谈不上显著**。
+本版是**一次性实验**，判据事先定死：
+**L2 里是否出现 `strip_calmar > 0`**。若仍全负 ⇒ 排序彻底走到头，转生成端。
+
+### 二、改动（默认行为不变）
+
+* `engine/loop_metrics.py::l1_score(..., mode='ic_n', ic_n=None)` —— `clip(ic_n, 0, ∞)`
+* `engine/loop_l1.py::_make_score(l1, mode)` —— 排序分**单一入口**；
+  `ic_n` 缺值（未开 `--style_obs`）时**回退 `new` 并打印告警**（绝不静默 ✗）
+* `_l1_filter` 里原 if/else 三行改为调用 `_make_score`（净减 5 行，守 R1 ✓）
+* ⚠ **默认仍是 `new`**（由 `run_tracks.extra` 的 `--score_mode=new` 决定）⇒ 不加参数 = 行为不变 ✓
+
+### 三、验证
+
+| 项 | 结果 |
+|---|---|
+| 单元（`ai_test/_test_score_icn.py`） | ic_n 模式 / 缺值回退+告警 / `new`·`old` **逐位不变** / 负值 clip ✓ |
+| `py_compile` / 未定义名 | OK / **0 处**（185 文件）✓ |
+| R1 审计 | 无新增（`engine/` 仍只剩既存 `build_fa_pit.main()` 150 行）✓ |
+| 冒烟 `smoke_gen_only` | **4/4**（rc=0 · 无 Traceback/NameError · 全部 state SHA256 未变）✓ |
+| 全量回归 | 见 §四 |
+
+### 四、发版回归
+
+★ **全量回归：59/59 全绿** ✓（**实测 6.7 分钟** ✓；最慢 `_test_e2e_l1l2` 113 s ·
+`_test_parallel_runner` 107 s · `_test_daily_dd` 36 s ✓）。
+跑前无挖掘在跑 ✓；跑完**未起引擎** ✓、控制文件已复位 ✓。
+
+---
+
 ## [1.38.4] — 2026-10-18
 
 > 主题：**修 v1.38.3 的 `ic_n` 全 NaN** ✗ —— 观测字段的**行对齐 bug**，引擎判定零改动 ✓。
@@ -1041,83 +1091,6 @@ v1.30.0 的验收文字引用的是 `ai_test/_ab/after3`（＋ `base3` ✓），
 ⚠ **两处工具误报，故意不删** ✗：① `factor_miner.COST_PRESETS` —— 它是**有意转出**的兼容出口 ✓
 （注释写着"转出, 勿在此再定义" ✓）；② `engine/_dump_state.py` / `_dump_skel.py` 的 `Node`（或 `E`）——
 **pickle 反序列化需要该类在加载方命名空间可见** ✓（脚本里写明了 ✓）。⇒ 已在台账注明，免后人再误删 ✗。
-
----
-
-## [1.29.0] — 2026-09-28
-
-> 主题：**最后一个大函数拆分 —— `factor_miner.evaluate_real()` 275 → 47 行**（`loop_todo §1.36/§1.37 ③`）
-> ⚠ **引擎行为零改动** ✓ —— 因这是**数值路径**，本次用**逐位**证据：**46 次调用**
-> （23 用例 × `FWD=5/20`）在 **float64 原始字节级完全相同** ✓ ＋ 同进程重跑 ✓ ＋ **跨进程 `--digest`** ✓
-> ＋ 同 seed A/B **8 产物 + stdout 逐字相同** ✓ ⇒ 属结构整治 ⇒ SemVer **MINOR** ✓
-
-### 一、拆法：**原地拆**（不搬模块）＋ **逐字搬运、块内零改名**（★ 与 ①② 不同）
-
-①② 是"搬到新模块 + 闭包变方法"；③ **原地拆**（`factor_miner.py` 只 609 行 ✓ 无 R2 压力 ✓）。
-而它是**数值路径**（`calmar`/`sharpe`/`ann_ex`/`dd` 直接进 L2 入库门槛 ✗）⇒ 差 1e-16 就可能翻转
-"入库/不入库" ✗✗ ⇒ 唯一安全做法是：
-
-> **每一块逐字搬运、块内一个名字都不改** ✗ —— 只在新函数开头补几行把"原来的局部名"重新绑好
-> （`ann_e = res['ann_ex']` / `yrs = len(tr) * FWD / 243` ✓）⇒ **算术顺序、结合、字面量全未动** ✓
-> 手术脚本由**内容锚点**定位块（不硬编码行号 ✓），块文本直接从原文件取 ✓。
-
-### 二、落点（`ast` 实测）
-
-| 位置 | 改前 | 改后 |
-|---|---|---|
-| `evaluate_real` | **275** ✗（R1 线 120）| **47** ✓（只剩编排 ✓）|
-| `engine/factor_miner.py` | 609 | **683** ✓ |
-| `_er_periods`（逐期主循环 + 3 行几何映射 + `cv`）| 内联 99 行 | **112** ✓ |
-| `_er_ic` | 内联 | **27** ✓ |
-| `_er_base_res`（期频 + 组合自身指标 + `res` 字面量）| 内联 | **46** ✓ |
-| `_er_cw_marks`（市值加权口径）| 内联 | **38** ✓ |
-| `_er_daily_marks`（日频 mark-to-market 两段）| 内联 | **50** ✓ |
-| 8 条平行累积列表 | — | `_ErAcc`（`NamedTuple`）✓ |
-
-★ `_ErAcc` **故意不用** `loop_l2._L2Acc` 那种"可取属性的可变对象" ✗ ——
-可变对象意味着要在 **99 行循环里逐处改名**（`acc.top_r.append(…)` ✗）⇒ **逐位风险上升** ✗
-⇒ 宁可用"有名记录 + 8 项返回" ✓（两种选择各自的理由都写进了代码注释 ✓）。
-
-### 三、诚实记账（三条"不是没动" ✗）
-
-1. **两段论述注释搬了家**：原 docstring 的 7（mcap，12 行）/8（with_daily，10 行）两段 essay
-   **搬进 `_er_cw_marks` / `_er_daily_marks` 的 docstring** ✓（主 docstring 只留 1~6 号契约 + 指路行 ✓）
-   —— 属**文档搬家**（对运行行为零影响 ✓）；
-2. **日频两段的守卫合并**：`if with_daily and ex_d_parts:` / `if with_daily and tr_d_parts:`
-   ⇒ 调用方一处 `if with_daily and (acc.ex_d or acc.tr_d):` ✓（等价 ✓）；
-3. **顺带删一行真死 import**：`factor_miner.py` 的 `import time` ✓ —— 实测 **HEAD 里 `time.` 出现 0 次** ✓
-   ⇒ **既存**死码（非本次引入 ✓）。⚠ 另查到 `loop_critic.py` 的 `import pandas as pd` 同为既存死码 ✗
-   （`pd.` 在 HEAD 与工作区均出现 **0 次** ✓），**本版未动** ✓（属 ① 的文件，另记台账 ✓）。
-
-### 四、★★ 手术脚本自己犯的两个真错（留痕，别再犯 ✗）
-
-`ai_test/_cut_eval_real.py` 初版：① IC 块锚点从 `fv_all = …` 起 ⇒ **漏搬 `ics = []`** ✗（helper 里
-`ics.append` 必 `NameError` ✗）；② 逐期块里残留一行 `mc_ = None if mcap is None else …` ✗ ——
-而 `mc_` 已是**形参**、`mcap` 在 helper 里根本不存在 ⇒ 同样 `NameError` ✗✗。
-**抓住它们的两道闸门**：先 `--dump` 出全文**人工审阅** ✓ ＋ 事后 `tools/_test_undefined_names.py`
-（作用域感知 ✓，实测 **0 处** ✓）。⇒ 结论写进脚本头注：这类"拼接式手术"**必须**这两道 ✓。
-
-### 五、验证（★ 逐位 + 确定性 = 用户点名的两条）
-
-1. `_test_undefined_names` ⇒ **0 处** ✓（179 文件）· `_test_unbound_return`（含 `factor_miner`）✓；
-2. ★★ **逐位差分对拍**（`ai_test/_ab_eval_dual.py`）：**旧版（`HEAD:factor_miner.evaluate_real`）
-   vs 新版**在 **23 用例 × FWD=5/20 = 46 次调用**上 **float64 原始字节级完全相同** ✓✓
-   （直接比 `ndarray.tobytes()` ⇒ 连 `-0.0`、NaN 负载都比 ✓；**键集合/类型/索引/列、以及键的顺序**也一并比 ✓）。
-   用例：真实面板派生因子 ×4（`cs_rank(close)`/`-close`/`ts_mean(turnover,20)`/`-mktcap`）· 确定性噪声 ·
-   全常数 · **全 NaN（两边都 `None` ⇒ 期数不足早退 ✓）** · **半 NaN** · `window` full/recent600 ·
-   `with_ex`/`with_daily`/两者 · `mcap`（无/**真实市值**/**常数市值**（恒等式：市值加权==等权 ✓））·
-   `cost=0.002+cash=0.95` ✓；
-3. **同 seed 确定性**：同进程连跑两次逐位相同（前 3 例 ✓）＋ **跨进程两遍 `--digest` 输出一致** ✓
-   ＋ 端到端 A/B 本身即**跨进程**产物对照 ✓；
-4. **同 seed A/B**：`_ab/after2`（改前）←→ `_ab/after3`（改后）⇒ **8 产物逐字节 + stdout 103 行 0 差异** ✓
-   （⚠ 基线用 `after2`：③ 与 ② 之间只差注释搬家 ⇒ 行为同一 ✓）；
-5. 相关守门：`_test_excess_caliber`（**静态**查四条式子 ✓ 仍在同文件 ⇒ 仍命中 ✓）· `_test_fwd_wiring` ✓ ·
-   `_test_daily_dd`（日频口径 23/23 ✓）· `_test_dual_horizon` ✓；
-6. `tools/release_check.py` ⇒ **55/55 全绿** ✓（13.x 分钟）。
-
-**⇒ 收官口径**：`engine` 侧 R1 违规**只剩两条既存**（`build_fa_pit.main` **145** ✗ ·
-`loop_persist._save_state` **140** ✗，均非本次引入 ✓，已记 `maintainability.md §五` ✓）；
-§1.36 点名的三个大函数（`suggest` 207 · `_lib_sync` 186 · `evaluate_real` 275）**全部达标** ✓。
 
 ---
 

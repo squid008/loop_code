@@ -106,13 +106,20 @@ def decile_shape(RS, R, U, n_grp=N_GRP):
                 top20_ret=top20_ret, top20_std=top20_std, turn_top=turn_top)
 
 
-def l1_score(stab, ic_ir, shape_pos=None, mode='old'):
+def l1_score(stab, ic_ir, shape_pos=None, mode='old', ic_n=None):
     """L1 排序分。
 
     mode='old'  : `|IC_IR| × (0.25 + 0.75·clip(stab,0,1))` —— **现状，逐位不变**（保留供对拍）
     mode='new'  : `clip(stab,0,1) × (0.5 + 0.5·clip(shape_pos,0,1))` —— 2026-09-11 标定选中
                   （相关性 +0.167 → +0.668；**不含 `ic_ir`**，IC 只留作准入门槛）
+    mode='ic_n' : `clip(ic_n, 0, ∞)` —— **2026-10-19 新增**：按**风格中性 IC** 排序。
+                  依据（gen162 实测）：`ic` 与 `strip_calmar` **−0.211**，`ic_n` **+0.197**；
+                  且 `ic_n` 与 `ic` 仅 0.536 相关 ⇒ 它携带"剥风格后"的独立信息 ✓
+                  ⚠ 需 `--style_obs`（否则 `ic_n` 全空）⇒ 缺值回退由调用方 `_make_score` 负责
     """
+    if mode == 'ic_n':
+        v = np.asarray(ic_n if ic_n is not None else [], dtype='float64')
+        return np.clip(np.nan_to_num(v, nan=0.0), 0, None)
     st = np.clip(np.asarray(stab, dtype='float64'), 0, 1)
     if mode == 'new':
         sp = np.clip(np.asarray(shape_pos, dtype='float64'), 0, 1)

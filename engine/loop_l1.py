@@ -57,6 +57,26 @@ import loop_paths as _P
 # gen51: 阈值 0.99 -> args.dedup_corr(默认0.85)。0.99 过松: 实测同代 F20~F23 两两
 # |corr| 0.93/0.88 全数放行(4 个近重复因子同代入库)。标定: 全库 23 因子在此口径下
 # 仅这两对>0.85(其余<=0.744) -> 0.85 既能拦下两对、又不误杀历史入库因子。
+def _make_score(l1, mode):
+    """按 mode 计算 L1 排序分（★ 单一入口；`ic_n` 缺值时回退 `new` 并**告警**）。
+
+    ★ 2026-10-19 新增 `ic_n`（按**风格中性 IC** 排序）：
+      gen162 实测 —— `ic` 与 `strip_calmar` 相关 **−0.211**、现行 `new` 排序（stab 主导）
+      **−0.157**、而 `ic_n` **+0.197**；`ic_n` 与 `ic` 仅 0.536 相关
+      ⇒ 它是目前**唯一方向正确**的 L1 指标 ✓（样本小，先当作一次性实验 ✓）
+    """
+    if mode == 'ic_n':
+        if 'ic_n' in l1.columns and l1['ic_n'].notna().any():
+            return l1_score(l1['stab'], l1['ic_ir'], None, 'ic_n', l1['ic_n'])
+        print("  [score_mode=ic_n] ic_n 全空（需 --style_obs）⇒ 回退 score_mode=new ✗")
+        mode = 'new'
+    if mode == 'new':
+        # 批1 P0(gen52+): score = stab × (0.5 + 0.5·shape_pos)，**去掉 |ic_ir|**
+        return l1_score(l1['stab'], l1['ic_ir'],
+                        l1['shape_pos'] if 'shape_pos' in l1.columns else None, 'new')
+    return l1['ic_ir'].abs() * (0.25 + 0.75 * l1['stab'].clip(0, 1))
+
+
 def _l1_filter(l1, Bsub, args, _reuse_v, _min_mono, _score_mode, dec_keep, dec_info):
     """L1 过滤：ic/stab 门槛 + 形状门槛 + 去相关(**★已在批内就地判定 ✓**) + 评分 + 近重复去重 -> l1（空则 None）
 
@@ -104,12 +124,7 @@ def _l1_filter(l1, Bsub, args, _reuse_v, _min_mono, _score_mode, dec_keep, dec_i
     # 关键: 不能只按 |IC_IR| 排! 低稳定性(高换手)因子费后必亏
     # L1评分 = |IC_IR| x 稳定性权重; 换手代理 turn_est = 1 - stab
     l1['turn_est'] = 1.0 - l1['stab']
-    if _score_mode == 'new':
-        # 批1 P0(gen52+): score = stab × (0.5 + 0.5·shape_pos)，**去掉 |ic_ir|**
-        l1['score'] = l1_score(l1['stab'], l1['ic_ir'],
-                               l1['shape_pos'] if 'shape_pos' in l1.columns else None, 'new')
-    else:
-        l1['score'] = l1['ic_ir'].abs() * (0.25 + 0.75 * l1['stab'].clip(0, 1))
+    l1['score'] = _make_score(l1, _score_mode)
     l1 = l1.sort_values('score', ascending=False)
     # 数值近重复去重(只对 TopN 做, 用采样指纹加速, 否则 O(n^2) 跑不动)
     _t_dd = time.time()
