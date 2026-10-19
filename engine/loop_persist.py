@@ -162,6 +162,26 @@ def _dump_strip_detail(_strip_style, strip_rows):
             print(f"  [剥风格] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
 
 
+def _dump_strip_detail20(_strip_style, strip_rows, fwd2):
+    """副口径（默认 20 日）剥风格明细落盘 —— 独立文件 + schema-safe。
+
+    ★ 2026-10-19（用户："20 日的还没算完？挖完会自动算吗？"）：
+      `strip2` 以前只喂给 md 文档（`_strip2_by_expr`），**没落结构化文件** ⇒ 看板切 20 日口径时
+      「剥风格后」那几格永远空 ✗。这里把它落到 `docs/loop_strip_style_20.csv`（与 5 日版同列）✓
+    """
+    strip_rows = [r for r in (strip_rows or []) if r]     # 过滤 None（调用端单行 append 未判空）
+    if not (strip_rows and fwd2):
+        return
+    try:
+        _sd = pd.DataFrame(strip_rows)
+        _st, _sn = append_csv_schema_safe(_P.STRIP_OBS_20, _sd)
+        _n_pos = int((_sd['strip_ann_ex'] > 0).sum())
+        print(f"已存 {_P.STRIP_OBS_20} ({_st}, 本代 {len(_sd)} 条 · {int(fwd2)} 日口径; "
+              f"剥风格后超额仍为正 {_n_pos}/{len(_sd)})")
+    except Exception as e:                                   # noqa: BLE001
+        print(f"  [剥风格{int(fwd2)}日] 落盘失败(不影响主流程): {type(e).__name__}: {e}")
+
+
 def _dump_pool_obs(POOL_M, _pools, args, fail_lib, nd, pool_rows, rows, top):
     """P0-2 纯提取自 `run()`（逐字搬运，语义不变）。
 

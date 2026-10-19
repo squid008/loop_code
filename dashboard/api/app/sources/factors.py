@@ -406,34 +406,15 @@ def library(pool):
         #   把 `loop_strip_style_bank.csv` 的**组合自身剥风格**字段并进 `metrics` ✓
         #   为什么并进 metrics 而不是新开字段：前端详情页是**按 `METRIC_GROUPS` 同一套 schema 渲染**的
         #   ⇒ 并进来后取值逻辑零改动 ✓（缺值自然显示 — ✓，不臆造 ✓）
-        _sm = _strip_bank_map().get(nm) or {}
-        for _k in ('strip_ann_ex', 'strip_dd', 'strip_calmar', 'strip_sharpe',
-                   'strip_dd_d', 'strip_calmar_d', 'strip_sharpe_d',
-                   'strip_ann_top', 'strip_dd_top', 'strip_calmar_top', 'strip_sharpe_top',
-                   'strip_dd_top_d', 'strip_calmar_top_d', 'strip_sharpe_top_d'):
-            _v = _sm.get(_k)
-            if _v not in (None, ''):
-                try:
-                    f['metrics'][_k] = float(_v)      # CSV 里是字符串 ⇒ 前端格式化要数字 ✓
-                except (TypeError, ValueError):
-                    pass
-        # ★ 2026-10-19：`strip_dd`（超额 · **期频**回撤）老汇总表没有 ⇒ 用 `ann_ex/calmar` 反算兜底
-        #   （恒等式 `calmar = ann_ex/|dd|` ⇒ `|dd| = ann_ex/calmar`；精度差异 ~1e-16，标注见 change_log）
-        if 'strip_dd' not in f['metrics']:
-            _ae = f['metrics'].get('strip_ann_ex')
-            _ca = f['metrics'].get('strip_calmar')
-            try:
-                if _ae is not None and _ca not in (None, 0):
-                    f['metrics']['strip_dd'] = -abs(float(_ae) / float(_ca))
-            except (TypeError, ValueError):
-                pass
+        _merge_strip_into(f['metrics'], _strip_bank_map().get(nm))
         # ★★★★★ 2026-09-21（用户拍板："标签写法：5、20、双"·"判据：固定 0.624 / 0.701"·
         #   "曲线、指标连 20 日一起重算"）—— 三项一起接上 ✓
         #   ① `metrics20` ⇒ 详情页「口径切换」切到 20 日时**整块指标**换它 ✓（前端不用自己算 ✓）
         #   ② `cal20/ic20/turn20` ⇒ 列表**不展开也能直接用** ✓（免得前端去翻 metrics20 ✓）
         #   ③ `hzn` ⇒ 列表的口径标签（'5' / '20' / '双' / '' ✓ 规则见 `_hzn_tag` ✓）
         _m20 = (mtab20.get(nm) or {}).get('_num') or {}
-        f['metrics20'] = _m20
+        # ★ 2026-10-19：20 日口径也并入剥风格（来自 `loop_strip_style_bank_fwd20.csv`）✓
+        f['metrics20'] = _merge_strip_into(dict(_m20), _strip_bank_20_map().get(nm))
         f['cal20'] = _m20.get('calmar')
         f['ic20'] = _m20.get('ic')
         f['turn20'] = _m20.get('turn')
@@ -759,6 +740,66 @@ def strip_bank():
         out.append(d)
     return {'found': True, 'path': os.path.relpath(p, core.ROOT),
             'mtime': core.mtime_iso(p), 'rows': out, 'count': len(out)}
+
+
+_STRIP_STYLE_COLS = ('strip_ann_ex', 'strip_dd', 'strip_calmar', 'strip_sharpe',
+                     'strip_dd_d', 'strip_calmar_d', 'strip_sharpe_d',
+                     'strip_ann_top', 'strip_dd_top', 'strip_calmar_top', 'strip_sharpe_top',
+                     'strip_dd_top_d', 'strip_calmar_top_d', 'strip_sharpe_top_d')
+
+
+def _merge_strip_into(dst, row):
+    """把一行剥风格汇总**并入**指标 dict（14 个字段 + `strip_dd` 恒等式兜底）。
+
+    ★ 2026-10-19：5 日与 20 日两条路复用同一份逻辑（单一事实源 ✓）；
+      `strip_dd`（超额 · 期频回撤）老汇总表没有 ⇒ 用 `calmar = ann_ex/|dd|` 反算兜底 ✓
+    """
+    if not row:
+        return dst
+    for k in _STRIP_STYLE_COLS:
+        v = row.get(k)
+        if v not in (None, ''):
+            try:
+                dst[k] = float(v)          # CSV 里是字符串 ⇒ 前端格式化要数字 ✓
+            except (TypeError, ValueError):
+                pass
+    if 'strip_dd' not in dst:
+        _ae, _ca = dst.get('strip_ann_ex'), dst.get('strip_calmar')
+        try:
+            if _ae is not None and _ca not in (None, 0):
+                dst['strip_dd'] = -abs(float(_ae) / float(_ca))
+        except (TypeError, ValueError):
+            pass
+    return dst
+
+
+def strip_bank_20():
+    """`loop_strip_style_bank_fwd20.csv` ⇒ 每因子 **20 日口径**的剥风格评估。"""
+    p = core.docs_path('loop_strip_style_bank_fwd20.csv')
+    head, rows = core.read_csv_rows(p)
+    if not head:
+        return {'found': False, 'rows': []}
+    out = [dict(zip(head, r)) for r in rows]
+    return {'found': True, 'path': os.path.relpath(p, core.ROOT),
+            'mtime': core.mtime_iso(p), 'rows': out, 'count': len(out)}
+
+
+_STRIP_BANK20_CACHE = {'key': None, 'map': {}}
+
+
+def _strip_bank_20_map():
+    """`{name: row}` 视图（20 日，按 mtime 缓存、命中零 IO）。"""
+    p = core.docs_path('loop_strip_style_bank_fwd20.csv')
+    try:
+        mt = os.path.getmtime(p)
+    except OSError:
+        return {}
+    if _STRIP_BANK20_CACHE['key'] == mt and _STRIP_BANK20_CACHE['map']:
+        return _STRIP_BANK20_CACHE['map']
+    sb = strip_bank_20()
+    _STRIP_BANK20_CACHE['map'] = {r.get('name'): r for r in sb.get('rows', [])}
+    _STRIP_BANK20_CACHE['key'] = mt
+    return _STRIP_BANK20_CACHE['map']
 
 
 _STRIP_BANK_CACHE = {'key': None, 'map': {}}

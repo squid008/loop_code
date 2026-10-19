@@ -387,6 +387,7 @@ def main():
     LE = _prep_main()
     import factor_store as FS
     from factor_miner import evaluate_real, cs_rank
+    import factor_miner as _FM          # ★ 20 日剥风格要切 FWD 全局
     from loop_metrics import neutral_rank
     import loop_engine as LE2
 
@@ -463,6 +464,7 @@ def main():
         print('风格特征(lncap/lnamt) 完成, 用时 {:.0f}s'.format(time.time() - t1))
 
     rows_out, warn, nosign, strip_rows = [], [], [], []
+    strip20_rows = []                   # ★ 2026-10-19：20 日口径剥风格（独立文件）
     uniq = full        # ★ 循环只处理\"需要重算\"的那批
     for i, it in enumerate(uniq, 1):
         expr = it['expr']
@@ -576,6 +578,38 @@ def main():
                                            strip_calmar_top_d=rr_s.get('calmar_top_d'),
                                            strip_sharpe_top_d=rr_s.get('sharpe_top_d'),
                                            grade=k))
+                # ★★ 2026-10-19（用户："20 日的还没算完？"）：**20 日口径**的剥风格补测。
+                #   同一份 `fn`（剥 lncap+lnamt 后的因子值）⇒ 只切 `factor_miner.FWD=20` 重跑一次 ✓
+                #   以前 `strip2` 只在引擎入库那一刻算过、且只喂 md 文档 ⇒ 看板 20 日口径永远空 ✗
+                if fn is not None:
+                    try:
+                        _FM.set_fwd(20)
+                        rr_s20 = evaluate_real(pd.DataFrame(fn.copy(), index=dates, columns=cols),
+                                               close, expr + '#strip20', cost=0.004, window=5,
+                                               with_daily=True)
+                    finally:
+                        _FM.set_fwd(5)
+                    if rr_s20 is not None:
+                        k20, _t20 = LE_pools_grade(rr_s20.get('calmar_d'), rr_s20['ann_ex'],
+                                                   rr_s20.get('dd_d'), rr_s20['calmar'])
+                        strip20_rows.append(dict(
+                            name=nm, pool=it['pool'], expr=expr,
+                            ic=rr['ic'], calmar=rr['calmar'], ann_ex=rr['ann_ex'],
+                            dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'),
+                            strip_ic=rr_s20['ic'], strip_calmar=rr_s20['calmar'],
+                            strip_ann_ex=rr_s20['ann_ex'], strip_sharpe=rr_s20['sharpe'],
+                            strip_dd=rr_s20.get('dd'),
+                            strip_dd_d=rr_s20.get('dd_d'),
+                            strip_calmar_d=rr_s20.get('calmar_d'),
+                            strip_sharpe_d=rr_s20.get('sharpe_d'),
+                            strip_ann_top=rr_s20.get('ann_top'),
+                            strip_dd_top=rr_s20.get('dd_top'),
+                            strip_calmar_top=rr_s20.get('calmar_top'),
+                            strip_sharpe_top=rr_s20.get('sharpe_top'),
+                            strip_dd_top_d=rr_s20.get('dd_top_d'),
+                            strip_calmar_top_d=rr_s20.get('calmar_top_d'),
+                            strip_sharpe_top_d=rr_s20.get('sharpe_top_d'),
+                            grade=k20))
             except Exception as e:
                 print('      [剥风格] 失败(不影响落地): {}: {}'.format(type(e).__name__, e))
 
@@ -616,6 +650,19 @@ def main():
         if cnt.get('C'):
             print('  [!] **{} 个是「纯风格」**（剥掉 lncap+lnamt 后转负）⇒ 指数增强不可用'
                   '（详见 loop_todo §1.9）'.format(cnt['C']))
+    # ★★ 2026-10-19：20 日口径剥风格写盘（独立文件，列结构与 5 日版一致）
+    if strip20_rows:
+        cols20 = ['name', 'pool', 'expr', 'ic', 'calmar', 'ann_ex',
+                  'dd_d', 'calmar_d',
+                  'strip_ic', 'strip_calmar', 'strip_ann_ex', 'strip_sharpe',
+                  'strip_dd', 'strip_dd_d', 'strip_calmar_d', 'strip_sharpe_d',
+                  'strip_ann_top', 'strip_dd_top', 'strip_calmar_top', 'strip_sharpe_top',
+                  'strip_dd_top_d', 'strip_calmar_top_d', 'strip_sharpe_top_d', 'grade']
+        outp20 = os.path.join(DOCS, 'loop_strip_style_bank_fwd20.csv')
+        n20 = (_merge_csv(outp20, strip20_rows, cols20) if a.only_new
+               else _write_csv(outp20, strip20_rows, cols20))
+        print('剥风格补测(20日) -> docs/loop_strip_style_bank_fwd20.csv '
+              '（本次 {} 个，共 {} 条）'.format(len(strip20_rows), n20))
     _report(a, nosign, warn, len(full), len(quant_only), len(skipped))
     print('\n完成，用时 {:.0f}s'.format(time.time() - t0))
     return 0

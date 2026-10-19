@@ -23,9 +23,9 @@ from loop_eval import (style_features, batch_ic, factor_stability, seg_verify, _
                        _critic_review_prev, _load_fail_lib, _rand_explore, _gen_candidates,
                        _apply_fam_quota, _jury_deep_review, _critic_diagnose, _agg_style_diag,
                        _log_llm_hint, _critic_llm_review)
-from loop_persist import (_dump_strip_detail, _dump_pool_obs, _save_state, _cmp_lib, ex_max_corr,
-                          _gate_of, _pool_best, combine_ok, append_csv_schema_safe,
-                          _StateUnpickler)
+from loop_persist import (_dump_strip_detail, _dump_strip_detail20, _dump_pool_obs, _save_state,
+                          _cmp_lib, ex_max_corr, _gate_of, _pool_best, combine_ok,
+                          append_csv_schema_safe, _StateUnpickler)
 from cost_presets import cost_label
 import dataclasses
 
@@ -421,6 +421,8 @@ class _L2Acc:
     rows: list = dataclasses.field(default_factory=list)
     seg_ok_list: list = dataclasses.field(default_factory=list)
     strip_rows: list = dataclasses.field(default_factory=list)
+    # ★ 2026-10-19：副口径（20 日）剥风格明细（以前只喂 md 文档，不落盘 ✗）
+    strip2_rows: list = dataclasses.field(default_factory=list)
     pool_rows: list = dataclasses.field(default_factory=list)
     n_pool_nogate: int = 0
     nd: object = None
@@ -449,6 +451,7 @@ def _run_l2_phase(ctx, args):
         print(f"  [池门槛] [!] {acc.n_pool_nogate} 个候选无池结果 -> 已放行(未参与门槛判定)")
     # ---- 剥风格明细落盘(2026-09-12, --strip_style; 独立文件, 不进 archive 表头) ----
     _dump_strip_detail(cal.strip_style, acc.strip_rows)
+    _dump_strip_detail20(cal.strip_style, acc.strip2_rows, args.dual_fwd)
     acc.nd, res = _dump_pool_obs(POOL_M, cal.pools, args, cal.fail_lib, acc.nd, acc.pool_rows, acc.rows, top)
 
 
@@ -479,8 +482,7 @@ def _l2_candidates(MCAP, POOL_M, _lp, acc, args, cal, top):
         t_one = time.time()
         acc.nd = r['node']
         strip_rec = None
-        # ★★★★ 2026-09-22（v1.21.29 · (乙) 双口径）：副口径的备用值 —— **必须在 `try` 之前初始化** ✗
-        #   （求值中途异常时会跳到 except ⇒ 若不预置就是 `NameError` ✓ 本项目反复踩的坑 ✓）
+        # ★ 副口径备用值：必须在 try 前初始化（异常跳到 except 时否则 NameError）
         rr2, strip2, ok2 = None, None, False
         pool_rec = []      # 本候选的各池结果(供池门槛用; 同时 extend 进 pool_rows)
         try:
@@ -496,6 +498,7 @@ def _l2_candidates(MCAP, POOL_M, _lp, acc, args, cal, top):
             # ★ 池内明细(长表) 落 `pool_rows` —— 原在 `_l2_pool_tags` 里（那是**调用方局部** ✗），
             #   2026-09-26 移回调用方；`POOL_M` 关或 `rr is None` 时 `pool_rec` 本就是空表 ⇒ 逐字等价 ✓
             acc.pool_rows.extend(pool_rec)
+            acc.strip2_rows.append(strip2)      # None 由落盘端过滤（守 R1：不多占行）
             del f
             gc.collect()
         except Exception as e:
