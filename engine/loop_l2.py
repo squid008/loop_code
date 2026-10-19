@@ -133,6 +133,9 @@ def _strip_rec_of(rr, rr_s, nd, args):
         dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'),
         strip_ic=rr_s['ic'], strip_calmar=rr_s['calmar'],
         strip_ann_ex=rr_s['ann_ex'], strip_sharpe=rr_s['sharpe'],
+        # ★ 2026-10-19：**超额 · 期频回撤**（此前只存了超额日频回撤 `dd_d`，
+        #   期频回撤只能靠 `ann_ex/calmar` 反算 ⇒ 现在直接存真值 ✓）
+        strip_dd=rr_s.get('dd'),
         # ★ 剥风格后的**日频**口径（§1.19）—— 档位阈值现在就吃这几个
         strip_dd_d=rr_s.get('dd_d'),
         strip_calmar_d=rr_s.get('calmar_d'),

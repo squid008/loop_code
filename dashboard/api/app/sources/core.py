@@ -173,11 +173,18 @@ _CACHE = {}
 
 
 def cached(key, ttl, fn):
-    """极简 TTL 缓存（前端轮询友好，避免每次都读 pkl）。"""
+    """极简 TTL 缓存（前端轮询友好，避免每次都读 pkl）。
+
+    ★ 2026-10-19 修**真 BUG**（`_test_api_speed` 抓到，用户也抱怨过 `/api/status` 常 2 秒+）：
+      原实现用**扫描开始前**的 `now` 当时间戳 ⇒ 若 `fn()` 本身耗时接近 TTL
+      （冷扫进程实测 2.0s，而 TTL=2s）⇒ 缓存**刚写完就已过期** ✗
+      ⇒ 每 2 秒一次的前端轮询几乎每次都 miss、每次真扫进程 ⇒ 慢且白烧 CPU。
+      现在改用**写入完成时刻**作时间戳（缓存从"拿到值"开始计时，这才是 TTL 的语义 ✓）。
+    """
     now = time.time()
     hit = _CACHE.get(key)
     if hit and now - hit[0] < ttl:
         return hit[1]
     val = fn()
-    _CACHE[key] = (now, val)
+    _CACHE[key] = (time.time(), val)      # ★ 用**扫描结束**时刻（不是开始前）
     return val

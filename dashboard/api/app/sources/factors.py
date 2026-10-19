@@ -407,7 +407,9 @@ def library(pool):
         #   为什么并进 metrics 而不是新开字段：前端详情页是**按 `METRIC_GROUPS` 同一套 schema 渲染**的
         #   ⇒ 并进来后取值逻辑零改动 ✓（缺值自然显示 — ✓，不臆造 ✓）
         _sm = _strip_bank_map().get(nm) or {}
-        for _k in ('strip_ann_top', 'strip_dd_top', 'strip_calmar_top', 'strip_sharpe_top',
+        for _k in ('strip_ann_ex', 'strip_dd', 'strip_calmar', 'strip_sharpe',
+                   'strip_dd_d', 'strip_calmar_d', 'strip_sharpe_d',
+                   'strip_ann_top', 'strip_dd_top', 'strip_calmar_top', 'strip_sharpe_top',
                    'strip_dd_top_d', 'strip_calmar_top_d', 'strip_sharpe_top_d'):
             _v = _sm.get(_k)
             if _v not in (None, ''):
@@ -415,6 +417,16 @@ def library(pool):
                     f['metrics'][_k] = float(_v)      # CSV 里是字符串 ⇒ 前端格式化要数字 ✓
                 except (TypeError, ValueError):
                     pass
+        # ★ 2026-10-19：`strip_dd`（超额 · **期频**回撤）老汇总表没有 ⇒ 用 `ann_ex/calmar` 反算兜底
+        #   （恒等式 `calmar = ann_ex/|dd|` ⇒ `|dd| = ann_ex/calmar`；精度差异 ~1e-16，标注见 change_log）
+        if 'strip_dd' not in f['metrics']:
+            _ae = f['metrics'].get('strip_ann_ex')
+            _ca = f['metrics'].get('strip_calmar')
+            try:
+                if _ae is not None and _ca not in (None, 0):
+                    f['metrics']['strip_dd'] = -abs(float(_ae) / float(_ca))
+            except (TypeError, ValueError):
+                pass
         # ★★★★★ 2026-09-21（用户拍板："标签写法：5、20、双"·"判据：固定 0.624 / 0.701"·
         #   "曲线、指标连 20 日一起重算"）—— 三项一起接上 ✓
         #   ① `metrics20` ⇒ 详情页「口径切换」切到 20 日时**整块指标**换它 ✓（前端不用自己算 ✓）

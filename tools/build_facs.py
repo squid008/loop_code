@@ -561,6 +561,8 @@ def main():
                                            strip_ic=rr_s['ic'], strip_calmar=rr_s['calmar'],
                                            strip_ann_ex=rr_s['ann_ex'],
                                            strip_sharpe=rr_s['sharpe'],
+                                           # ★ 2026-10-19：超额 · **期频**回撤（此前缺，只能反算）
+                                           strip_dd=rr_s.get('dd'),
                                            # ★ 剥风格后的**日频**口径（§1.19）：标定新档位阈值用它
                                            strip_dd_d=rr_s.get('dd_d'),
                                            strip_calmar_d=rr_s.get('calmar_d'),
@@ -598,7 +600,7 @@ def main():
         cols_o = ['name', 'pool', 'expr', 'ic', 'calmar', 'ann_ex',
                   'dd_d', 'calmar_d',
                   'strip_ic', 'strip_calmar', 'strip_ann_ex', 'strip_sharpe',
-                  'strip_dd_d', 'strip_calmar_d', 'strip_sharpe_d',
+                  'strip_dd', 'strip_dd_d', 'strip_calmar_d', 'strip_sharpe_d',
                   # ★ 2026-10-19：组合自身口径（绝对收益）的剥风格四件套 + 日频回撤/卡玛/夏普
                   'strip_ann_top', 'strip_dd_top', 'strip_calmar_top', 'strip_sharpe_top',
                   'strip_dd_top_d', 'strip_calmar_top_d', 'strip_sharpe_top_d', 'grade']

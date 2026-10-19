@@ -1074,6 +1074,24 @@ function LibraryTable({ lib }: { lib: LibraryDto }) {
  *   ⇒ 现在**按「超额 / 组合自身」× 「期频 / 日频」四个格子摆**，同格才能比 ✓
  */
 const METRIC_GROUPS: Array<[string, Array<[string, string, 'pct' | 'num' | 'int']>]> = [
+  // ★★ 2026-10-19（用户："把组合自身口径期频打点和日频打点放在超额口径上面"）——
+  //   顺序改为「组合自身（4 格）」→「超额（4 格）」→「其他」；两组各自都带剥风格后 ✓
+  ['组合自身口径 · 期频打点（Top10% 等权）', [
+    ['ann_top', '年化', 'pct'], ['dd_top', '最大回撤', 'pct'],
+    ['calmar_top', '卡玛', 'num'], ['sharpe_top', '夏普', 'num'],
+  ]],
+  ['组合自身口径 · 日频打点（同一策略逐日 mark）', [
+    ['ann_top', '年化（同期频）', 'pct'], ['dd_top_d', '最大回撤', 'pct'],
+    ['calmar_top_d', '卡玛', 'num'], ['sharpe_top_d', '夏普', 'num'],
+  ]],
+  ['组合自身口径 · 剥风格后（剥 lncap+lnamt）· 期频打点', [
+    ['strip_ann_top', '年化', 'pct'], ['strip_dd_top', '最大回撤', 'pct'],
+    ['strip_calmar_top', '卡玛', 'num'], ['strip_sharpe_top', '夏普', 'num'],
+  ]],
+  ['组合自身口径 · 剥风格后 · 日频打点', [
+    ['strip_ann_top', '年化（同期频）', 'pct'], ['strip_dd_top_d', '最大回撤', 'pct'],
+    ['strip_calmar_top_d', '卡玛', 'num'], ['strip_sharpe_top_d', '夏普', 'num'],
+  ]],
   ['超额口径 · 期频打点（组合 − 池内等权基准）', [
     ['ann_ex', '超额年化', 'pct'], ['dd', '超额最大回撤', 'pct'],
     ['calmar', '超额卡玛', 'num'], ['sharpe', '超额夏普', 'num'],
@@ -1084,24 +1102,15 @@ const METRIC_GROUPS: Array<[string, Array<[string, string, 'pct' | 'num' | 'int'
     ['ann_ex', '超额年化（同期频）', 'pct'], ['dd_d', '超额最大回撤', 'pct'],
     ['calmar_d', '超额卡玛', 'num'], ['sharpe_d', '超额夏普', 'num'],
   ]],
-  ['组合自身口径 · 期频打点（Top10% 等权）', [
-    ['ann_top', '年化', 'pct'], ['dd_top', '最大回撤', 'pct'],
-    ['calmar_top', '卡玛', 'num'], ['sharpe_top', '夏普', 'num'],
+  // ★★ 2026-10-19（用户：超额口径也要有剥风格后的指标）—— 与上面组合自身那两格**同一口径**，
+  //   只是收益腿换成"组合 − 池内等权基准"（这组才是"选股能力"）
+  ['超额口径 · 剥风格后（剥 lncap+lnamt）· 期频打点', [
+    ['strip_ann_ex', '超额年化', 'pct'], ['strip_dd', '超额最大回撤', 'pct'],
+    ['strip_calmar', '超额卡玛', 'num'], ['strip_sharpe', '超额夏普', 'num'],
   ]],
-  ['组合自身口径 · 日频打点（同一策略逐日 mark）', [
-    ['ann_top', '年化（同期频）', 'pct'], ['dd_top_d', '最大回撤', 'pct'],
-    ['calmar_top_d', '卡玛', 'num'], ['sharpe_top_d', '夏普', 'num'],
-  ]],
-  // ★★ 2026-10-19（用户：组合自身口径下面也要加上剥风格后的指标）
-  //   口径 = 剥掉 lncap + lnamt（与入库那道剥风格门槛**同一个**），收益腿换成**组合自身**
-  //   （Top10% 等权绝对收益，不减基准）⇒ 答的是"剥掉风格后，这个组合自己还能不能赚"
-  ['组合自身口径 · 剥风格后（剥 lncap+lnamt）· 期频打点', [
-    ['strip_ann_top', '年化', 'pct'], ['strip_dd_top', '最大回撤', 'pct'],
-    ['strip_calmar_top', '卡玛', 'num'], ['strip_sharpe_top', '夏普', 'num'],
-  ]],
-  ['组合自身口径 · 剥风格后 · 日频打点', [
-    ['strip_ann_top', '年化（同期频）', 'pct'], ['strip_dd_top_d', '最大回撤', 'pct'],
-    ['strip_calmar_top_d', '卡玛', 'num'], ['strip_sharpe_top_d', '夏普', 'num'],
+  ['超额口径 · 剥风格后 · 日频打点', [
+    ['strip_ann_ex', '超额年化（同期频）', 'pct'], ['strip_dd_d', '超额最大回撤', 'pct'],
+    ['strip_calmar_d', '超额卡玛', 'num'], ['strip_sharpe_d', '超额夏普', 'num'],
   ]],
   ['其他', [
     ['last_yr', '最近一年超额', 'pct'], ['turn', '单期换手', 'pct'],

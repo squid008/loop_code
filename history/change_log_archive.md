@@ -1,8 +1,89 @@
-# change_log 归档（v1.32.0 及以前）
+# change_log 归档（v1.33.0 及以前）
 
 > 本文件由 `ai_test/_cl_split.py` 从 `change_log.md` 切出（2026-09-27）——
 > 目的是让主 `change_log.md` 只保留近期版本、可读可查（原文**一字未改** ✓）。
 > 新增条目请照旧写进主 `change_log.md` 的**最新**位置 ✓。
+
+---
+
+## [1.33.0] — 2026-09-29
+
+> 主题：**可移植性平台化「收尾」** —— 把上一版留下的 **6 处** PowerShell/Win32 专有查询
+> **全部收进 `engine/os_compat.py`** ✓，于是有了一条**可机器检查的不变量** ✓：
+> 「全仓库专有代码只剩 `os_compat` 的 **Windows 分支** ✓（Linux 走它的 POSIX 分支 ✓）」
+> ⚠ **引擎数值路径零改动** ✓（本版没碰 `loop_engine`/`loop_eval`/`loop_l1`/`loop_l2` ✗）；
+> 三处**开发工具**的输出细节有微调 ⇒ 按 SemVer **MINOR** 如实记 ✓（逐条列在第四节 ✗）。
+
+### 一、为什么要收尾（上一版留下的账）
+
+v1.32.0 已把「可用内存 / 列进程 / 杀进程 / 判存活」四件收敛进 `os_compat` ✓，并替换 5 个文件 ✓；
+但当时**如实记账**还剩 4~6 处 PS 查询在调用方各自拼字符串 ✗（`loop_status` · `loop_watch` **×2** ·
+`tracks_status` **×2** · `horizon_admit_write` ✓）——它们的**输出字段各不相同** ✗，
+所以不能"换个函数名"了事，得逐处改**消费端** ✓。本版就是把这些账结清 ✓。
+
+### 二、本版替换的 6 处（+ 顺手 3 处同源残留 ✗）
+
+| 文件 | 原实现 | 现在 |
+|---|---|---|
+| `engine/loop_status.py` `running_engine()` | `Get-CimInstance … -match 'loop_engine'` ⇒ `{pid, run, mem}` | `OC.list_procs()` + Python 侧过滤 ✓（**字段不变** ✓） |
+| `engine/loop_watch.py` `is_engine_running()` | 同上 + **`shell=True`** ✗ ⇒ 只要**个数** | 新增 `_count_procs(need, forbid)` ✓（判据逐条对齐 ✓） |
+| `engine/loop_watch.py` `already_running()` | 同上（`loop_watch`/`--pool`）| 同上 ✓（**`> 1` 含自身** 的语义照旧 ✓） |
+| `tools/tracks_status.py` 引擎列表 | `Get-CimInstance … -match 'loop_engine\|run_tracks'` | `OC.list_procs()` ✓ |
+| `tools/tracks_status.py` 可用内存 | `Win32_OperatingSystem \| FreePhysicalMemory` ✗ | `OC.mem_status()` ✓ |
+| `tools/horizon_admit_write.py` 安全闸 | PS 取 pid 列表 | `OC.list_procs()` ✓ |
+| （顺手 ✗）`tools/curves_job_status.py` | **`wmic`** ✗ 进程表 | `OC.list_procs()` ✓ |
+| （顺手 ✗）`tools/factor_curves.py` `_pid_alive` | `tasklist /FI "PID eq …"` ✗ | `OC.alive()` ✓（**同一条设计** ✓） |
+| （顺手 ✗）`tools/sysinfo.py` CPU 核数 | **`wmic cpu get …`** ✗ | `os.cpu_count()` ✓ |
+| （顺手 ✗）`tools/_verify_port_change.py` | PS `Stop-Process` | `OC.kill_tree()` ✓ |
+| （顺手 ✗）`tools/_test_dynamic_add.py` | 裸 `taskkill`（清自己起的调度器） | `OC.kill_tree()` ✓ |
+
+★ **两条"值得单独说"的**：
+1. `factor_curves._pid_alive` 的 docstring 里存着一条**血泪教训** ✓：_"不能用 `os.kill(pid, 0)` ——
+   Windows 上它**会真的杀进程**"_ ✗ —— 而 `os_compat.alive()` **正是同一条设计** ✓（Windows 用
+   `tasklist` ✓、POSIX 才用 `os.kill(pid,0)` ✓）⇒ 那条教训**没丢** ✓，只是不再散落在各处 ✗；
+2. `curves_job_status._procs()` 原来在异常时 `return {}` ✗，而调用方紧接着 `q['curves']` ⇒
+   **会 KeyError 崩掉** ✗✗（与它自己注释里写的"状态脚本不该因为查不到进程就挂"**自相矛盾** ✗）
+   ⇒ 现改为**返回全 0** ✓（照它声明的意图 ✓）。⚠ 这是一处**行为修正**，如实记账 ✗。
+
+### 三、验证（★ 逐条对拍，不是"看着对"）
+
+1. ★★ **旧 PS 版 ←→ 新 Python 版「逐条对拍」**（`ai_test/_chk_proc_dual.py` ✓，**全过** ✓）：
+   空跑对拍没意义 ✗（没有引擎时两边都是 0 ✓）⇒ 脚本**造一个合成进程**（命令行带
+   `loop_engine --mine_pool=999` ✓）让三条判据都真的走到 ✓：
+   · 池视角：旧 == 新 == 基线 + 1 ✓；
+   · **all 视角：必须排除它** ✓ —— 旧 PS 的负向前瞻 `--mine_pool=(?!all)` 最容易实现错 ✗，
+     对拍确认新旧一致（都 0 ✓）✓；
+   · `curves_job_status._procs()` 认得出它是"挖矿"（`{'mine': 1}` ✓）；
+   · `is_engine_running()` 池视角 True / all 视角 False ✓；
+   · 杀掉后两边都回落一致 ✓。
+2. ★★ **常驻守门**（`tools/_test_win32_residue.py` ✓ ⇒ **已进全量回归** ✓）：扫
+   `engine/`+`tools/`+`dashboard/`（排除注释与说明文字 ✓，判据按**命中位置** ✓）⇒
+   **只剩 `engine/os_compat.py` 的 5 处 Windows 分支** ✓✓
+   ⇒ 以后谁再散落一处，**发版守门当场报出来** ✓（不再依赖"记得别写" ✗）。
+   守门自带两条**判据自证** ✓（喂一行专有代码 ⇒ 必须判违规 ✓；喂一行注释 ⇒ 必须判说明文字 ✓）
+   —— 否则"零违规"可能是判据写死了 ✗（本项目一贯要求守门先证明自己有鉴别力 ✓）。
+3. **冒烟**：`loop_status.py` / `tracks_status.py` / `sysinfo.py` / `curves_job_status.py` 各真跑一次 ✓
+   （输出正常 ✓、`[3] 正在跑的引擎` 正确显示"无" ✓、CPU 逻辑核 12 ✓）。
+4. `tools/_test_undefined_names.py` ⇒ **0 处** ✓（181 文件）· `_audit_deadcode`（清掉 4 个变死的 import ✓）·
+   `tools/release_check.py`（**55/55**）✓。
+
+### 四、⚠ 如实记账：三处**开发工具的可观察微调**（故本版记 MINOR ✗）
+
+1. `tracks_status` 的进程列表**有意收窄** ✗：原 PS 不限进程名 ⇒ 连**命令行里含这俩词的 shell 包装进程**
+   也会列出来 ✗；现在只列 python 进程 ✓（那正是不关心的 ✓，包装进程是噪音 ✓）。
+2. `sysinfo` 的 CPU 只报**逻辑核** ✗（原 `wmic` 还给物理核 ✓）—— wmic 在新版 Windows 上**已被移除** ✗，
+   换 `os.cpu_count()` 顺带修了这个隐患 ✓；想看物理核请用别的工具 ✓。
+3. `horizon_admit_write` 的"安全闸"**原样保留** ✓：查询失败时 `running=[]` ⇒ **放行** ✓ ——
+   本版**照旧** ✗（改成"查询失败即拒写"更安全 ✓，但那是**行为变化** ✗，得单独决定 ✓，已在注释里写明 ✓）。
+
+### 五、⚠ 未做 / 不在范围内（不许当成已做 ✗）
+
+* **`ai_test/` 下一次性的排查脚本**（`_kill_mine.py` · `_measure_parallel_mem.py` · `_memprof_1000.py` ·
+  `_probe_dynamic_add.py` · `_watch_mining.py` ✓）里仍有 PS/`taskkill` ✗ —— 它们是一次性 scratch ✓
+  **不进正式路径** ✓（不变量脚本已按设计排除该目录 ✓）；要用它们请先自己改 ✓。
+* **无 Linux 机 ⇒ POSIX 分支仍未真机验证** ✗（`os_compat` 顶部与每个函数都写明了这一点 ✓，
+  **不假装验证过** ✗）。⇒ 本版**仍不宣称"可移植性达标"** ✗：真正要跑 Linux 时，
+  还需一台 Linux 机把 `os_compat` 的 POSIX 分支 + 看板端到端过一遍 ✓。
 
 ---
 
