@@ -106,7 +106,7 @@ def decile_shape(RS, R, U, n_grp=N_GRP):
                 top20_ret=top20_ret, top20_std=top20_std, turn_top=turn_top)
 
 
-def l1_score(stab, ic_ir, shape_pos=None, mode='old', ic_n=None):
+def l1_score(stab, ic_ir, shape_pos=None, mode='old', ic_n=None, mono_n=None):
     """L1 排序分。
 
     mode='old'  : `|IC_IR| × (0.25 + 0.75·clip(stab,0,1))` —— **现状，逐位不变**（保留供对拍）
@@ -116,7 +116,15 @@ def l1_score(stab, ic_ir, shape_pos=None, mode='old', ic_n=None):
                   依据（gen162 实测）：`ic` 与 `strip_calmar` **−0.211**，`ic_n` **+0.197**；
                   且 `ic_n` 与 `ic` 仅 0.536 相关 ⇒ 它携带"剥风格后"的独立信息 ✓
                   ⚠ 需 `--style_obs`（否则 `ic_n` 全空）⇒ 缺值回退由调用方 `_make_score` 负责
+    mode='mono_n' : `clip(mono_n, 0, 1)` —— **2026-10-19 新增**：按**风格中性十档单调性**排序。
+                  依据（n=107，gen161-164 的 L2 候选 vs `strip_calmar` Spearman）：
+                  `mono_n` **+0.764** · `ic_n` +0.386 · `ic` +0.057 · `stab` **−0.210**
+                  ⇒ 唯一强预测项，且**零额外成本**（`decile_shape` 已在算、每代落盘）
+                  ⚠ 需 `--style_obs`（否则 `mono_n` 全空）⇒ 缺值回退由 `_make_score` 负责
     """
+    if mode == 'mono_n':
+        v = np.asarray(mono_n if mono_n is not None else [], dtype='float64')
+        return np.clip(np.nan_to_num(v, nan=0.0), 0, 1)
     if mode == 'ic_n':
         v = np.asarray(ic_n if ic_n is not None else [], dtype='float64')
         return np.clip(np.nan_to_num(v, nan=0.0), 0, None)

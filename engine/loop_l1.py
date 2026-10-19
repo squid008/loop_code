@@ -65,6 +65,13 @@ def _make_score(l1, mode):
       **−0.157**、而 `ic_n` **+0.197**；`ic_n` 与 `ic` 仅 0.536 相关
       ⇒ 它是目前**唯一方向正确**的 L1 指标 ✓（样本小，先当作一次性实验 ✓）
     """
+    if mode == 'mono_n':
+        if 'mono_n' in l1.columns and l1['mono_n'].notna().any():
+            return l1_score(l1['stab'], l1['ic_ir'], None, 'mono_n',
+                            l1['ic_n'] if 'ic_n' in l1.columns else None,
+                            l1['mono_n'])
+        print("  [score_mode=mono_n] mono_n 全空（需 --style_obs）⇒ 回退 score_mode=new ✗")
+        mode = 'new'
     if mode == 'ic_n':
         if 'ic_n' in l1.columns and l1['ic_n'].notna().any():
             return l1_score(l1['stab'], l1['ic_ir'], None, 'ic_n', l1['ic_n'])
@@ -459,6 +466,19 @@ def _ic_n(vals, Rsub_s_n, Usub_s):
     """
     if Rsub_s_n is None:
         return None
+    # ★ 2026-10-19：**首调用一次性诊断**（形状 + 有限值占比）—— v1.38.3 的 `ic_n` 全 NaN
+    #   但异常被吞、日志无线索 ✗ ⇒ 先把真实入参打出来，再据实修（不猜）
+    if not getattr(_ic_n, '_dbg', False):
+        _ic_n._dbg = True
+        try:
+            _s = (getattr(vals[0], 'shape', None),
+                  getattr(Rsub_s_n, 'shape', None),
+                  getattr(Usub_s, 'shape', None))
+            _fin = float(np.isfinite(np.asarray(Rsub_s_n, dtype='float64')).mean())
+            print(f"  [ic_n] 诊断: vals={_s[0]} Rsub_s_n={_s[1]} Usub_s={_s[2]} "
+                  f"Rsub有限占比={_fin:.3f} FWD={_S.FWD}")
+        except Exception as _e:                              # noqa: BLE001
+            print(f"  [ic_n] 诊断失败: {type(_e).__name__}: {_e}")
     try:
         # ⚠ `Rsub_s_n` 是 **`[::FWD]` 调仓日视图**（`loop_stage`: `Rsub_s = Rsub[::FWD]` →
         #   再 `neutralize_rows`）⇒ `vals` 必须先抽同样行，否则维度不匹配 ✗
@@ -466,7 +486,10 @@ def _ic_n(vals, Rsub_s_n, Usub_s):
         vs = [v[::_S.FWD] for v in vals]
         mu, _ir, _ = batch_ic(vs, Rsub_s_n, Usub_s, None)
         return np.abs(mu)
-    except Exception:                                        # noqa: BLE001
+    except Exception as e:                                   # noqa: BLE001
+        # ★ 2026-10-19：**不许静默吞** —— v1.38.3 就是被这里的 except 吞掉异常，
+        #   导致 gen161 的 `ic_n` 整列 NaN 而日志毫无线索 ✗（本项目反复踩的坑）
+        print(f"  [ic_n] 计算失败(仅影响观测): {type(e).__name__}: {e}")
         return None
 
 

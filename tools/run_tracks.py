@@ -809,7 +809,14 @@ def _parse_args():
     #   ⇒ 结论：**开着它 = 几乎零成本地补上一个已知盲区** ✓
     extra = ['--pool_obs', '--pools=300,500,1000', '--strip_style', '--style_obs',
              '--dup_ex_corr=0.90',
-             '--min_calmar=0.0', '--min_ic=-1', '--score_mode=new',
+             '--min_calmar=0.0', '--min_ic=-1',
+            # ★★★ 2026-10-19（用户拍板）：L1 排序改为 **mono_n 主导**（风格中性十档单调性）
+            #   依据（n=107，gen161-164 的 L2 候选 vs strip_calmar 的 Spearman）：
+            #     mono_n **+0.764** · ic_n +0.386 · ic +0.057 · stab **−0.210**
+            #   ⇒ mono_n 是唯一强预测项，且**零额外成本**（decile_shape 已在算、每代落盘）
+            #   ⚠ 依赖 --style_obs（本行下方就开着）；缺值会自动回退 new 并打印告警
+            #   回退：把本行改回 '--score_mode=new'
+            '--score_mode=mono_n',
              '--min_pool_calmar=0.15', '--pool_gate_or_all',
              '--min_strip_calmar=0.15',
              # ★★★★★ 2026-09-22（用户："都开，然后调高"）—— **双口径挖掘**（v1.21.29 的能力 ✓）
