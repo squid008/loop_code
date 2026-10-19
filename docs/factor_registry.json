@@ -1,14 +1,14 @@
 {
  "schema": 1,
- "generatedAt": "2026-10-19 11:34:38",
+ "generatedAt": "2026-10-20 01:34:06",
  "source": "docs/factor_library*.md（编号/代数/家族/一句话/公式/指标）+ engine/loop_state*.pkl（入库 Node 结构，权威口径）",
  "why": "pkl 不进 git ⇒ 换机器（家里 pull）时本文件是\"重建 facs/指标/曲线\"的**唯一入口** ✓",
  "counts": {
   "all": {
-   "listed": 47,
-   "overview": 47,
-   "detail": 47,
-   "bank": 47,
+   "listed": 50,
+   "overview": 50,
+   "detail": 50,
+   "bank": 50,
    "bank_only": 0
   },
   "300": {
@@ -46,8 +46,8 @@
    "expr": "ts_mean150(corr100(ts_mean5(div(mf_m_bqty, hl_ratio)), ts_mean60(ts_mean5(turn_ratio))))"
   }
  ],
- "n_factors": 68,
- "n_with_node": 68,
+ "n_factors": 71,
+ "n_with_node": 71,
  "factors": [
   {
    "pool": "all",
@@ -2978,6 +2978,137 @@
     "args": [
      {
       "op": "ln_volume",
+      "args": []
+     }
+    ]
+   }
+  },
+  {
+   "pool": "all",
+   "no": "F49",
+   "gen": 165,
+   "family": "量",
+   "oneLiner": "ts_std100(ts_resi5(ln_volume))",
+   "status": "已入库(auto)",
+   "expr": "ts_std100(ts_resi5(ln_volume))",
+   "sign": null,
+   "poolTag": "csi500_1000",
+   "note": null,
+   "ic": 0.0284,
+   "icIr": 0.45,
+   "annEx": 0.013000000000000001,
+   "dd": -0.122,
+   "calmar": 0.108,
+   "sharpe": 0.29,
+   "recentYear": 0.07400000000000001,
+   "turn": 0.161,
+   "inBank": true,
+   "node": {
+    "op": "ts_std100",
+    "args": [
+     {
+      "op": "ts_resi5",
+      "args": [
+       {
+        "op": "ln_volume",
+        "args": []
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "all",
+   "no": "F50",
+   "gen": 166,
+   "family": "财报、资金流、风格",
+   "oneLiner": "ema26(div(fa_ocf_ta, div(mf_l_buy, barra_…",
+   "status": "已入库(auto)",
+   "expr": "ema26(div(fa_ocf_ta, div(mf_l_buy, barra_liquidity)))",
+   "sign": null,
+   "poolTag": "csi1000_all",
+   "note": null,
+   "ic": 0.0101,
+   "icIr": 0.126,
+   "annEx": 0.08900000000000001,
+   "dd": -0.14300000000000002,
+   "calmar": 0.621,
+   "sharpe": 1.122,
+   "recentYear": 0.006999999999999999,
+   "turn": 0.11699999999999999,
+   "inBank": true,
+   "node": {
+    "op": "ema26",
+    "args": [
+     {
+      "op": "div",
+      "args": [
+       {
+        "op": "fa_ocf_ta",
+        "args": []
+       },
+       {
+        "op": "div",
+        "args": [
+         {
+          "op": "mf_l_buy",
+          "args": []
+         },
+         {
+          "op": "barra_liquidity",
+          "args": []
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  },
+  {
+   "pool": "all",
+   "no": "F51",
+   "gen": 168,
+   "family": "风格、风格、资金流",
+   "oneLiner": "div(ts_mean200(sub(barra_non_linear_size,…",
+   "status": "已入库(auto)",
+   "expr": "div(ts_mean200(sub(barra_non_linear_size, barra_beta)), mf_l_bqty)",
+   "sign": null,
+   "poolTag": "csi1000_all",
+   "note": null,
+   "ic": 0.0171,
+   "icIr": 0.111,
+   "annEx": 0.10099999999999999,
+   "dd": -0.163,
+   "calmar": 0.62,
+   "sharpe": 1.095,
+   "recentYear": 0.027000000000000003,
+   "turn": 0.325,
+   "inBank": true,
+   "node": {
+    "op": "div",
+    "args": [
+     {
+      "op": "ts_mean200",
+      "args": [
+       {
+        "op": "sub",
+        "args": [
+         {
+          "op": "barra_non_linear_size",
+          "args": []
+         },
+         {
+          "op": "barra_beta",
+          "args": []
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "op": "mf_l_bqty",
       "args": []
      }
     ]

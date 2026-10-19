@@ -24,22 +24,23 @@
 > 而 `--decorr` / `--dup_ex_corr` 正是拿 `bank` 当对照集的，对照集变弱，引擎更容易重复挖，又被拦，就成了死循环。
 > 所以：**`bank` 照旧增长（它是对照集，越大去重越强）**，另设本精选层。
 
-## 精选清单（9 个）
+## 精选清单（10 个）
 
 > ★ **表达式是完整的**（不截断）—— 本文件可直接给下游用，不必回各池库翻。
 > 需要**可复制的全文** / `sign` / h5 路径 → 见下方「[精选因子明细](#精选因子明细可直接复制使用)」。
 
 | # | 因子 | 剥风格档 | 剥Calmar(日频) | 剥超额 | 原Calmar | 表达式（完整） |
 |---|---|---|---|---|---|---|
-| 1 | `F07` | **A** | **0.924** | +5.3% | 0.820 | `ts_std100(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))` |
+| 1 | `F49` | **A** | **1.156** | +6.6% | 0.108 | `ts_std100(ts_resi5(ln_volume))` |
 | 2 | `F04_300` | **A** | **0.564** | +5.1% | 0.727 | `ts_mean10(ema60(corr200(fa_sell_exp, cs_rank(ema12(cs_rank(ema12(ema12(mktcap))))))))` |
 | 3 | `F35` | **A** | **0.561** | +2.6% | 1.077 | `mul(ts_max20(max(max(barra_residual_volatility, div(barra_residual_volatility, barra_liquidity)), ts_rank60(cs_scale(ts_std100(barra_residual_volatility))))), corr100(true_range, mf_m_buy))` |
 | 4 | `F08_500` | **A** | **0.546** | +3.9% | 0.521 | `ts_mean200(ema20(ts_rank200(overnight)))` |
 | 5 | `F25` | **A** | **0.537** | +3.9% | 1.295 | `max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage)), ts_min20(cs_rank(barra_leverage)))), barra_residual_volatility)` |
 | 6 | `F07_1000` | **A** | **0.464** | +6.3% | 0.506 | `ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))` |
-| 7 | `F33` | **A** | **0.373** | +3.9% | 0.847 | `ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_beta), ts_std150(mf_x_bqty))))` |
-| 8 | `F05_500` | **A** | **0.332** | +2.3% | 0.802 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` |
-| 9 | `F21` | **A** | **0.305** | +2.2% | 0.868 | `max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_ocf_yoy, fa_gm))), barra_residual_volatility))` |
+| 7 | `F50` | **A** | **0.417** | +4.3% | 0.621 | `ema26(div(fa_ocf_ta, div(mf_l_buy, barra_liquidity)))` |
+| 8 | `F33` | **A** | **0.373** | +3.9% | 0.847 | `ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_beta), ts_std150(mf_x_bqty))))` |
+| 9 | `F05_500` | **A** | **0.332** | +2.3% | 0.802 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` |
+| 10 | `F21` | **A** | **0.305** | +2.2% | 0.868 | `max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_ocf_yoy, fa_gm))), barra_residual_volatility))` |
 
 ---
 
@@ -48,24 +49,24 @@
 > 每个精选因子一节：**完整表达式** + **`sign`** + **因子值 h5 路径** + 各项指标。
 > ⚠ **`sign` 必须用**：因子值要乘 `sign` 才是"越大越好"的方向（引擎求值时就是这个约定；不乘 ⇒ **方向反了**，组合会反向选股）。
 
-### 1. `F07`
+### 1. `F49`
 
 **完整表达式**
 ```
-ts_std100(mul(cs_demean(hl_ratio), ts_mean5(cs_demean(turn_ratio))))
+ts_std100(ts_resi5(ln_volume))
 ```
 
 | 项 | 值 |
 |---|---|
 | **`sign`（方向，必须乘）** | **-1** |
-| 因子值 h5 | `facs/4f/F07/values.h5` |
-| 快查副本（uint8，截面秩） | `facs/4f/F07/values_q.h5` |
+| 因子值 h5 | `facs/c3/F49/values.h5` |
+| 快查副本（uint8，截面秩） | `facs/c3/F49/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:all:genNone` |
-| 建于 | 2026-09-20 11:58:16 |
-| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.924 ≥ 0.30）|
-| 剥风格后 Calmar（日频）/ 超额 | **0.924** / +5.3% |
-| 原（未剥）Calmar / 超额 / IC | 0.820 / +6.0% / 0.052 |
+| 建于 | 2026-10-19 18:46:33 |
+| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 1.156 ≥ 0.30）|
+| 剥风格后 Calmar（日频）/ 超额 | **1.156** / +6.6% |
+| 原（未剥）Calmar / 超额 / IC | 0.108 / +1.3% / 0.028 |
 
 ### 2. `F04_300`
 
@@ -81,7 +82,7 @@ ts_mean10(ema60(corr200(fa_sell_exp, cs_rank(ema12(cs_rank(ema12(ema12(mktcap)))
 | 快查副本（uint8，截面秩） | `facs/11/F04_300/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:300:genNone` |
-| 建于 | 2026-09-20 12:29:35 |
+| 建于 | 2026-10-19 13:15:40 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.564 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.564** / +5.1% |
 | 原（未剥）Calmar / 超额 / IC | 0.727 / +5.9% / 0.010 |
@@ -100,7 +101,7 @@ mul(ts_max20(max(max(barra_residual_volatility, div(barra_residual_volatility, b
 | 快查副本（uint8，截面秩） | `facs/8e/F35/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:all:genNone` |
-| 建于 | 2026-09-20 12:23:12 |
+| 建于 | 2026-10-19 16:15:40 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.561 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.561** / +2.6% |
 | 原（未剥）Calmar / 超额 / IC | 1.077 / +4.6% / 0.037 |
@@ -119,7 +120,7 @@ ts_mean200(ema20(ts_rank200(overnight)))
 | 快查副本（uint8，截面秩） | `facs/18/F08_500/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:500:genNone` |
-| 建于 | 2026-09-20 18:19:54 |
+| 建于 | 2026-10-19 13:23:08 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.546 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.546** / +3.9% |
 | 原（未剥）Calmar / 超额 / IC | 0.521 / +3.1% / 0.011 |
@@ -138,7 +139,7 @@ max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage)), ts_min20(cs_rank(bar
 | 快查副本（uint8，截面秩） | `facs/d4/F25/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:all:genNone` |
-| 建于 | 2026-09-20 12:16:44 |
+| 建于 | 2026-10-19 16:05:23 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.537 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.537** / +3.9% |
 | 原（未剥）Calmar / 超额 / IC | 1.295 / +5.6% / 0.055 |
@@ -157,12 +158,31 @@ ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatili
 | 快查副本（uint8，截面秩） | `facs/20/F07_1000/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:1000:genNone` |
-| 建于 | 2026-09-20 12:35:50 |
+| 建于 | 2026-10-19 13:27:26 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.464 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.464** / +6.3% |
 | 原（未剥）Calmar / 超额 / IC | 0.506 / +7.0% / 0.017 |
 
-### 7. `F33`
+### 7. `F50`
+
+**完整表达式**
+```
+ema26(div(fa_ocf_ta, div(mf_l_buy, barra_liquidity)))
+```
+
+| 项 | 值 |
+|---|---|
+| **`sign`（方向，必须乘）** | **1** |
+| 因子值 h5 | `facs/b4/F50/values.h5` |
+| 快查副本（uint8，截面秩） | `facs/b4/F50/values_q.h5` |
+| 形状 | 3309 日 × 5384 股 |
+| 来源 | `lib:all:genNone` |
+| 建于 | 2026-10-19 20:32:25 |
+| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.417 ≥ 0.30）|
+| 剥风格后 Calmar（日频）/ 超额 | **0.417** / +4.3% |
+| 原（未剥）Calmar / 超额 / IC | 0.621 / +8.9% / 0.010 |
+
+### 8. `F33`
 
 **完整表达式**
 ```
@@ -176,12 +196,12 @@ ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_be
 | 快查副本（uint8，截面秩） | `facs/93/F33/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:all:genNone` |
-| 建于 | 2026-09-20 12:21:29 |
+| 建于 | 2026-10-19 16:13:08 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.373 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.373** / +3.9% |
 | 原（未剥）Calmar / 超额 / IC | 0.847 / +11.3% / 0.027 |
 
-### 8. `F05_500`
+### 9. `F05_500`
 
 **完整表达式**
 ```
@@ -195,12 +215,12 @@ corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)
 | 快查副本（uint8，截面秩） | `facs/dc/F05_500/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:500:genNone` |
-| 建于 | 2026-09-20 12:31:47 |
+| 建于 | 2026-10-19 13:18:07 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.332 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.332** / +2.3% |
 | 原（未剥）Calmar / 超额 / IC | 0.802 / +4.0% / 0.009 |
 
-### 9. `F21`
+### 10. `F21`
 
 **完整表达式**
 ```
@@ -214,7 +234,7 @@ max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_
 | 快查副本（uint8，截面秩） | `facs/0a/F21/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:all:genNone` |
-| 建于 | 2026-09-20 12:13:30 |
+| 建于 | 2026-10-19 16:00:54 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.305 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.305** / +2.2% |
 | 原（未剥）Calmar / 超额 / IC | 0.868 / +5.5% / 0.053 |
@@ -228,15 +248,16 @@ max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_
 
 | 被淘汰 | 与谁相关 ≥0.70 | 保留者 | 保留者剥Calmar(日频) | 被淘汰者剥Calmar(日频) |
 |---|---|---|---|---|
-| `F04_500` | （同组） | `F07` | **0.924** | 0.618 |
-| `F05` | 0.887 | `F07` | **0.924** | 0.546 |
-| `F08` | 0.899 | `F07` | **0.924** | 0.588 |
-| `F10_1000` | 0.719 | `F07` | **0.924** | 0.435 |
-| `F17` | （同组） | `F07` | **0.924** | 0.532 |
-| `F18` | （同组） | `F07` | **0.924** | 0.416 |
-| `F48` | 0.758 | `F07` | **0.924** | 0.891 |
 | `F28` | （同组） | `F25` | **0.537** | 0.302 |
 | `F31` | 0.724 | `F25` | **0.537** | 0.369 |
+| `F04_500` | （同组） | `F49` | **1.156** | 0.618 |
+| `F05` | （同组） | `F49` | **1.156** | 0.546 |
+| `F07` | （同组） | `F49` | **1.156** | 0.924 |
+| `F08` | （同组） | `F49` | **1.156** | 0.588 |
+| `F10_1000` | （同组） | `F49` | **1.156** | 0.435 |
+| `F17` | （同组） | `F49` | **1.156** | 0.532 |
+| `F18` | （同组） | `F49` | **1.156** | 0.416 |
+| `F48` | 0.773 | `F49` | **1.156** | 0.891 |
 
 ---
 
