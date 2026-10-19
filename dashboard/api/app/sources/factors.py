@@ -401,7 +401,20 @@ def library(pool):
                        ('sign', 'family', 'leaves', 'skeleton', 'poolTag')}
         for k in ('poolTagNote', 'strip', 'metricsDocText'):     # 散文类 ⇒ 出口处清洗
             f['detail'][k] = _plain(d.get(k, ''))
-        f['metrics'] = (mtab.get(nm) or {}).get('_num') or {}
+        f['metrics'] = dict((mtab.get(nm) or {}).get('_num') or {})
+        # ★★ 2026-10-19（用户：组合自身口径也要看剥风格后的指标）——
+        #   把 `loop_strip_style_bank.csv` 的**组合自身剥风格**字段并进 `metrics` ✓
+        #   为什么并进 metrics 而不是新开字段：前端详情页是**按 `METRIC_GROUPS` 同一套 schema 渲染**的
+        #   ⇒ 并进来后取值逻辑零改动 ✓（缺值自然显示 — ✓，不臆造 ✓）
+        _sm = _strip_bank_map().get(nm) or {}
+        for _k in ('strip_ann_top', 'strip_dd_top', 'strip_calmar_top', 'strip_sharpe_top',
+                   'strip_dd_top_d', 'strip_calmar_top_d', 'strip_sharpe_top_d'):
+            _v = _sm.get(_k)
+            if _v not in (None, ''):
+                try:
+                    f['metrics'][_k] = float(_v)      # CSV 里是字符串 ⇒ 前端格式化要数字 ✓
+                except (TypeError, ValueError):
+                    pass
         # ★★★★★ 2026-09-21（用户拍板："标签写法：5、20、双"·"判据：固定 0.624 / 0.701"·
         #   "曲线、指标连 20 日一起重算"）—— 三项一起接上 ✓
         #   ① `metrics20` ⇒ 详情页「口径切换」切到 20 日时**整块指标**换它 ✓（前端不用自己算 ✓）
@@ -734,6 +747,29 @@ def strip_bank():
         out.append(d)
     return {'found': True, 'path': os.path.relpath(p, core.ROOT),
             'mtime': core.mtime_iso(p), 'rows': out, 'count': len(out)}
+
+
+_STRIP_BANK_CACHE = {'key': None, 'map': {}}
+
+
+def _strip_bank_map():
+    """`{name: row}` 视图（按文件 mtime 缓存）。
+
+    ★ 2026-10-19：**缓存命中时必须零 IO** —— 首版先调 `strip_bank()` 再比对 mtime
+      ⇒ 每次仍把整张 CSV 读一遍（表达式很长）⇒ `_test_api_speed` 的"第二次命中缓存"
+      指标被拖慢 ✗ ⇒ 改为先用 `os.path.getmtime` 判缓存，命中直接返回 ✓
+    """
+    p = core.docs_path('loop_strip_style_bank.csv')
+    try:
+        mt = os.path.getmtime(p)
+    except OSError:
+        return {}
+    if _STRIP_BANK_CACHE['key'] == mt and _STRIP_BANK_CACHE['map']:
+        return _STRIP_BANK_CACHE['map']
+    sb = strip_bank()
+    _STRIP_BANK_CACHE['map'] = {r.get('name'): r for r in sb.get('rows', [])}
+    _STRIP_BANK_CACHE['key'] = mt
+    return _STRIP_BANK_CACHE['map']
 
 
 # ---------------------------------------------------------------- 池内观测

@@ -7129,3 +7129,47 @@ leaf_w={}
 > (3) mix=[0.15,0.25,0.2,0.25,0.15] 提高引导与扰动以跳出同质族;depth=[2,3,3] 压复杂度;min_stab=0.85 保稳定;decorr=0.8 强制去相关,直击 leaf_conc 与族冗余。
 > 
 > 否决: 无
+
+## 第 164 代 (B角诊断)
+
+时间: 2026-10-19 11:13:41 +0800 · 开工 2026-10-19 09:24:09 · 已跑 1h49m31s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 19 | 0.054 | 0.069 | 0.891 | 0.000 | 0.316 | 0.947 | 5 | 0.053 | 19 | 1 | 0.039 | 0.000 | 0.150 | 0.889 | 0.889 | 1.000 | 0.389 | 1.000 | 0.722 | 0.000 | 0.842 | 0.093 | 0.318 | 0.512 | 0.130 | 0.093 | 0.318 | 0.512 | 0.130 |
+
+叶子使用: {'true_range': 6, 'turn_ratio': 6, 'amplitude': 4, 'overnight': 3, 'fa_sell_exp': 2, 'fa_ocf_yoy': 1}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- —— 本代共拦截 1 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`
+
+**LLM 引导(A角 164代)**: 调用3次, 解析通过29条, 引导位使用29条
+> 资金流内部结构分化(大单与中小单主动净买入方向背离、且资金流强度与价格变化背离)反映知情交易者与散户的分歧,可预测未来5日截面收益。
+
+
+**LLM 候选审查(B角 164代)**: 深判 5 个, KILL 1 个(剔除出 L2 费后回测)
+- KILL `sub(turn_ratio, abs(fa_sell_exp))`
+  > 理由: 换手率减卖出费用绝对值，量纲与含义拼凑，无清晰量价机制
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根在信号同质化：头部候选几乎都是 amplitude+true_range 的 ts_std 变体，IC 中位仅 0.054，L2 全线 calmar 负、neg_yr 7-9，说明量价波动类因子已挖尽且无经济方向。
+> (2) 规则B角建议基本无效：r5_calmar_cross 已被永久否决，本条只是重复拦截，不产生新信息；且它把 L2 失败归因于 Calmar 不足，但真正主因是 fail_negyear=1.0 与 seg_kill=0.842，方向错配。本代未施加动作，无冲突可言，但也意味着规则层对病根零干预。
+> (3) mix=[0.15,0.35,0.2,0.2,0.1] depth=[2,3,4] min_stab=0.8 decorr=0.75：压低变异、抬高交叉与去相关，逼出跨族组合而非同族微调；depth 收窄防过拟合。
+> (4) 停掉重复拦截动作。
+> 否决: r5_calmar_cross
+
+**⚖️ 规则动作否决（机器读取）**: `r5_calmar_cross`（L2 多因 Calmar 不足 -> 交叉+15% / 深度加深）

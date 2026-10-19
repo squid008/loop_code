@@ -1092,6 +1092,17 @@ const METRIC_GROUPS: Array<[string, Array<[string, string, 'pct' | 'num' | 'int'
     ['ann_top', '年化（同期频）', 'pct'], ['dd_top_d', '最大回撤', 'pct'],
     ['calmar_top_d', '卡玛', 'num'], ['sharpe_top_d', '夏普', 'num'],
   ]],
+  // ★★ 2026-10-19（用户：组合自身口径下面也要加上剥风格后的指标）
+  //   口径 = 剥掉 lncap + lnamt（与入库那道剥风格门槛**同一个**），收益腿换成**组合自身**
+  //   （Top10% 等权绝对收益，不减基准）⇒ 答的是"剥掉风格后，这个组合自己还能不能赚"
+  ['组合自身口径 · 剥风格后（剥 lncap+lnamt）· 期频打点', [
+    ['strip_ann_top', '年化', 'pct'], ['strip_dd_top', '最大回撤', 'pct'],
+    ['strip_calmar_top', '卡玛', 'num'], ['strip_sharpe_top', '夏普', 'num'],
+  ]],
+  ['组合自身口径 · 剥风格后 · 日频打点', [
+    ['strip_ann_top', '年化（同期频）', 'pct'], ['strip_dd_top_d', '最大回撤', 'pct'],
+    ['strip_calmar_top_d', '卡玛', 'num'], ['strip_sharpe_top_d', '夏普', 'num'],
+  ]],
   ['其他', [
     ['last_yr', '最近一年超额', 'pct'], ['turn', '单期换手', 'pct'],
     ['neg_yr', '负年个数（年度超额 ≤0）', 'int'], ['ic', 'IC', 'num'], ['ic_ir', 'IC_IR', 'num'],

@@ -565,6 +565,14 @@ def main():
                                            strip_dd_d=rr_s.get('dd_d'),
                                            strip_calmar_d=rr_s.get('calmar_d'),
                                            strip_sharpe_d=rr_s.get('sharpe_d'),
+                                           # ★★ 2026-10-19：**组合自身**口径（用户要的）
+                                           strip_ann_top=rr_s.get('ann_top'),
+                                           strip_dd_top=rr_s.get('dd_top'),
+                                           strip_calmar_top=rr_s.get('calmar_top'),
+                                           strip_sharpe_top=rr_s.get('sharpe_top'),
+                                           strip_dd_top_d=rr_s.get('dd_top_d'),
+                                           strip_calmar_top_d=rr_s.get('calmar_top_d'),
+                                           strip_sharpe_top_d=rr_s.get('sharpe_top_d'),
                                            grade=k))
             except Exception as e:
                 print('      [剥风格] 失败(不影响落地): {}: {}'.format(type(e).__name__, e))
@@ -590,7 +598,10 @@ def main():
         cols_o = ['name', 'pool', 'expr', 'ic', 'calmar', 'ann_ex',
                   'dd_d', 'calmar_d',
                   'strip_ic', 'strip_calmar', 'strip_ann_ex', 'strip_sharpe',
-                  'strip_dd_d', 'strip_calmar_d', 'strip_sharpe_d', 'grade']
+                  'strip_dd_d', 'strip_calmar_d', 'strip_sharpe_d',
+                  # ★ 2026-10-19：组合自身口径（绝对收益）的剥风格四件套 + 日频回撤/卡玛/夏普
+                  'strip_ann_top', 'strip_dd_top', 'strip_calmar_top', 'strip_sharpe_top',
+                  'strip_dd_top_d', 'strip_calmar_top_d', 'strip_sharpe_top_d', 'grade']
         outp = os.path.join(DOCS, 'loop_strip_style_bank.csv')
         strip_n = (_merge_csv(outp, strip_rows, cols_o) if a.only_new
                    else _write_csv(outp, strip_rows, cols_o))

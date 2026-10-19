@@ -53,16 +53,7 @@ def _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style,
                                  close, str(nd) + '#strip',
                                  cost=args.cost, window=args.window, with_daily=True)
             if rr_s is not None:
-                strip_rec = dict(
-                    gen=args.gen, expr=str(nd),
-                    ic=rr['ic'], calmar=rr['calmar'], ann_ex=rr['ann_ex'],
-                    dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'),
-                    strip_ic=rr_s['ic'], strip_calmar=rr_s['calmar'],
-                    strip_ann_ex=rr_s['ann_ex'], strip_sharpe=rr_s['sharpe'],
-                    # ★ 剥风格后的**日频**口径（§1.19）—— 档位阈值现在就吃这几个
-                    strip_dd_d=rr_s.get('dd_d'),
-                    strip_calmar_d=rr_s.get('calmar_d'),
-                    strip_sharpe_d=rr_s.get('sharpe_d'))
+                strip_rec = _strip_rec_of(rr, rr_s, nd, args)
         except Exception as e_s:
             # 无人值守铁律: 剥风格失败**不得**影响主流程, 也不得据此拦候选
             print(f"  [{j}] 剥风格失败(不影响主流程): {type(e_s).__name__}: {e_s}")
@@ -101,14 +92,7 @@ def _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style,
                                       close, f"{nd}#h{int(args.dual_fwd)}#strip",
                                       cost=args.cost, window=args.window, with_daily=True)
                 if rr_s2 is not None:
-                    strip2 = dict(
-                        gen=args.gen, expr=str(nd),
-                        ic=rr2['ic'], calmar=rr2['calmar'], ann_ex=rr2['ann_ex'],
-                        strip_ic=rr_s2['ic'], strip_calmar=rr_s2['calmar'],
-                        strip_ann_ex=rr_s2['ann_ex'], strip_sharpe=rr_s2['sharpe'],
-                        strip_dd_d=rr_s2.get('dd_d'),
-                        strip_calmar_d=rr_s2.get('calmar_d'),
-                        strip_sharpe_d=rr_s2.get('sharpe_d'))
+                    strip2 = _strip_rec_of(rr2, rr_s2, nd, args)
         except Exception as e2:
             print(f"  [{j}] 副口径({int(args.dual_fwd)})评估失败(不影响主流程): "
                   f"{type(e2).__name__}: {e2}")
@@ -132,6 +116,37 @@ def _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style,
                 print(f"  [{j}] 副口径判定失败(按未过处理): {type(e3).__name__}: {e3}")
 
     return strip_rec, rr2, strip2, ok2
+
+def _strip_rec_of(rr, rr_s, nd, args):
+    """剥风格明细行（主/副口径**共用**）—— 2026-10-19 增加**组合自身**口径 7 个字段。
+
+    为什么加（用户："组合自身口径下面要不要也加上剥风格后的指标？"）：
+      现有 `strip_*` 全是**超额**口径（组合 − 池内等权基准）。而指数增强最终看的是
+      **组合自身的绝对收益**；只看超额无法回答"剥掉风格后这个组合自己还能不能赚"。
+      `evaluate_real` 本来就返回组合自身四件套（`ann_top/dd_top/calmar_top/sharpe_top`
+      + 日频 `dd_top_d/calmar_top_d/sharpe_top_d`）⇒ **零额外回测成本** ✓
+    ⚠ 纯新增字段：旧列名与语义逐字不变（CSV 走 schema-safe 追加 ✓）。
+    """
+    return dict(
+        gen=args.gen, expr=str(nd),
+        ic=rr['ic'], calmar=rr['calmar'], ann_ex=rr['ann_ex'],
+        dd_d=rr.get('dd_d'), calmar_d=rr.get('calmar_d'),
+        strip_ic=rr_s['ic'], strip_calmar=rr_s['calmar'],
+        strip_ann_ex=rr_s['ann_ex'], strip_sharpe=rr_s['sharpe'],
+        # ★ 剥风格后的**日频**口径（§1.19）—— 档位阈值现在就吃这几个
+        strip_dd_d=rr_s.get('dd_d'),
+        strip_calmar_d=rr_s.get('calmar_d'),
+        strip_sharpe_d=rr_s.get('sharpe_d'),
+        # ★★ 2026-10-19：**组合自身**口径（绝对收益，不含基准腿）
+        strip_ann_top=rr_s.get('ann_top'),
+        strip_dd_top=rr_s.get('dd_top'),
+        strip_calmar_top=rr_s.get('calmar_top'),
+        strip_sharpe_top=rr_s.get('sharpe_top'),
+        # ★★ 组合自身 · 日频打点（年化沿用期频 `ann_top`，与超额那组同规矩）
+        strip_dd_top_d=rr_s.get('dd_top_d'),
+        strip_calmar_top_d=rr_s.get('calmar_top_d'),
+        strip_sharpe_top_d=rr_s.get('sharpe_top_d'))
+
 
 def strip_channel_b_ok(rr, strip_rec, args, mec=None):
     """**剥风格独立通道**（通道 B）的纯判定 —— 2026-10-19 用户拍板。
