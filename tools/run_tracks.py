@@ -820,7 +820,16 @@ def _parse_args():
              #   ⚠ 这是往 `extra`（默认组）里加 ⇒ 所有池、以及**看板按钮启动的那条路**都生效 ✓
              #     （看板 `dashboard/api/app/mine.py` 拉的就是本脚本 ✓ 不另走一条参数路径 ✓）
              #   ⚠ 成本 ≈ ×1.4（每候选 +2 次回测：副口径主评 + 副口径剥风格 ✓）
-             '--dual_fwd=20', '--min_calmar2=0.701']
+             '--dual_fwd=20', '--min_calmar2=0.701',
+            # ★★★ 2026-10-19（用户拍板）：**剥风格独立通道**
+            #   为什么：现有入库是 AND（含风格 calmar2 ∧ 剥风格 strip_calmar）⇒ 实际要求
+            #   "既有风格 beta 又有风格外 alpha"，而实测两类不可兼得
+            #   （gen162 有 beta 无 alpha；gen163 有 alpha 无 beta）⇒ 69+ 代 0 入库。
+            #   标定（`docs/loop_archive` ⨝ `loop_strip_style`，gen>=100 共 1496 条）：
+            #   strip_calmar 中位 −0.167、>=0.15 仅 5 条、>=0.3 4 条、**>=0.5 仅 1 条**
+            #   ⇒ 阈值取**极严档**（0.5 / 3% / 0.8），不是"放宽门槛凑数量" ✓
+            '--strip_channel_b', '--min_strip_calmar_b=0.5', '--min_strip_ann_b=0.03',
+            '--min_strip_sharpe_b=0.8', '--min_ic_b=0.02']
     for a in sys.argv[1:]:
         if a.startswith('--pools='):
             pools = [x.strip() for x in a.split('=', 1)[1].split(',') if x.strip()]

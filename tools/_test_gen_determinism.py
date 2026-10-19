@@ -55,7 +55,10 @@ def _norm(text):
 def _run():
     cmd = [PY, '-u', 'engine/loop_engine.py', '--gen=%d' % GEN, '--n=%d' % N, '--gen_only',
            '--seed=777', '--llm_guide=off', '--ai_critic=off', '--ai_jury=off']
-    env = dict(os.environ, PYTHONIOENCODING='utf-8')
+    # ★ 2026-10-19：**必须固定 PYTHONHASHSEED** —— 否则 `leaf_hist` 这类 **dict 键序**会随
+    #   字符串哈希随机化而变（**内容完全相同**）⇒ 本守门变成"测哈希顺序"而不是"测数值确定性" ✗
+    #   （`tools/_pool_traj.py` 早就设了 ✓，本文件**漏了** ⇒ 2026-10-19 实测假阳性一次 ✗）
+    env = dict(os.environ, PYTHONIOENCODING='utf-8', PYTHONHASHSEED='0')
     t0 = time.time()
     pr = subprocess.run(cmd, cwd=ROOT, capture_output=True, env=env, timeout=900)
     out = (pr.stdout or b'').decode('utf-8', 'replace')

@@ -415,6 +415,19 @@ if __name__ == '__main__':
                          'new +0.668; new 不含 ic_ir(IC 仅留作 ic>min_ic 准入门槛)。'
                          'ic_n(2026-10-19)=clip(风格中性IC,0,∞): 唯一与 strip_calmar 正相关的 L1 指标'
                          '(ic −0.211 / new −0.157 / ic_n +0.197)；⚠ 需 --style_obs, 缺值自动回退 new')
+    # ★★★ 2026-10-19（用户拍板）：**剥风格独立通道**（默认关 ⇒ 行为不变）
+    ap.add_argument('--strip_channel_b', action='store_true',
+                    help='剥风格独立通道(默认关): 纯 alpha 型因子(原始口径被风格 beta 拖累)的**第二条入库路** —— '
+                         '只要求剥风格口径自身达标, 不要求原始 calmar/年超额/neg_yr。'
+                         '标定(gen>=100 共 1496 条): strip_calmar>=0.5 仅 1 条、>=0.3 共 4 条')
+    ap.add_argument('--min_strip_calmar_b', type=float, default=0.5,
+                    help='通道B: strip_calmar 下限(默认 0.5；标定：1496 条里仅 1 条达标)')
+    ap.add_argument('--min_strip_ann_b', type=float, default=0.03,
+                    help='通道B: strip_ann_ex 下限(默认 0.03 = 剥风格后年化 3%)')
+    ap.add_argument('--min_strip_sharpe_b', type=float, default=0.8,
+                    help='通道B: strip_sharpe 下限(默认 0.8)')
+    ap.add_argument('--min_ic_b', type=float, default=0.02,
+                    help='通道B: |ic| 下限(默认 0.02)')
     ap.add_argument('--style_obs', action='store_true',
                     help='风格暴露观测(2026-09-11, 默认关): 记录**每个被求值的 L1 候选**对 '
                          'lncap/lnamt/lntr/lnpx 的截面秩相关(L1 子面板[::FWD] 视图), 紧跟 L1 求值 '

@@ -133,6 +133,56 @@ def _l2_strip_dual(j, nd, f, dates, cols, close, args, STYLE_FULL, _strip_style,
 
     return strip_rec, rr2, strip2, ok2
 
+def strip_channel_b_ok(rr, strip_rec, args, mec=None):
+    """**剥风格独立通道**（通道 B）的纯判定 —— 2026-10-19 用户拍板。
+
+    语义：纯 alpha 型因子（**原始口径被风格 beta 拖累**）的第二条入库路 ——
+    只要求**剥风格口径自身**达标，**不要求**原始 calmar / 年超额 / neg_yr。
+    为什么必须分开：现有入库是 AND（`calmar2` 含风格 ∧ `strip_calmar` 剥风格）
+    ⇒ 等于要求"既有 beta 又有 alpha"。实测两类因子不可兼得：
+      · `new` 排序（gen162）：有 beta、strip 全负；
+      · `ic_n` 排序（gen163）：有 alpha（strip_calmar 1.15 / strip_ann 6.9%）、原始 calmar2 只有 0.2。
+
+    标定（`docs/loop_archive.csv` ⨝ `docs/loop_strip_style.csv`，gen>=100 共 1496 条）：
+      `strip_calmar` 中位 **−0.167**、99 分位 0.038；
+      `>=0.15` 仅 5 条、`>=0.3` 4 条、**`>=0.5` 仅 1 条**（正是 gen163 那条 `ts_std100(ln_volume)`）；
+      历史入库者（12 条有剥风格观测）`strip_calmar` 中位 −0.014、max 0.604。
+    ⇒ 阈值取 `0.5 / 3% / 0.8`（极少数档，不是"放宽门槛凑数量"）。
+
+    ⚠ 默认 `args.strip_channel_b` 关 ⇒ **行为完全不变** ✓；失败一律按"未过"处理 ✓。
+    """
+    if not getattr(args, 'strip_channel_b', False) or strip_rec is None:
+        return False
+    try:
+        if abs(float(rr.get('ic', 0.0))) < float(getattr(args, 'min_ic_b', 0.02)):
+            return False
+        if float(strip_rec['strip_calmar']) <= float(getattr(args, 'min_strip_calmar_b', 0.5)):
+            return False
+        if float(strip_rec.get('strip_ann_ex', -9.0)) <= float(getattr(args, 'min_strip_ann_b', 0.03)):
+            return False
+        if float(strip_rec.get('strip_sharpe', -9.0)) <= float(getattr(args, 'min_strip_sharpe_b', 0.8)):
+            return False
+        if mec is not None and float(mec) > float(getattr(args, 'dup_ex_corr', 0.90)):
+            return False
+        return True
+    except Exception:                                        # noqa: BLE001
+        return False
+
+
+def _apply_strip_channel_b(ok, j, rr, strip_rec, args, mec):
+    """通道 B 接线：命中则返回 True 并打一行审计（从 `_l2_candidates` 抽出，守 R1）。
+
+    ★ 2026-10-19：内联原来是 7 行，把 `_l2_candidates` 顶到 126 行（R1 线 120）✗
+      ⇒ 抽成独立函数（**纯转发**，判定仍在 `strip_channel_b_ok` ✓ 单一事实源）。
+    """
+    if ok or not strip_channel_b_ok(rr, strip_rec, args, mec):
+        return ok
+    print(f"  [{j}] ★ 通道B(剥风格) 通过: strip_calmar={strip_rec['strip_calmar']:.3f} "
+          f"strip_ann={strip_rec['strip_ann_ex']*100:+.2f}% "
+          f"strip_sharpe={strip_rec.get('strip_sharpe', float('nan')):.2f}")
+    return True
+
+
 def _l2_pool_tags(j, nd, fac, dates, cols, close, args, POOL_M, MCAP, _pools, _lp,
                   rr, strip_rec, strip2, pool_rec, _tag_by_expr, _strip_by_expr, _strip2_by_expr):
     """单候选池内指标 + 池标签/剥风格档派生（就地改 pool_rec / *_by_expr）"""
@@ -471,6 +521,7 @@ def _l2_candidates(MCAP, POOL_M, _lp, acc, args, cal, top):
             _mec, _mew = ex_max_corr(_ex, _cmp_lib(cal.bank_ex, cal.bank_ex_ext))   # ★ 含外部池库(§1.8)
         if _ex is not None:
             cal.ex_by_expr[str(acc.nd)] = _ex
+        ok = _apply_strip_channel_b(ok, j, rr, strip_rec, args, _mec)
         leaf_s, cat_s = leaf_parts(acc.nd)
         acc.rows.append(dict(expr=str(acc.nd), cat=cat_s, leaf=leaf_s,
                          window=args.window, cost=args.cost,
