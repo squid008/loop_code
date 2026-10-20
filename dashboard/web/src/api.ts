@@ -491,11 +491,45 @@ export interface OpsDto {
   source: string
 }
 
+// ---------------------------------------------------------------- 参数页（2026-10-21）
+/** 一个可编辑参数（默认值/范围/分组都来自后端 `engine/loop_params.py`） */
+export interface ParamItem {
+  key: string
+  flag: string
+  label: string
+  group: string
+  type: 'int' | 'float' | 'str' | 'bool' | 'enum'
+  default: number | string | boolean
+  value: number | string | boolean
+  overridden: boolean
+  lo: number | null
+  hi: number | null
+  choices: string[] | null
+  /** 2=会改变入库严格度（危险）1=谨慎 0=安全 */
+  danger: number
+  desc: string
+}
+
+export interface ParamsDto {
+  groups: string[]
+  items: ParamItem[]
+  path: string
+  exists: boolean
+  mtime: string | null
+  n_overrides: number
+  note: string
+}
+
 // ---------------------------------------------------------------- 接口
 export const api = {
   meta: () => get<MetaDto>('/meta'),
   /** ★ 2026-09-19：算子手册（算子与字段的中文含义；名单唯一事实源仍是 ops_registry） */
   ops: () => get<OpsDto>('/ops'),
+  /** ★ 2026-10-21：生产挖掘参数（读/写/恢复默认；保存后**下次启动**生效） */
+  params: () => get<ParamsDto>('/params'),
+  saveParams: (values: Record<string, number | string | boolean>) =>
+    post<{ ok: boolean; saved: number; warnings: string[] }>('/params', { values }),
+  resetParams: () => post<{ ok: boolean }>('/params/reset', {}),
   status: (fresh = false) => get<StatusDto>(`/status${fresh ? '?fresh=true' : ''}`, 40000),
   libraries: () => get<{ libraries: LibraryDto[]; totalFactors: number }>('/library'),
   library: (pool: string) => get<LibraryDto>(`/library/${pool}`),

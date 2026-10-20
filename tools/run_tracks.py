@@ -807,7 +807,10 @@ def _parse_args():
     #   ④ 状态污染**不构成问题**：它跑的是真实一代、会改 `loop_state.pkl`，但生产轨道本来就在真跑
     #        （`--strip_style` 同样改），且多池已各自有独立 state 文件 ✓
     #   ⇒ 结论：**开着它 = 几乎零成本地补上一个已知盲区** ✓
-    extra = ['--pool_obs', '--pools=300,500,1000', '--strip_style', '--style_obs',
+    # ★ 2026-10-21（用户：前端要能看/改全部参数）：本 list 仍是**生产默认值**（唯一），
+    #   前端改的只存"覆盖项"（docs/loop_params.json），由 `_LP.merge_extra` 按 flag 替换 ✓
+    #   ⇒ 不会出现"页面显示一套、代码默认另一套"的漂移 ✗
+    _LEGACY_EXTRA = ['--pool_obs', '--pools=300,500,1000', '--strip_style', '--style_obs',
              '--dup_ex_corr=0.90',
              '--min_calmar=0.0', '--min_ic=-1',
             # ★★★ 2026-10-19（用户拍板）：L1 排序改为 **mono_n 主导**（风格中性十档单调性）
@@ -837,11 +840,25 @@ def _parse_args():
             #   ⇒ 阈值取**极严档**（0.5 / 3% / 0.8），不是"放宽门槛凑数量" ✓
             '--strip_channel_b', '--min_strip_calmar_b=0.5', '--min_strip_ann_b=0.03',
             '--min_strip_sharpe_b=0.8', '--min_ic_b=0.02',
-            # ★ 2026-10-20（用户拍板 A 方案）：生成端拦截「纯风格组合」
-            #   证据：gen171/172 过 calmar2 的 3 条全是 `div(barra_*, ...)`，剥风格后 Calmar −0.06~−0.17
-            #   ⇒ 必被 min_strip_calmar 拦下 ⇒ 白耗 L2（~56s/条）
-            #   回退：删掉本行（或改成 --style_gate=0）
-            '--style_gate=1']
+            # ⚠⚠ 2026-10-21 **已回退**：`--style_gate` 关（引擎默认 0，故这里不再传）。
+            #   实测对照：
+            #     · gen165-180（无 gate）：16 代 **4 入库**；过 calmar2 的 8 条里 strip≥0.15 占 25%
+            #     · gen181-190（开 gate）：10 代 **0 入库**；过 calmar2 的 7 条里 strip<0 占 **86%**
+            #   ⇒ 规则 b（拦 div 分子含 barra）方向错了：它拦掉的正是"**显式写明风格暴露**、
+            #     剥两者后仍能过门槛"的那类（如 F52 的 strip_calmar=0.254 ✓），
+            #     留下的反而是"不写 barra 但本质同源"的隐性风格（成交量/换手衍生），剥完更难为正。
+            #   如要再试，**只开规则 a**（barra 占比 ≥0.5），不要开规则 b。
+            # '--style_gate=1',
+            ]
+    # ★ 2026-10-21：前端可改参数（覆盖层，只存"被改过的项"）——
+    #   默认值仍是上面的 `_LEGACY_EXTRA`（唯一），本行只做**按 flag 替换** ✓
+    if ENGINE not in sys.path:
+        sys.path.insert(0, ENGINE)          # ★ engine/ 下的单一事实源模块
+    import loop_params as _LP
+    extra = _LP.merge_extra(_LP.load_overrides(), base=_LEGACY_EXTRA)
+    if _LP.load_overrides():
+        print('  [参数] 已应用 docs/loop_params.json 的覆盖: '
+              + ', '.join(sorted(_LP.load_overrides())))
     for a in sys.argv[1:]:
         if a.startswith('--pools='):
             pools = [x.strip() for x in a.split('=', 1)[1].split(',') if x.strip()]

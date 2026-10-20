@@ -3,10 +3,11 @@ import {
   api,
   type CurvesDto, type LibraryDto, type LibraryEntriesDto, type LibraryEntryDto,
   type LibraryFactor, type MetaDto, type MineStateDto, type OpsDto,
+  type ParamItem, type ParamsDto,
   type PoolStatus, type SelectedDto, type SelectedFactor, type StatusDto,
 } from './api'
 
-type TabKey = 'pools' | 'library' | 'selected' | 'process' | 'meta'
+type TabKey = 'pools' | 'library' | 'selected' | 'process' | 'params' | 'meta'
 
 const fmt = (n: number | null | undefined) =>
   n === null || n === undefined ? '—' : n.toLocaleString('en-US')
@@ -517,7 +518,7 @@ export default function App() {
 
       <nav className="tabs">
         {([['pools', '池运行状态'], ['library', '因子库'], ['selected', '精选池'],
-           ['process', '进程'], ['meta', '配置/口径']] as [TabKey, string][]).map(([k, t]) => (
+           ['process', '进程'], ['params', '参数'], ['meta', '配置/口径']] as [TabKey, string][]).map(([k, t]) => (
           <button key={k} className={tab === k ? 'tab on' : 'tab'} onClick={() => setTab(k)}>{t}</button>
         ))}
       </nav>
@@ -595,6 +596,8 @@ export default function App() {
           ) : <div className="empty">当前无相关 python 进程{status?.processError ? `（查询报错：${status.processError}）` : ''}</div>}
         </section>
       )}
+
+      {tab === 'params' && <ParamsTab />}
 
       {tab === 'meta' && meta && <MetaPanel m={meta} mine={mine} />}
 
@@ -2060,6 +2063,121 @@ function SelectedPanel({ s }: { s: SelectedDto }) {
                       onClose={() => setSel(null)} />
       )}
     </section>
+  )
+}
+
+/** ★ 2026-10-21（用户："把所有参数放到前端来，保存之后挖掘就按前端设定来挖"）——
+ *  参数页：**默认值 / 分组 / 范围 / 危险等级**全部来自后端（唯一事实源 `engine/loop_params.py`），
+ *  这里只负责"编辑 + 保存覆盖项"；保存后**下次启动挖掘**才生效（正在跑的代不变）✓
+ *  ⚠ 页面**不保存默认值** —— 只提交与默认不同的项 ⇒ 不会出现两份默认值 ✗ */
+function ParamsTab() {
+  const [d, setD] = useState<ParamsDto | null>(null)
+  const [draft, setDraft] = useState<Record<string, string>>({})
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const load = useCallback(() => {
+    setMsg('')
+    api.params().then(x => { setD(x); setDraft({}) }).catch(e => setMsg(String(e)))
+  }, [])
+  useEffect(load, [load])
+
+  if (!d) return <div className="empty">{msg || '加载中…'}</div>
+
+  const valOf = (it: ParamItem) => (it.key in draft ? draft[it.key] : String(it.value))
+  const dirty = d.items.filter(it => it.key in draft && draft[it.key] !== String(it.value))
+  const set = (k: string, v: string) => setDraft(o => ({ ...o, [k]: v }))
+
+  const save = async () => {
+    setBusy(true); setMsg('')
+    try {
+      const values: Record<string, number | string | boolean> = {}
+      for (const it of dirty) {
+        const raw = draft[it.key]
+        values[it.key] = it.type === 'bool' ? raw === 'true'
+          : it.type === 'int' ? parseInt(raw, 10)
+            : it.type === 'float' ? parseFloat(raw) : raw
+      }
+      const r = await api.saveParams(values)
+      setMsg(`已保存 ${r.saved} 项${r.warnings?.length ? '（' + r.warnings.join('；') + '）' : ''}`
+        + ' —— 下次启动挖掘生效')
+      load()
+    } catch (e) { setMsg(String(e)) } finally { setBusy(false) }
+  }
+
+  const reset = async () => {
+    setBusy(true); setMsg('')
+    try { await api.resetParams(); setMsg('已恢复默认（覆盖文件已删除）'); load() }
+    catch (e) { setMsg(String(e)) } finally { setBusy(false) }
+  }
+
+  const input = (it: ParamItem) => {
+    const v = valOf(it)
+    if (it.type === 'bool') {
+      return <input type="checkbox" checked={v === 'true'}
+        onChange={e => set(it.key, String(e.target.checked))} />
+    }
+    if (it.type === 'enum') {
+      return <select value={v} onChange={e => set(it.key, e.target.value)}>
+        {(it.choices || []).map(c => <option key={c} value={c}>{c}</option>)}
+      </select>
+    }
+    return <input style={{ width: 140 }} value={v}
+      onChange={e => set(it.key, e.target.value)} />
+  }
+
+  return (
+    <div className="libwrap">
+      <div className="caliber">
+        <b>生产挖掘参数</b>（覆盖文件 <code>{d.path}</code>，当前 {d.n_overrides} 项被覆盖）
+        <div className="note">{d.note}</div>
+        {msg && <div className="note"><b>{msg}</b></div>}
+        <div style={{ marginTop: 8 }}>
+          <button className="btn" disabled={busy || !dirty.length} onClick={save}>
+            保存改动（{dirty.length}）
+          </button>
+          <button className="btn" disabled={busy || !d.exists} onClick={reset}
+            style={{ marginLeft: 8 }}>恢复默认</button>
+          <button className="btn" disabled={busy} onClick={load}
+            style={{ marginLeft: 8 }}>重新读取</button>
+          <span className="note" style={{ marginLeft: 10 }}>
+            ● 红=会改变入库严格度 · ● 黄=改前想清楚 · 无点=安全
+          </span>
+        </div>
+      </div>
+      {d.groups.map(g => (
+        <div key={g}>
+          <div className="dt-grp-h">{g}</div>
+          <table className="tbl">
+            <thead>
+              <tr>
+                <th style={{ width: 200 }}>参数</th>
+                <th style={{ width: 170 }}>当前值</th>
+                <th style={{ width: 110 }}>默认</th>
+                <th>说明</th>
+              </tr>
+            </thead>
+            <tbody>
+              {d.items.filter(it => it.group === g).map(it => (
+                <tr key={it.key}>
+                  <td>
+                    {it.danger >= 2 && <span style={{ color: '#ef4444', marginRight: 4 }}
+                      title="改动会直接影响入库严格度">●</span>}
+                    {it.danger === 1 && <span style={{ color: '#f59e0b', marginRight: 4 }}
+                      title="改前想清楚">●</span>}
+                    <span title={it.flag}>{it.label}</span>
+                    {it.overridden && <span className="note" style={{ marginLeft: 6 }}>已改</span>}
+                  </td>
+                  <td>{input(it)}</td>
+                  <td className="mono">{String(it.default)}</td>
+                  <td className="sum" title={it.desc}>{it.desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
   )
 }
 

@@ -25,7 +25,7 @@ if __package__ in (None, ''):                      # 允许 `python app/main.py`
 else:
     from . import settings
     from . import mine
-    from .sources import core, factors, pools, ops
+    from .sources import core, factors, pools, ops, params
 
 T0 = time.time()
 
@@ -94,6 +94,32 @@ def meta():
             '/api/mine/start_pool', '/api/mine/global',
         ],
     }
+
+
+# ================================================================ ★ 参数页（2026-10-21）
+# 唯一事实源 = `engine/loop_params.py`（默认值/分组/范围/危险等级都在那儿）；
+# 页面改的只存覆盖项 `docs/loop_params.json` ⇒ **下次启动挖掘**生效。
+class ParamsPayload(BaseModel):
+    values: dict = {}
+
+
+@app.get('/api/params', summary='生产挖掘参数（当前值 / 默认值 / 范围 / 危险等级）')
+def api_params():
+    return params.params_view()
+
+
+@app.post('/api/params', summary='保存参数覆盖（下次启动挖掘生效）')
+def api_params_save(p: ParamsPayload):
+    ok, warns, n = params.params_save(p.values)
+    if not ok:
+        raise HTTPException(400, detail='；'.join(warns))
+    return {'ok': True, 'saved': n, 'warnings': warns}
+
+
+@app.post('/api/params/reset', summary='恢复默认（删除覆盖文件）')
+def api_params_reset():
+    params.params_reset()
+    return {'ok': True}
 
 
 @app.get('/api/status', summary='池运行状态快照（是否在跑 / 跑多少轮 / 库规模）')
