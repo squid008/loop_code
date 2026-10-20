@@ -63,7 +63,7 @@ ts_std100(ts_resi5(ln_volume))
 | 快查副本（uint8，截面秩） | `facs/c3/F49/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:all:genNone` |
-| 建于 | 2026-10-19 18:46:33 |
+| 建于 | 2026-10-20 01:59:14 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 1.156 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **1.156** / +6.6% |
 | 原（未剥）Calmar / 超额 / IC | 0.108 / +1.3% / 0.028 |
@@ -82,7 +82,7 @@ ts_mean10(ema60(corr200(fa_sell_exp, cs_rank(ema12(cs_rank(ema12(ema12(mktcap)))
 | 快查副本（uint8，截面秩） | `facs/11/F04_300/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:300:genNone` |
-| 建于 | 2026-10-19 13:15:40 |
+| 建于 | 2026-10-20 02:01:21 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.564 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.564** / +5.1% |
 | 原（未剥）Calmar / 超额 / IC | 0.727 / +5.9% / 0.010 |
@@ -101,7 +101,7 @@ mul(ts_max20(max(max(barra_residual_volatility, div(barra_residual_volatility, b
 | 快查副本（uint8，截面秩） | `facs/8e/F35/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:all:genNone` |
-| 建于 | 2026-10-19 16:15:40 |
+| 建于 | 2026-10-20 01:53:04 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.561 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.561** / +2.6% |
 | 原（未剥）Calmar / 超额 / IC | 1.077 / +4.6% / 0.037 |
@@ -120,7 +120,7 @@ ts_mean200(ema20(ts_rank200(overnight)))
 | 快查副本（uint8，截面秩） | `facs/18/F08_500/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:500:genNone` |
-| 建于 | 2026-10-19 13:23:08 |
+| 建于 | 2026-10-20 02:05:43 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.546 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.546** / +3.9% |
 | 原（未剥）Calmar / 超额 / IC | 0.521 / +3.1% / 0.011 |
@@ -139,7 +139,7 @@ max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage)), ts_min20(cs_rank(bar
 | 快查副本（uint8，截面秩） | `facs/d4/F25/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:all:genNone` |
-| 建于 | 2026-10-19 16:05:23 |
+| 建于 | 2026-10-20 01:48:14 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.537 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.537** / +3.9% |
 | 原（未剥）Calmar / 超额 / IC | 1.295 / +5.6% / 0.055 |
@@ -158,7 +158,7 @@ ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatili
 | 快查副本（uint8，截面秩） | `facs/20/F07_1000/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:1000:genNone` |
-| 建于 | 2026-10-19 13:27:26 |
+| 建于 | 2026-10-20 02:08:28 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.464 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.464** / +6.3% |
 | 原（未剥）Calmar / 超额 / IC | 0.506 / +7.0% / 0.017 |
@@ -177,7 +177,7 @@ ema26(div(fa_ocf_ta, div(mf_l_buy, barra_liquidity)))
 | 快查副本（uint8，截面秩） | `facs/b4/F50/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:all:genNone` |
-| 建于 | 2026-10-19 20:32:25 |
+| 建于 | 2026-10-20 01:59:35 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.417 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.417** / +4.3% |
 | 原（未剥）Calmar / 超额 / IC | 0.621 / +8.9% / 0.010 |
@@ -196,7 +196,7 @@ ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_be
 | 快查副本（uint8，截面秩） | `facs/93/F33/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:all:genNone` |
-| 建于 | 2026-10-19 16:13:08 |
+| 建于 | 2026-10-20 01:51:55 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.373 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.373** / +3.9% |
 | 原（未剥）Calmar / 超额 / IC | 0.847 / +11.3% / 0.027 |
@@ -215,7 +215,7 @@ corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)
 | 快查副本（uint8，截面秩） | `facs/dc/F05_500/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:500:genNone` |
-| 建于 | 2026-10-19 13:18:07 |
+| 建于 | 2026-10-20 02:03:01 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.332 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.332** / +2.3% |
 | 原（未剥）Calmar / 超额 / IC | 0.802 / +4.0% / 0.009 |
@@ -234,7 +234,7 @@ max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_
 | 快查副本（uint8，截面秩） | `facs/0a/F21/values_q.h5` |
 | 形状 | 3309 日 × 5384 股 |
 | 来源 | `lib:all:genNone` |
-| 建于 | 2026-10-19 16:00:54 |
+| 建于 | 2026-10-20 01:45:54 |
 | 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.305 ≥ 0.30）|
 | 剥风格后 Calmar（日频）/ 超额 | **0.305** / +2.2% |
 | 原（未剥）Calmar / 超额 / IC | 0.868 / +5.5% / 0.053 |

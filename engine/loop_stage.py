@@ -23,7 +23,8 @@ from factor_miner import evaluate_real, cs_rank, pass_filter, get_universe, STAR
 #   ⚠ `--fwd` 由 `loop_engine.py` 的 `main()` **同步两个模块**（见那里的同步块 ✓）。
 FWD = _FM.FWD
 
-from loop_expr import (Node, collect, skeleton, root_fam, has_frozen_skel, clone, _fsa_stats)
+from loop_expr import (Node, collect, skeleton, root_fam, has_frozen_skel, clone, _fsa_stats,
+                       is_style_combo)
 from loop_ops import UNARY, BINARY, ts_mean
 from loop_gen import (DEFAULT_CFG, _clean_cfg, rand_expr, eval_expr, mutate, leaf_parts,
                      crossover, pick_parent, perturb, guided_expr, _build_fam_blacklist)
@@ -215,6 +216,10 @@ def _run_prepare(args):
     # 引导位 r∈[cut2,cut3) 的候选来源 = LLM 解析池; 池空且调用未超限则按需补一次;
     # 无 key/超时/解析失败/超限 -> 回退本地 guided_expr。LLM 候选与规则候选走
     # 同一条守卫链(跨量纲/失败库/FSA/判重), 不产生旁路。
+# ★ 回写 ctx（**原样保留** ✓）—— 以下教训来自 S3b 第一次改（注释从函数体内**上移**，守 R1）：
+#   ⚠ 当时我把 `_gen_guard` 插在了回写段之前（以为函数到此结束 ✗）⇒ 那 8 行被新函数"吸走"
+#     （落到它的 `return` 之后 ⇒ 死代码 ✗）⇒ `ctx['cands']` 再没被写 ⇒ 真实一代立刻
+#     `KeyError: 'cands'` ✗✗ ⇒ A/B 第一次跑就报出来 ✓（这正是"真动代码必须跑 A/B"的理由 ✓）
 def _run_gen(ctx, args):
     """生成候选（按 B角五维配比 + LLM 引导 + 守卫链）-> 写回 ctx；gen_only 返回 True"""
     cfg = ctx['cfg']
@@ -245,6 +250,7 @@ def _run_gen(ctx, args):
                   f"上限 {args.llm_max_calls} 次/代, 引导位命中按需补池")
     cands, seen = [], set()        # seen: 表达式级判重(原[in list] O(n²) -> O(1))
     n_skip_fsa = n_skip_dim = n_skip_bad = n_skip_dup = n_skip_fam = 0
+    n_skip_style = 0                     # ★ 2026-10-20：纯风格组合（A 方案）
     n_tries = dup_streak = 0
     rand_only = False              # 兜底: 连续重复过多/超时 -> 纯随机硬凑产量
     MAX_TRY = args.n * 30
@@ -299,6 +305,9 @@ def _run_gen(ctx, args):
         if _skip == 'fam':
             n_skip_fam += 1
             continue
+        if _skip == 'style':
+            n_skip_style += 1
+            continue
         k = str(node)
         if k in seen:              # 重复: 计数 + 连续重到阈值切纯随机
             n_skip_dup += 1
@@ -313,7 +322,7 @@ def _run_gen(ctx, args):
     mode = '随机兜底' if rand_only else '正常'
     print(f"生成候选 {len(cands)}/{args.n} 个[{mode}]"
           f"(跨量纲拦{n_skip_dim} 失败库拦{n_skip_bad} FSA拦{n_skip_fsa} "
-          f"族黑名单拦{n_skip_fam} 重复拦{n_skip_dup}, 尝试{n_tries}), "
+          f"族黑名单拦{n_skip_fam} 风格组合拦{n_skip_style} 重复拦{n_skip_dup}, 尝试{n_tries}), "
           f"耗时 {time.time()-t0:.0f}s")
     if llm_on and n_llm_call:
         print(f"  [LLM引导] 调用{n_llm_call}次, 解析通过{n_llm_parse}条, "
@@ -322,11 +331,6 @@ def _run_gen(ctx, args):
     if getattr(args, 'gen_only', False):
         print("[gen_only] 仅验证候选生成产量, 停在此处(不跑L1/L2/不写状态)")
         return True
-    # ★ 回写 ctx（**原样保留** ✓）——
-    #   ⚠ S3b 第一次改时，**我把 `_gen_guard` 插在了这里**（以为函数到此结束 ✗），
-    #   于是这 8 行被新函数"吸走"（落到它的 `return` 之后 ⇒ 死代码 ✗）
-    #   ⇒ `ctx['cands']` 再没被写 ⇒ 真实一代立刻 `KeyError: 'cands'` ✗✗
-    #   ⇒ A/B 第一次跑就报出来 ✓（这正是"真动代码必须跑 A/B"的理由 ✓）
     ctx['cands'] = cands
     ctx['llm_on'] = llm_on
     ctx['llm_pool'] = llm_pool
@@ -375,6 +379,12 @@ def _gen_guard(ctx, args, node, rand_only):
     # 结构族黑名单闸(gen31): 命中上代垄断模板族 -> 重抽(rand_only 兜底豁免防死锁)
     if not rand_only and block_fams and root_fam(node) in block_fams:
         return node, 'fam'
+    # ★ 2026-10-20（用户拍板 A 方案）：**纯风格组合**在生成端拦掉 ——
+    #   实测 gen171/172 有 3 条过了 `calmar2>=0.701` 的候选全是 `div(barra_*, ...)` 形态，
+    #   剥风格后 Calmar −0.06~−0.17 ⇒ 必被 L2 的 `min_strip_calmar` 拦下 ⇒ 白耗名额（~56s/条）。
+    #   `rand_only` 兜底时不拦（防死锁）；规则见 `loop_expr.is_style_combo`（只拦分子侧 ✓）
+    if getattr(args, 'style_gate', 0) and not rand_only and is_style_combo(node):
+        return node, 'style'
     return node, None
 
 

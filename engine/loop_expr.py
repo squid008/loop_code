@@ -43,6 +43,70 @@ def collect(node, out=None):
     return out
 
 
+# ---- 风格组合识别（2026-10-20，用户拍板 A 方案：生成端拦截，省 L2 名额）----
+# ★ 为什么需要（实测）：gen171/172 有 3 条候选过了 `calmar2 >= 0.701`，但 `strip_calmar`
+#   分别 −0.072 / −0.167 / −0.055 ⇒ 全被剥风格门槛拦下 ⇒ 白耗 L2（每条 ~56 s）。
+#   它们的共同形态：`barra_*` 直接进 `div` 的分子 —— 剥掉 11 个 Barra 风格后收益必然转负。
+# ★ 反例保护（不许误杀）：F50 `div(fa_ocf_ta, div(mf_l_buy, barra_liquidity))` 虽是风格在
+#   分母，但剥全部后 Calmar 仍 +0.387 ✓ ⇒ 规则**只拦"分子"侧**，且只在浅层（depth<=2）。
+STYLE_PREFIX = 'barra_'
+
+
+def leaves(node, out=None):
+    """表达式里的全部叶子名（按出现顺序；去重保序）。
+
+    ⚠ 叶子在本项目里有**两种形态**：`str`（部分构造器）与 **`Node(op=名, args=[])`**
+      （`parse_expr` 产出的就是这种）⇒ 两种都要认，否则会"看不到任何 barra 叶子"
+      （2026-10-20 实测：首版只认 str ⇒ `style_leaf_ratio` 恒为 0 ✗）。
+    """
+    out = [] if out is None else out
+    if isinstance(node, Node):
+        if not node.args:                       # 无 args 的 Node = 叶子
+            if node.op not in out:
+                out.append(node.op)
+        else:
+            for a in node.args:
+                leaves(a, out)
+    elif isinstance(node, str) and node not in out:
+        out.append(node)
+    return out
+
+
+def style_leaf_ratio(node):
+    """`barra_*` 叶子占比（0~1）；无叶子返回 0。"""
+    ls = leaves(node)
+    if not ls:
+        return 0.0
+    return sum(1 for x in ls if x.startswith(STYLE_PREFIX)) / float(len(ls))
+
+
+def is_style_combo(node, max_ratio=0.5, depth=2):
+    """是否属于"纯风格组合"（生成端拦截用）。
+
+    规则：
+      (a) `barra_*` 叶子占比 >= `max_ratio` ⇒ 拦
+          （如 `sub(barra_non_linear_size, barra_beta)` = 2/2）
+      (b) 根往下 `depth` 层内的 `div`，其**分子**是 `barra_*` 叶子、或分子本身是
+          `div(barra_*, _)` ⇒ 拦
+          （如 `div(div(barra_liquidity, ema26(low)), mf_s_sqty)`）
+    ⚠ 只拦分子侧：`barra_*` 只在**分母**（尤其深层）时不算 —— F50 那种是有效的。
+    """
+    if style_leaf_ratio(node) >= max_ratio:
+        return True
+
+    def _has_style(n):
+        return any(x.startswith(STYLE_PREFIX) for x in leaves(n))
+
+    def _walk(n, d):
+        if not isinstance(n, Node) or d > depth:
+            return False
+        if n.op == 'div' and n.args and _has_style(n.args[0]):
+            return True              # 分子**子树**含 barra（含 ts_std20(barra_x) 这种包一层的）
+        return any(_walk(a, d + 1) for a in n.args if isinstance(a, Node))
+
+    return _walk(node, 0)
+
+
 # ---- 算子族归一化 + 骨架/结构族（2026-09-26 L3 Step 2b-1 追加）----
 def norm_op(op):
     """算子族归一化: ts_mean20 -> ts_mean / corr60 -> corr (剥窗口数字, 保留算子族)"""

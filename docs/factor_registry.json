@@ -1,14 +1,14 @@
 {
  "schema": 1,
- "generatedAt": "2026-10-20 01:34:06",
+ "generatedAt": "2026-10-20 16:29:05",
  "source": "docs/factor_library*.md（编号/代数/家族/一句话/公式/指标）+ engine/loop_state*.pkl（入库 Node 结构，权威口径）",
  "why": "pkl 不进 git ⇒ 换机器（家里 pull）时本文件是\"重建 facs/指标/曲线\"的**唯一入口** ✓",
  "counts": {
   "all": {
-   "listed": 50,
-   "overview": 50,
-   "detail": 50,
-   "bank": 50,
+   "listed": 51,
+   "overview": 51,
+   "detail": 51,
+   "bank": 51,
    "bank_only": 0
   },
   "300": {
@@ -46,8 +46,8 @@
    "expr": "ts_mean150(corr100(ts_mean5(div(mf_m_bqty, hl_ratio)), ts_mean60(ts_mean5(turn_ratio))))"
   }
  ],
- "n_factors": 71,
- "n_with_node": 71,
+ "n_factors": 72,
+ "n_with_node": 72,
  "factors": [
   {
    "pool": "all",
@@ -3109,6 +3109,104 @@
      },
      {
       "op": "mf_l_bqty",
+      "args": []
+     }
+    ]
+   }
+  },
+  {
+   "pool": "all",
+   "no": "F52",
+   "gen": 176,
+   "family": "资金流、振幅、风格、财报、财报、量、价格…",
+   "oneLiner": "div(div(max(add(corr200(mf_m_bqty, hl_rat…",
+   "status": "已入库(auto)",
+   "expr": "div(div(max(add(corr200(mf_m_bqty, hl_ratio), ts_mean10(barra_beta)), mul(fa_fcf_yield, corr200(fa_np_margin, ln_volume))), ts_mean10(vwap)), mf_s_sqty)",
+   "sign": null,
+   "poolTag": "csi_all_only",
+   "note": null,
+   "ic": 0.0435,
+   "icIr": 0.286,
+   "annEx": 0.11199999999999999,
+   "dd": -0.102,
+   "calmar": 1.106,
+   "sharpe": 1.422,
+   "recentYear": -0.003,
+   "turn": 0.364,
+   "inBank": true,
+   "node": {
+    "op": "div",
+    "args": [
+     {
+      "op": "div",
+      "args": [
+       {
+        "op": "max",
+        "args": [
+         {
+          "op": "add",
+          "args": [
+           {
+            "op": "corr200",
+            "args": [
+             {
+              "op": "mf_m_bqty",
+              "args": []
+             },
+             {
+              "op": "hl_ratio",
+              "args": []
+             }
+            ]
+           },
+           {
+            "op": "ts_mean10",
+            "args": [
+             {
+              "op": "barra_beta",
+              "args": []
+             }
+            ]
+           }
+          ]
+         },
+         {
+          "op": "mul",
+          "args": [
+           {
+            "op": "fa_fcf_yield",
+            "args": []
+           },
+           {
+            "op": "corr200",
+            "args": [
+             {
+              "op": "fa_np_margin",
+              "args": []
+             },
+             {
+              "op": "ln_volume",
+              "args": []
+             }
+            ]
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "op": "ts_mean10",
+        "args": [
+         {
+          "op": "vwap",
+          "args": []
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "op": "mf_s_sqty",
       "args": []
      }
     ]

@@ -836,7 +836,12 @@ def _parse_args():
             #   strip_calmar 中位 −0.167、>=0.15 仅 5 条、>=0.3 4 条、**>=0.5 仅 1 条**
             #   ⇒ 阈值取**极严档**（0.5 / 3% / 0.8），不是"放宽门槛凑数量" ✓
             '--strip_channel_b', '--min_strip_calmar_b=0.5', '--min_strip_ann_b=0.03',
-            '--min_strip_sharpe_b=0.8', '--min_ic_b=0.02']
+            '--min_strip_sharpe_b=0.8', '--min_ic_b=0.02',
+            # ★ 2026-10-20（用户拍板 A 方案）：生成端拦截「纯风格组合」
+            #   证据：gen171/172 过 calmar2 的 3 条全是 `div(barra_*, ...)`，剥风格后 Calmar −0.06~−0.17
+            #   ⇒ 必被 min_strip_calmar 拦下 ⇒ 白耗 L2（~56s/条）
+            #   回退：删掉本行（或改成 --style_gate=0）
+            '--style_gate=1']
     for a in sys.argv[1:]:
         if a.startswith('--pools='):
             pools = [x.strip() for x in a.split('=', 1)[1].split(',') if x.strip()]

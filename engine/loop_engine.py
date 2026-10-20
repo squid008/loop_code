@@ -428,6 +428,11 @@ if __name__ == '__main__':
                     help='通道B: strip_sharpe 下限(默认 0.8)')
     ap.add_argument('--min_ic_b', type=float, default=0.02,
                     help='通道B: |ic| 下限(默认 0.02)')
+    # ★ 2026-10-20（用户拍板 A 方案）：生成端拦截「纯风格组合」
+    ap.add_argument('--style_gate', type=int, default=0,
+                    help='生成端拦截纯风格组合(默认 0=关): `barra_*` 叶子占比>=0.5，或直接进 div 分子 '
+                         '⇒ 丢弃。实测 gen171/172 有 3 条过了 calmar2 的候选全是该形态，'
+                         '剥风格后 Calmar 转负 ⇒ 必被 min_strip_calmar 拦下、白耗 L2 名额')
     ap.add_argument('--style_obs', action='store_true',
                     help='风格暴露观测(2026-09-11, 默认关): 记录**每个被求值的 L1 候选**对 '
                          'lncap/lnamt/lntr/lnpx 的截面秩相关(L1 子面板[::FWD] 视图), 紧跟 L1 求值 '

@@ -14,7 +14,7 @@
 > · ⇒ ★ **做统计/排序/横向对比时，请排除或单独标注 gen8~gen11 的早期行** ✓
 > · ✓ **精选池不受影响** —— 它用的是**新口径**（`docs/loop_strip_style_bank.csv` 的 `calmar/turn`）✓
 >
-> 当前 **50 个入库**（★ 2026-09-23 复核：all 池 `state.bank` = 45，全A 已跑至 **76** 代；**跨池合计 75**（all 45 · 300 5 · 500 12 · 1000 13 · 50 0），快照权威见 `docs/loop_todo.md §0`）。
+> 当前 **51 个入库**（★ 2026-09-23 复核：all 池 `state.bank` = 45，全A 已跑至 **76** 代；**跨池合计 75**（all 45 · 300 5 · 500 12 · 1000 13 · 50 0），快照权威见 `docs/loop_todo.md §0`）。
 > （下面按代次列的 gen8×1 / gen10×3 / … / gen51×1 是 2026-09-10 那次盘点，仅作历史对照 ✓）
 > 运行期起：引擎在每代入库（`state.bank` append）时**自动同步追加**新因子条目（gen24 后的入库代次生效），家族/一句话命名随时可人工精炼覆盖。
 
@@ -75,6 +75,7 @@
 | F49 | gen165 | 量 | ts_std100(ts_resi5(ln_volume)) | 已入库(auto) |
 | F50 | gen166 | 财报、资金流、风格 | ema26(div(fa_ocf_ta, div(mf_l_buy, barra_… | 已入库(auto) |
 | F51 | gen168 | 风格、风格、资金流 | div(ts_mean200(sub(barra_non_linear_size,… | 已入库(auto) |
+| F52 | gen176 | 资金流、振幅、风格、财报、财报、量、价格… | div(div(max(add(corr200(mf_m_bqty, hl_rat… | 已入库(auto) |
 
 > 标记 `⚠️冗余①~⑤` = 库内近重复组成员（口径与明细见下方「库内冗余对清单」）；**每组按 1 个独立因子计**。
 
@@ -769,6 +770,22 @@ div(ts_mean200(sub(barra_non_linear_size, barra_beta)), mf_l_bqty)
 - 剥风格：**`B`** 弱独立（剥风格后日频 Calmar 在 0~0.30，或回撤劣于 -0.20）（原 Calmar 0.620 → 剥后 0.237；超额 +10.1% → +4.1%；**日频** 剥后 Calmar 0.214，日频回撤 -19.2%）
 - 口径：**20 日调仓** ✓（成本 0.004往返(主用档)）★ 与 5 日口径的数字**不可直接比** ✗（样本区间/成本相同，只有调仓周期不同 ✓）
 - 费后指标（full，成本 0.004往返(主用档)）：IC 0.0171 / IC_IR 0.111 / 年化超额 +10.1% / 回撤 -16.3% / Calmar 0.620 / Sharpe 1.095 / 最近年 +2.7% / 单期换手 32.5% / 负年 2
+
+---
+
+
+### F52 · gen176 入库（引擎自动同步，家族命名待人工精炼）
+```
+div(div(max(add(corr200(mf_m_bqty, hl_ratio), ts_mean10(barra_beta)), mul(fa_fcf_yield, corr200(fa_np_margin, ln_volume))), ts_mean10(vwap)), mf_s_sqty)
+```
+- 符号 `sign`：**未记录**（缺失时不臆造，见 roadmap §8.45 铁律）
+- 家族：资金流、振幅、风格、财报、财报、量、价格…（auto）
+- 叶子：mf_m_bqty、hl_ratio、barra_beta、fa_fcf_yield、fa_np_margin、ln_volume、vwap、mf_s_sqty
+- 骨架：`div(div(max(add(corr(mf_m_bqty,hl_ratio),ts_mean(barra_beta)),mul(fa_fcf_yield,corr(fa_np_margin,ln_volume))),ts_mean(vwap)),mf_s_sqty)`
+- 池标签：**`csi_all_only`** —— **只有全A通过** ⇒ 小盘/流动性溢价嫌疑，**指数增强不可用**
+- 剥风格：**`A`** 独立有效（剥风格后**日频** Calmar >= 0.30，且**日频**回撤 > -0.20）（原 Calmar 1.106 → 剥后 0.796；超额 +11.2% → +7.5%；**日频** 剥后 Calmar 0.606，日频回撤 -12.4%）
+- 口径：**20 日调仓** ✓（成本 0.004往返(主用档)）★ 与 5 日口径的数字**不可直接比** ✗（样本区间/成本相同，只有调仓周期不同 ✓）
+- 费后指标（full，成本 0.004往返(主用档)）：IC 0.0435 / IC_IR 0.286 / 年化超额 +11.2% / 回撤 -10.2% / Calmar 1.106 / Sharpe 1.422 / 最近年 -0.3% / 单期换手 36.4% / 负年 2
 
 ---
 
