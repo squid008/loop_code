@@ -326,6 +326,37 @@ def scan_api_strings(bad):
     return n
 
 
+def scan_engine_params(bad):
+    """★ 2026-10-21：**参数页的文案**（`engine/loop_params.py` 的 `label`/`desc`）也直接显示给用户
+    （经 `/api/params` 返回），但它在 `engine/` 下 ⇒ 上面的 `scan_api_strings` 扫不到 ✗
+    （实测漏掉一处 `**调到 0 ...**`，被用户直接看见 ⇒ 把扫描范围补上 ✓）
+    """
+    p = os.path.join(ROOT, 'engine', 'loop_params.py')
+    if not os.path.isfile(p):
+        return 0
+    src = io.open(p, encoding='utf-8-sig').read()
+    try:
+        tree = ast.parse(src)
+    except SyntaxError:
+        return 0
+    skip = docstring_ids(tree) | sym_table_ids(tree) | regex_arg_ids(tree)
+    n = 0
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Constant) and isinstance(node.value, str)):
+            continue
+        if id(node) in skip or _only_symbols(node.value):
+            continue
+        v = node.value
+        n += 1
+        hit = [t for t in MACHINE if t in v]
+        if re.search(r'[\u4e00-\u9fa5][\'"]|[\'"][\u4e00-\u9fa5]', v):
+            hit.append('引号')
+        if hit:
+            bad.append((rel(p), getattr(node, 'lineno', 0),
+                        '含 %s：%s' % (''.join(hit), v.strip()[:70])))
+    return n
+
+
 def scan_config_json(bad):
     """`dashboard/config.json` 的注释字段会在**配置/口径**页显示 ⇒ 一并守门 ✓"""
     p = os.path.join(ROOT, 'dashboard', 'config.json')
@@ -376,6 +407,7 @@ def main():
     print()
     bad = []
     n_api = scan_api_strings(bad)
+    n_eng = scan_engine_params(bad)      # ★ 2026-10-21：参数页文案（engine/loop_params.py）
     n_cfg = scan_config_json(bad)
     n_json = scan_curve_json(bad)
     for nm in ('index.html',):

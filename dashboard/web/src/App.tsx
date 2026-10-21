@@ -2118,11 +2118,12 @@ function ParamsTab() {
         onChange={e => set(it.key, String(e.target.checked))} />
     }
     if (it.type === 'enum') {
-      return <select value={v} onChange={e => set(it.key, e.target.value)}>
+      return <select className="pinp" value={v} onChange={e => set(it.key, e.target.value)}>
         {(it.choices || []).map(c => <option key={c} value={c}>{c}</option>)}
       </select>
     }
-    return <input style={{ width: 140 }} value={v}
+    // ★ 2026-10-21（用户："选择框跟输入框的宽度一样吧"）⇒ 两者都吃 `.pinp { width:100% }`
+    return <input className="pinp" value={v}
       onChange={e => set(it.key, e.target.value)} />
   }
 
@@ -2148,33 +2149,29 @@ function ParamsTab() {
       {d.groups.map(g => (
         <div key={g}>
           <div className="dt-grp-h">{g}</div>
-          <table className="tbl">
-            <thead>
-              <tr>
-                <th style={{ width: 200 }}>参数</th>
-                <th style={{ width: 170 }}>当前值</th>
-                <th style={{ width: 110 }}>默认</th>
-                <th>说明</th>
-              </tr>
-            </thead>
-            <tbody>
-              {d.items.filter(it => it.group === g).map(it => (
-                <tr key={it.key}>
-                  <td>
-                    {it.danger >= 2 && <span style={{ color: '#ef4444', marginRight: 4 }}
-                      title="改动会直接影响入库严格度">●</span>}
-                    {it.danger === 1 && <span style={{ color: '#f59e0b', marginRight: 4 }}
-                      title="改前想清楚">●</span>}
-                    <span title={it.flag}>{it.label}</span>
-                    {it.overridden && <span className="note" style={{ marginLeft: 6 }}>已改</span>}
-                  </td>
-                  <td>{input(it)}</td>
-                  <td className="mono">{String(it.default)}</td>
-                  <td className="sum" title={it.desc}>{it.desc}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {/* ★★★ 2026-10-21（用户："对齐了但说明列又被挤走、间隔太宽"）——
+              之前每个分组是独立 table：auto 布局下各组列宽不同（不对齐）✗；
+              改 `table-layout: fixed` 后又被容器的宽度算法推出可视区 ✗
+              ⇒ 改用 **CSS grid 行**（`.prow`）：列宽与内容无关 ⇒ 各分组绝对对齐 ✓；
+                说明列 `minmax(200px, 1fr)` ⇒ 永远占剩余、不被挤走 ✓ */}
+          <div className="prow phead">
+            <span>参数</span><span>当前值</span><span>默认</span><span>说明</span>
+          </div>
+          {d.items.filter(it => it.group === g).map(it => (
+            <div className="prow" key={it.key}>
+              <span>
+                {it.danger >= 2 && <span style={{ color: '#ef4444', marginRight: 4 }}
+                  title="改动会直接影响入库严格度">●</span>}
+                {it.danger === 1 && <span style={{ color: '#f59e0b', marginRight: 4 }}
+                  title="改前想清楚">●</span>}
+                <span title={it.flag}>{it.label}</span>
+                {it.overridden && <span className="note" style={{ marginLeft: 6 }}>已改</span>}
+              </span>
+              <span>{input(it)}</span>
+              <span className="mono">{String(it.default)}</span>
+              <span className="pdesc">{it.desc}</span>
+            </div>
+          ))}
         </div>
       ))}
     </div>

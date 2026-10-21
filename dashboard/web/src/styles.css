@@ -282,6 +282,28 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
    ② 编号列里**档位标签与编号拉开 8px** ✓（`.tbl .tag.grade` 只作用于表格 ⇒ 不动入库日志那处 ✓）
    ③ 「详情」列 `width: 1%` = **收成刚好放下按钮** ⇒ 按钮**恒为一行** ✓ */
 .sum { color: var(--mut); max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ★★★ 2026-10-21（用户："每列间隔能不能稍微紧凑点，让说明文字都显示出来"）——
+   参数页的**说明列**要**换行显示全文**（`.sum` 是单行省略号，用在因子列表里合适，
+   但参数说明长得多）⇒ 单独一个类：不限宽、允许换行、行高收紧 ✓ */
+.pdesc { color: var(--mut); font-size: 12px; line-height: 1.5;
+         white-space: normal; word-break: break-word; padding-right: 4px; }
+/* ★★★ 2026-10-21（用户："对齐了，但是又把说明列给挤走了，间隔太宽"）——
+   参数页改用 **CSS grid 行**（不用 table）：
+     · 列宽绝对一致（同一套类，与内容无关）⇒ 所有分组上下对齐 ✓
+     · 说明列 `minmax(200px, 1fr)` ⇒ **永远占剩余宽度**、不会被挤走 ✓
+     · 间隙只有 10px ⇒ 比 table 的 padding 更紧凑 ✓ */
+/* ★ 2026-10-21 二次微调（用户："300/500/1000 的格子再宽一丢丢；默认列与说明列间隔再大一丢丢，
+   否则字会重叠；选择框跟输入框等宽"）：
+   · 当前值 116→**150**（`300,500,1000` 这类长值放得下）
+   · 默认   70→**100**（同上）+ **列间 gap 10→14**（默认列与说明列不再贴字）
+   · 输入框/下拉框统一 `width:100%`（`.pinp`）⇒ 两者视觉等宽 ✓ */
+.prow { display: grid; grid-template-columns: 140px 150px 100px minmax(180px, 1fr);
+        align-items: center; gap: 14px; padding: 7px 10px; font-size: 13px;
+        border-bottom: 1px solid #1e2846; }
+.prow.phead { color: var(--mut); font-weight: 600; font-size: 12px;
+              border-bottom: 1px solid var(--bd); }
+.prow:hover { background: #182142; }
+.prow .pinp { width: 100%; box-sizing: border-box; }
 /* ★★★★★ 2026-09-21 第二批（用户："这个标签好像比旁边的 A 大了一点，搞成一样的" ·
    "有的排不下变成两行了，要放在一行里，可以继续减少一句话的显示字符数"）—— 三处一起改 ✓
    ① **两个标签盒子统一等高 + 同字号** ✗：原来只吃 `.tag` 的通用样式（`padding:1px 8px`），而
