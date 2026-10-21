@@ -1,8 +1,101 @@
-# change_log 归档（v1.37.1 及以前）
+# change_log 归档（v1.38.0 及以前）
 
 > 本文件由 `ai_test/_cl_split.py` 从 `change_log.md` 切出（2026-09-27）——
 > 目的是让主 `change_log.md` 只保留近期版本、可读可查（原文**一字未改** ✓）。
 > 新增条目请照旧写进主 `change_log.md` 的**最新**位置 ✓。
+
+---
+
+## [1.38.0] — 2026-10-14
+
+> 主题：**财报叶子 +2 —— 自由现金流收益率 `fa_fcf_yield` + 现金 ROA `fa_ocf_ta`** ✓
+> 起因：用户问 _"咱们的算子里有自由现金流、ROE、ROA这些吗"_ ✓
+> 答案：ROE **有**（`fa_roe`，且早已有因子在用）；**自由现金流没有** ✗；**ROA 做过又删** ✗
+>   （`fa_roa` 当年因与 `fa_np_margin` 截面相关 +0.867 被判重复）
+> ⇒ 用户拍板 _"1、2都做，要避免共线性相关性太高"_ ✓
+
+### 一、口径**先实测后定**（本次最花时间的一步）
+
+新增叶子前先做**逐日截面 rank 相关**体检（与 `tools/calib_dedup_leaf.py` 同口径：
+`E.base_fields()['B']` 全样本 → `E.rank_rows(v[::FWD])` → 相关）；共 10 个候选：
+
+| 候选 | 最大\|相关\| | 主导叶子 | 采用 |
+|---|---|---|---|
+| `cand_fcf_margin` | 0.412 | barra_earnings_yield | ✗（与另两个 FCF 口径 0.90 / 0.94 共线）|
+| `cand_fcf_ta` | 0.428 | barra_earnings_yield | ✗（与 `fcf_yield` 0.914 共线）|
+| **`cand_fcf_yield`** | **0.485** | barra_earnings_yield | ★ **采用** |
+| `cand_ocf_excash` | 0.545 | fa_accrual | ✗（与 `ocf_ta` 0.989 共线）|
+| **`cand_ocf_ta`** | **0.553** | fa_accrual | ★ **采用**（现金 ROA）|
+| `cand_ocf_yield` | 0.727 | barra_earnings_yield | ✗ |
+| `cand_roa_excash` | **0.824** | fa_roe | ✗ |
+| `cand_roa_op` | **0.834** | fa_roe | ✗ |
+| `cand_roa_np` | **0.844** | fa_roe | ✗ |
+| `cand_roa_yoy` | **0.947** | fa_np_yoy | ✗ |
+
+★ **结论：净利润口径的 ROA 在本仓无解** ✗ —— 四个变体（水平 / 营业利润 / 剔除货币资金 / 同比）
+全部与 `fa_roe`·`fa_np_margin`·`fa_np_yoy` 共线 **0.82~0.95** ⇒ 连"换分母"都压不下来
+（根因：**分子同源** + 分母在截面上高度同步）⇒ 改用**现金流口径**的资产回报率
+（`fa_ocf_ta` = 现金 ROA）✓。该结论已固化进 `engine/build_fa_pit.py` 顶部
+（新增第 **(c) 类"试过但删掉"**，免得日后重复试 ✗）。
+
+### 二、实现（`engine/build_fa_pit.py` + `engine/loop_fields.py`）
+
+* **`_ttm()`（新增函数）**：资本开支科目 `cash_paid_for_asset` 源里**没有 TTM 版** ✗
+  ⇒ 自己按 YTD 滚 4 季：`TTM(q) = YTD(q) + 上年年报 − 上年同期 YTD`（q 为年报时两项相消 ✓ 公式统一 ✓）。
+  ⚠ 这是本项目**第一次**在财报侧做 YTD→TTM —— 原有 15 个叶子全部只用 RQ 已算好的 `*TTM` 字段 ✓。
+* `fa_fcf_yield` = `(经营现金流TTM − 资本开支TTM) / 日总市值` —— 与 `fa_pb` 同款：**分子按报告期、分母按日** ✓
+* `fa_ocf_ta` = `经营现金流TTM / 总资产`（普通 per-report 常量 ✓）
+* **`--cand_out PATH`（新增 CLI）**：把候选列另写一份 h5 供体检，**不改正式输出** ✓
+  （默认空 ⇒ 正式行为与改造前一致 ✓）；体检脚本 `ai_test/dedup_check.py` ✓
+* `loop_fields.FA_LEAVES` **追加在末尾**（顺序即 critic 结构去重的替换优先级 ✓）+2 ⇒ 叶子池 **61 → 63**
+
+### 三、顺带修的两处（都是实测抓到的）
+
+1. **`build_fa_pit.py` 缺 UTF-8 stdout** ✗：输出重定向到文件时编码是 GBK ⇒ 打印 `⇒` 抛
+   `UnicodeEncodeError` **直接中断构建**（实测：跑到 4800/5567 崩 ✗）⇒ 补齐（仓库其它脚本都有 ✓）。
+2. **注释记账校正**：顶部原写「扩展：8 → **20** 个叶子」「其它 **19** 个」✗ —— 把"试过但删掉"的
+   也算进去了 ⇒ 当时真实落地是 **15** 个 ⇒ 已按实际改正 ✓。
+
+### 四、验证（★ 本项目的证据纪律）
+
+| 项 | 结果 |
+|---|---|
+| **改动独立性**（旧 15 列逐位不变）| ★ **全部 15 列逐位相同** ✓（`(3309,5384) float32`；对拍脚本 `ai_test/fa_pit_ab_check.py`，基准 = 改动前备份）|
+| **体检口径 = 落地口径** | ★ `cand_ocf_ta` ≡ `fa_ocf_ta` ⇒ **BITWISE SAME** ✓（无口径漂移 ✓）|
+| **覆盖率**（项目判据：近 3 年 ≥30% ✓）| `fa_fcf_yield` 有效 **66.7%** ✓ · `fa_ocf_ta` 有效 **75.1%** ✓ |
+| 重建完整性 | 5567 个 pit 文件 → **5384 只股票全部有效、0 只缺科目** ✓（77 s ✓）|
+| 守门 | `_test_ops_manual` ✓ 全过 · `_test_ops_sync` **28/28** ✓（叶子数自动跟着变 63 ✓）· `_test_ops_math` **51/51** ✓ · `_test_undefined_names` **0 处**（185 文件）✓ · `_test_reports_expr` **34/34** ✓ · `_test_ops_registry` **17/17** ✓ |
+| 手写手册 | `dashboard/api/app/sources/ops.py::FIELDS_ZH` +2 ✓ · `engine/loop_llm.py` 与 `engine/skills/gen_skill.md` 的财报族语义 +2 ✓（★ 守门当场抓到缺失 ✗ ⇒ 补齐后全过 ✓）|
+
+⚠ **本版行为变化（如实记账）**：叶子池 61 → 63 ⇒ **候选生成空间变大**（新叶子会进入生成 / B角诊断 / 去重）
+⇒ 属**功能新增**（SemVer **MINOR** ✓）；`engine/loop_state*.pkl` 的 `bank` **不受影响** ✓（叶子只影响生成侧 ✓）。
+⚠ **未做** ✗：新叶子**暂无任何因子用到**（库里 18 个财报因子用的仍是旧叶子 ✓）⇒ 下次挖掘才会开始用 ✓。
+
+### 五、部署动作（★ 三步，缺一不可）
+
+1. `fa_pit.h5` **已重建**（**17 列 / 625 MB** ✓）。
+2. ★★ **面板只读缓存必须重建** ✗ —— `fa_pit.h5` 一变 ⇒ 缓存**来源指纹失效** ✗
+   （实测 `panelCacheInfo`：`sourceOk=false`、`staleSources=["fa_pit.h5"]`、hint 提示"引擎会拒绝加载"）；
+   引擎带 `--panel_cache=use` 会**直接报错**，而看板启动路径会**自动降级为 off** ⇒ 每个引擎各建一份
+   4.42 GB 面板 ⇒ 内存需求从 ~12 GB 涨到 **23.8 GB** ⇒ 撞内存护栏 ✗（★ 本次**全量回归第一轮**
+   就是这样失败的：`_test_mine_launch` 报"内存不足：可用 20.0 GB，本次需要约 23.8 GB"✗）。
+   ⇒ 跑 `python tools/build_panel_cache.py`（**实测 33 s** ✓，缓存 **62 → 64 字段 / 4.70 GB** ✓）
+   ⇒ 之后 `sourceOk=true`、`staleSources=[]` ✓ 且 `_test_mine_launch` 单独重跑即过 ✓。
+3. `dashboard/api/app/sources/ops.py` 改了 ⇒ **看板后端必须重启**（`reload=false` ✗）✓ 已重启
+   （`/api/meta` 回读 **1.38.0** ✓；`/api/ops` 回读已含 `fa_fcf_yield` / `fa_ocf_ta` 与中文名 ✓）。
+
+### 六、发版回归（★ 据实记账）
+
+* **第 1 轮**：`release_check` **58/59** ✗ —— 唯一失败 = `_test_mine_launch.py`，
+  根因就是上面第 2 条的**缓存失效连带**（面板共享被降级 ⇒ 内存护栏拒绝 ⇒ 守门拿不到期望的
+  命令行/返回体）⇒ **不是**本次叶子改动本身的缺陷 ✓。
+* **第 2 轮**（缓存重建后）：**59/59 全绿** ✓（**实测 6.7 分钟** ✓；最慢 `_test_e2e_l1l2` 114 s ·
+  `_test_parallel_runner` 106 s · `_test_daily_dd` 38 s ✓）。`_test_panel_cache` 本轮 **24.4 s**
+  （上轮仅 1.9 s —— 因为上轮缓存处于失效态、走的是降级路径 ✗）✓。
+* 跑完**未留脏状态** ✓（`_control.json` = `running=false / active=[]`，引擎与调度器进程 0 ✓）。
+* ⚠ **过程记账**：停机时是**直接杀进程** ⇒ `_control.json` 残留 `running=true` ✗ ⇒
+  `release_check` 的前提检查**正确地拒绝了两次** ✓（这是设计，不是缺陷 ✓）；后经看板停止接口复位
+  （接口回 422，但复位实际生效 ✓）⇒ 之后回归才跑起来 ✓。
 
 ---
 
