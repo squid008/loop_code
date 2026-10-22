@@ -478,22 +478,36 @@ def _hist_skipped(node, args):
     return bool(v is not None and not v[0] and not v[1])
 
 
-def _drop_hist_skipped(acc, args):
-    """按「历史已测且未过」过滤本代候选（就地改 `acc.nd`）—— B 方案入口。"""
-    if not getattr(args, 'l2_hist_skip', 0) or not acc.nd:
-        return
-    nd0 = list(acc.nd)
-    acc.nd = [x for x in nd0 if not _hist_skipped(x, args)]
-    if len(acc.nd) != len(nd0):
-        print(f"  [历史跳过] {len(nd0)-len(acc.nd)}/{len(nd0)} 个候选同口径已测且未过"
-              f" ⇒ 不再回测（省约 {(len(nd0)-len(acc.nd))*56//60} 分钟）", flush=True)
+def _drop_hist_skipped(top, args):
+    """按「历史已测且未过」过滤本代 **L2 候选表**（返回过滤后的 DataFrame）—— B 方案入口。
+
+    ⚠⚠ `acc.nd` 是**单个 Node**（`_l2_candidates` 里逐行 `acc.nd = r['node']`），**不是列表** ✗
+      —— 2026-10-22 首版把 `acc.nd` 当列表迭代 ⇒ `TypeError: 'Node' object is not iterable`，
+      gen204 **连崩 3 代**（每次 45 分钟）才被调度器判定"本轮已崩 2 次"停下。
+      教训：单元测试拿 `SimpleNamespace(nd=[...])` 造数据，掩盖了真实结构（`ctx['nd']` 是 Node）。
+    ⚠ 全被跳过时**保留原样**：宁可变慢也不要造出"本代零候选"这种更难查的状态。
+    """
+    if not getattr(args, 'l2_hist_skip', 0) or top is None or not len(top):
+        return top
+    try:
+        keep = top['node'].map(lambda x: not _hist_skipped(x, args))
+        n_drop = int((~keep).sum())
+        if 0 < n_drop < len(top):
+            print(f"  [历史跳过] {n_drop}/{len(top)} 个候选同口径已测且未过"
+                  f" ⇒ 不再回测（省约 {n_drop*56//60} 分钟）", flush=True)
+            return top[keep.values]
+        if n_drop == len(top):
+            print(f"  [历史跳过] {n_drop}/{len(top)} 个都测过且未过 ⇒ **保留原样**"
+                  f"（避免空 L2，宁可重测）", flush=True)
+    except Exception as e:                                   # noqa: BLE001
+        print(f"  [历史跳过] 过滤失败(不影响主流程): {type(e).__name__}: {e}")
+    return top
 
 
 def _run_l2_phase(ctx, args):
     """L2 费后精筛 + 剥风格/池指标/收益流去重 + 落盘 -> 写回 ctx"""
     cal = _L2In.of(ctx)   # ★ 只读口径（23 项 ✓）
-    acc = _L2Acc(nd=ctx['nd'])   # ★ 本代累积（含 nd ✓）
-    _drop_hist_skipped(acc, args)   # ★ B 方案：同口径已测且未过 ⇒ 不再回测
+    acc = _L2Acc(nd=ctx['nd'])   # ★ 本代累积（含 nd ✓；nd 是**单个 Node**）
 
     POOL_M, _lp, _t_l2, top = _run_l2(cal.min_pool_calmar, cal.min_sharpe, cal.pool_gate_mode, cal.pool_gate_on, cal.pool_gate_or_all, cal.pool_obs, cal.pools, args, cal.cols, cal.dates, cal.l1)
     MCAP = None
@@ -506,6 +520,7 @@ def _run_l2_phase(ctx, args):
             MCAP = None
     # ★ 5 行累加器初始化已收进 `_L2Acc` 的字段默认值 ✓
     # ★ S3b-3：本块已抽成 `_l2_candidates(...)` ✓（形参/回传由 AST 机器算 ✓）
+    top = _drop_hist_skipped(top, args)     # ★ B 方案：同口径已测且未过 ⇒ 不再回测
     acc = _l2_candidates(MCAP, POOL_M, _lp, acc, args, cal, top)
     print(f"  [计时] L2 费后精筛 {len(top)} 个 用时 {time.time() - _t_l2:.0f}s", flush=True)
     if cal.pool_gate_on and acc.n_pool_nogate:
