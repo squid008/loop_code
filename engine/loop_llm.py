@@ -209,6 +209,7 @@ _GEN_SYSTEM_FALLBACK = (
     "np_margin=净利率, roe=ROE, lev=杠杆, pb=市净率, accrual=应计, gw=商誉占比, "
     "fcf_yield=自由现金流收益率((经营现金流−资本开支)/总市值), ocf_ta=现金ROA(经营现金流/总资产)): "
     "{{LEAF_FA}}\n"
+    "    替代数据族(2026-10-22 新增, 风格外的行为数据; 全部为比率, 未覆盖处为缺失): {{LEAF_ALT}}\n"
     # ★ 算子名单同样**不手写** —— 由 `render_prompt()` 从 `ops_registry` 实时注入（P0-1）
     "  单目算子(1参): {{OPS_CORE}}\n"
     "  ★指数均线(1参): {{OPS_EMA}} "
@@ -313,6 +314,7 @@ _PLACEHOLDERS = {
     '{{LEAF_MF}}':    lambda: ' '.join(_LF.MF16),
     '{{LEAF_BARRA}}': lambda: ' '.join(_LF.BARRA_LEAVES),
     '{{LEAF_FA}}':    lambda: ' '.join(_LF.FA_LEAVES),
+    '{{LEAF_ALT}}':   lambda: ' '.join(_LF.ALT_LEAVES),   # ★ 2026-10-22 替代数据族
 }
 
 

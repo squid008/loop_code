@@ -1,8 +1,74 @@
-# change_log 归档（v1.38.1 及以前）
+# change_log 归档（v1.38.2 及以前）
 
 > 本文件由 `ai_test/_cl_split.py` 从 `change_log.md` 切出（2026-09-27）——
 > 目的是让主 `change_log.md` 只保留近期版本、可读可查（原文**一字未改** ✓）。
 > 新增条目请照旧写进主 `change_log.md` 的**最新**位置 ✓。
+
+---
+
+## [1.38.2] — 2026-10-18
+
+> 主题：**纯多头费后代理观测（步骤 1）** ✓ —— **引擎判定/排序零改动** ✗。
+> 起因：用户 _"不能用多空来当主指标啊…肯定是看纯多头费后指标当主力"_ ✓
+> ⇒ v1.38.1 的 `ret_spread_ann`（多空）与 `ann_ex` 相关 0.667，**但主要来自空头腿**：
+> `ret_d10`（最差档）vs `ann_ex` **−0.449**，而 `ret_d1`（多头档）只有 **+0.308**
+> ⇒ A 股做不了空，多空指标不可用 ⇒ 本版补齐**纯多头**口径的三块原料 ✓。
+
+### 一、实测（gen148~156 · 195 条 · 同批对比）
+
+| 指标 | vs calmar2 | vs ann_ex | 按它排序 Q1→Q4 的 calmar2 |
+|---|---|---|---|
+| `ret_spread_ann`（多空，**不可交易**） | 0.532 | 0.667 | 0.290 → 0.443 |
+| `ret_top_ann`（纯多头费前） | 0.309 | 0.308 | 0.293 → 0.395 |
+| `net_ann`（纯多头费后，旧换手代理） | 0.301 | 0.293 | 0.293 → 0.395 |
+| `net_sharpe` | 0.229 | 0.327 | 0.293 → 0.394 |
+| `ic` | 0.256 | 0.608 | — |
+
+⇒ 纯多头代理可用（Q4 把 calmar2 抬 **+35%**），但明显弱于多空；三个可修的弱点：
+① D1 单档样本太小（≈30 只/期）② 未剥风格 ③ `turn_est = 1−stab` **不是换手**
+（与 `ann_ex` 甚至 +0.132）⇒ 本版逐个补。
+
+### 二、改动（2 文件，只增不减）
+
+* **`engine/loop_metrics.py::decile_shape`** 新增返回：
+  * `top20_ret` / `top20_std`：**Top20%（D1+D2）** 每期平均收益 / 时序标准差
+    （≈60 只/期，降顶档噪声）
+  * `turn_top`：**D1 名单跨期 Jaccard 重叠率** ⇒ `1 − 平均重叠` = **真换手**
+    （⚠ 中间有期被跳过时相邻两期可能跨更长间隔 ⇒ 换手略偏高，docstring 已注明）
+* **`engine/loop_l1.py`**：
+  * `_append_stats()` 多带 `ret20/std20/turn_top` ＋ 风格中性后的 `ret_d1_n/std_top_n`
+    （风格中性收益**零额外成本** —— 复用已有 `shn` 那次 `decile_shape` 调用 ✓）
+  * `_write_obs_ret()` 新增 **10 列**：`turn_top, ret20, std20, ret_d1_n, std_top_n,
+    ret20_ann, net20_ann, net20_sharpe, net_n_ann, net_n_sharpe`
+  * 新增 **`_ensure_obs_schema()`**：**列结构一变就把旧文件轮转成 `<name>.v1.csv`**
+    （数据保留）—— 否则 append 会让新旧行列按位置错位 ✗
+* 纯多头口径：
+  ```
+  ret20_ann = ret20 × (252/FWD)
+  net20_ann = ret20_ann − cost × 2 × turn_top × (252/FWD)
+  net_n_ann = ret_d1_n × (252/FWD) − cost × 2 × turn_top × (252/FWD)   # 风格中性后
+  ```
+
+### 三、验证
+
+| 项 | 结果 |
+|---|---|
+| `py_compile` | OK ✓ |
+| `_test_undefined_names` | **0 处**（185 文件）✓ |
+| 单元验证（`ai_test/_test_obs_ret.py`） | 轮转 OK（旧 14 列 → `.v1.csv`）· 新文件 **24 列**（10 个新列齐）· `net20_ann` / `net_n_ann` 与手算**逐位一致** · 同结构再写**不轮转、正确追加** ✓ |
+| 冒烟 `smoke_gen_only` | **4/4**（rc=0 · 无 Traceback/NameError · 全部 state SHA256 未变）✓ |
+| R1 审计 | 无新增（`engine/` 仍只剩**既存** `build_fa_pit.main()` 150 行）✓ |
+
+⚠ **行为变化：无** ✓（新字段不参与 score/门槛，仍是纯观测）。
+⚠ **观测文件要等下一次完整一代才有新列**；旧 6,381 行会保留在
+`docs/loop_style_obs_ret.v1.csv` ✓（轮转机制自动做）。
+
+### 四、发版回归
+
+★ **全量回归：59/59 全绿** ✓（**实测 8.4 分钟** ✓；最慢 `_test_e2e_l1l2` 144 s ·
+`_test_parallel_runner` 133 s · `_test_daily_dd` 44 s ✓）。
+跑前 `_control.json` = `running=false / phase=idle`（无挖掘在跑 ✓，符合前提 ✓）；
+跑完**未起引擎** ✓、测试轨迹已还原 ✓。
 
 ---
 

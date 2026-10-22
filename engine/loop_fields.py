@@ -65,7 +65,15 @@ LEAVES_DERIVED = ['vwap', 'ret', 'turn_ratio', 'ln_mktcap', 'ln_volume',
 
 # ---- 完整叶子池(候选生成/B角诊断/结构去重的字段全集) ----
 # 注意顺序即 loop_critic 结构去重时字符串替换的优先级, 追加新族时放到末尾
-LEAVES = FIELDS_BASE + LEAVES_DERIVED + MF16 + BARRA_LEAVES + FA_LEAVES
+# ---- 替代数据（2026-10-22，A 方案：tushare 拉；见 tools/fetch_alt_data.py）----
+# ★ 为什么加：现有 63 个叶子全在「量价 / 资金流 / 财报 / Barra」四族，与风格天然纠缠
+#   （剥两者后 94% 转负）⇒ 实测 gen194~203 十代 0 入库、calmar2 达标 0 条。
+#   这 5 个都是**风格外**的行为数据：两融杠杆、龙虎榜（营业部/机构席位）、大宗交易。
+# ⚠ **必须追加在末尾**（本文件已有约定：顺序即 loop_critic 结构去重与库文档的编号依据）
+ALT_LEAVES = ['mg_bal_ratio', 'mg_buy_ratio',
+              'lhb_net_ratio', 'lhb_inst_ratio', 'block_vol_ratio']
+
+LEAVES = FIELDS_BASE + LEAVES_DERIVED + MF16 + BARRA_LEAVES + FA_LEAVES + ALT_LEAVES
 
 # ---- panel.h5 需 load_panel 读取的字段集合(基础7 + 资金流16) ----
 FIELDS = FIELDS_BASE + MF16

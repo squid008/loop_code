@@ -13,7 +13,7 @@ import pandas as pd
 from factor_miner import load_panel, prepare, START
 import loop_cache as _C
 import loop_paths as _P
-from loop_fields import FIELDS, MF16, BARRA_LEAVES, FA_LEAVES
+from loop_fields import FIELDS, MF16, BARRA_LEAVES, FA_LEAVES, ALT_LEAVES
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 
@@ -43,10 +43,29 @@ def _build_panel_fresh():
     # ---- 扩展叶子(mf16 随 FIELDS 已入 P; barra/fa 独立 store) ----
     for name in MF16:
         B[name] = P[name].reindex(index=dates, columns=cols).values.astype(np.float32)
-    for fn, names in (('barra.h5', BARRA_LEAVES), ('fa_pit.h5', FA_LEAVES)):
-        with pd.HDFStore(os.path.join(HERE, fn), 'r') as st:
+    for fn, names in (('barra.h5', BARRA_LEAVES), ('fa_pit.h5', FA_LEAVES),
+                      ('alt_data.h5', ALT_LEAVES)):      # ★ 2026-10-22 替代数据（A 方案）
+        path = os.path.join(HERE, fn)
+        if not os.path.exists(path):
+            # 文件缺失/正在重拉 ⇒ 全 NaN（**不报错**：新字段还没拉时也能跑，只是不生成含它的候选）
             for name in names:
-                B[name] = st[name].reindex(index=dates, columns=cols).values.astype(np.float32)
+                B[name] = np.full((len(dates), len(cols)), np.nan, dtype=np.float32)
+            continue
+        try:
+            with pd.HDFStore(path, 'r') as st:
+                _ks = set(st.keys())
+                for name in names:
+                    if '/' + name in _ks:
+                        B[name] = st[name].reindex(index=dates, columns=cols).values.astype(np.float32)
+                    else:
+                        B[name] = np.full((len(dates), len(cols)), np.nan, dtype=np.float32)
+        except Exception as e:                               # noqa: BLE001
+            # ★ 文件正被 `tools/fetch_alt_data.py` 写（HDF5 写锁）/ 损坏 ⇒ 全 NaN，
+            #   **绝不阻塞挖掘**（只是本代没有这些叶子可生成）
+            print('  [替代数据] 读 %s 失败(%s)，本次这些字段按缺失处理'
+                  % (fn, type(e).__name__))
+            for name in names:
+                B[name] = np.full((len(dates), len(cols)), np.nan, dtype=np.float32)
     # 衍生
     B['vwap'] = (B['turnover'] / np.maximum(B['volume'], 1e-9)).astype(np.float32)
     B['ret'] = (pd.DataFrame(B['close']).pct_change().values).astype(np.float32)

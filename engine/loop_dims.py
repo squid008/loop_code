@@ -7,7 +7,7 @@
 ★ 本模块是「纯静态审查」，只依赖 `loop_expr`（Node/collect）+ `loop_fields`（叶子族），
   **不 import loop_engine**（避免循环依赖）✓
 """
-from loop_fields import MF16, BARRA_LEAVES, FA_LEAVES
+from loop_fields import MF16, BARRA_LEAVES, FA_LEAVES, ALT_LEAVES
 from loop_expr import Node, collect
 
 _FIELD_DIM = {
@@ -22,6 +22,8 @@ _FIELD_DIM = {
     # BARRA 风格(Z化后相对值) / 财报 PIT 比率 -> R
     **{k: 'R' for k in BARRA_LEAVES},
     **{k: 'R' for k in FA_LEAVES},
+    # ★ 2026-10-22 替代数据：全部是**比率**（无纲量）⇒ R
+    **{k: 'R' for k in ALT_LEAVES},
 }
 
 
