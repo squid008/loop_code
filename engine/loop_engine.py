@@ -428,6 +428,11 @@ if __name__ == '__main__':
                     help='通道B: strip_sharpe 下限(默认 0.8)')
     ap.add_argument('--min_ic_b', type=float, default=0.02,
                     help='通道B: |ic| 下限(默认 0.02)')
+    # ★★★ 2026-10-22（用户拍板 B 方案）：**历史已测且未过 ⇒ 不再回测**
+    #   实测：同一表达式在 gen196/197/198 连续三代进 L2（每次 ~56s，结果相同、都没过）
+    ap.add_argument('--l2_hist_skip', type=int, default=0,
+                    help='历史跳过(默认 0=关): 同 `(expr, window, cost)` 已测过且主/副口径都没过 '
+                         '⇒ 本代不再回测。⚠ 调低门槛时要关掉它（门槛不进指纹，旧结论会残留）')
     # ★ 2026-10-20（用户拍板 A 方案）：生成端拦截「纯风格组合」
     ap.add_argument('--style_gate', type=int, default=0,
                     help='生成端拦截纯风格组合(默认 0=关): `barra_*` 叶子占比>=0.5，或直接进 div 分子 '

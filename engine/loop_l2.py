@@ -27,6 +27,7 @@ from loop_persist import (_dump_strip_detail, _dump_strip_detail20, _dump_pool_o
                           _cmp_lib, ex_max_corr, _gate_of, _pool_best, combine_ok,
                           append_csv_schema_safe, _StateUnpickler)
 from cost_presets import cost_label
+import loop_paths as _P          # ★ B 方案要读 archive 判断"历史已测"
 import dataclasses
 
 
@@ -428,10 +429,71 @@ class _L2Acc:
     nd: object = None
 
 
+# ============================================================ 历史跳过（B 方案，2026-10-22 用户拍板）
+# ★ 为什么（实测浪费）：`ts_slope20(ts_mean60(ts_mean20(fa_roe)))` 在 **gen196/197/198 连续三代**
+#   重复进入 L2，每次回测 ~56 s，结果完全相同、都没过 ⇒ 纯浪费（占 L2 时间 10~30%）。
+#   判据 = **口径指纹** `(expr, window, cost)`：这三项一致时，"已测且未过"的候选再测一遍
+#   必然还是同一组数值 ⇒ 直接跳过 ✓
+# ⚠ 为什么不把 `hzn` 放进指纹：archive 的 `hzn` 只记"**入选**时用的口径"（未过者恒为 5），
+#   把它当指纹反而会漏跳（20 日口径测过的也会被当成没测过）。
+# ⚠ 门槛（`min_calmar2` / `min_strip_calmar` …）变了**不会**让本机制失效 ⇒ 调门槛时请
+#   显式关掉（`--l2_hist_skip=0`）或清空 archive，否则会把"旧门槛下没过"的当成永久没过。
+_HIST_CACHE = {'key': None, 'map': {}}
+
+
+def _truthy(v):
+    return str(v).strip().lower() in ('true', '1', '1.0', 'yes')
+
+
+def _hist_map():
+    """`{(expr, window, cost): (passed, passed2)}` —— 同键取**最后一条**（后者覆盖前者）。"""
+    import os as _os
+    p = _P.ARCHIVE
+    try:
+        mt = _os.path.getmtime(p)
+    except OSError:
+        return {}
+    if _HIST_CACHE['key'] == mt and _HIST_CACHE['map']:
+        return _HIST_CACHE['map']
+    out = {}
+    try:
+        df = pd.read_csv(p, encoding='utf-8-sig')
+        for r in df.to_dict('records'):
+            k = (str(r.get('expr')), str(r.get('window')), round(float(r.get('cost')), 6))
+            out[k] = (_truthy(r.get('passed')), _truthy(r.get('passed2')))
+    except Exception as e:                                   # noqa: BLE001
+        print(f"  [历史跳过] 读 archive 失败（本代不跳过）: {type(e).__name__}: {e}")
+        return {}
+    _HIST_CACHE.update(key=mt, map=out)
+    return out
+
+
+def _hist_skipped(node, args):
+    """该候选是否「同口径已测过、且主/副口径都没过」⇒ 可跳过回测。"""
+    m = _hist_map()
+    if not m:
+        return False
+    k = (str(node), str(args.window), round(float(args.cost), 6))
+    v = m.get(k)
+    return bool(v is not None and not v[0] and not v[1])
+
+
+def _drop_hist_skipped(acc, args):
+    """按「历史已测且未过」过滤本代候选（就地改 `acc.nd`）—— B 方案入口。"""
+    if not getattr(args, 'l2_hist_skip', 0) or not acc.nd:
+        return
+    nd0 = list(acc.nd)
+    acc.nd = [x for x in nd0 if not _hist_skipped(x, args)]
+    if len(acc.nd) != len(nd0):
+        print(f"  [历史跳过] {len(nd0)-len(acc.nd)}/{len(nd0)} 个候选同口径已测且未过"
+              f" ⇒ 不再回测（省约 {(len(nd0)-len(acc.nd))*56//60} 分钟）", flush=True)
+
+
 def _run_l2_phase(ctx, args):
     """L2 费后精筛 + 剥风格/池指标/收益流去重 + 落盘 -> 写回 ctx"""
     cal = _L2In.of(ctx)   # ★ 只读口径（23 项 ✓）
     acc = _L2Acc(nd=ctx['nd'])   # ★ 本代累积（含 nd ✓）
+    _drop_hist_skipped(acc, args)   # ★ B 方案：同口径已测且未过 ⇒ 不再回测
 
     POOL_M, _lp, _t_l2, top = _run_l2(cal.min_pool_calmar, cal.min_sharpe, cal.pool_gate_mode, cal.pool_gate_on, cal.pool_gate_or_all, cal.pool_obs, cal.pools, args, cal.cols, cal.dates, cal.l1)
     MCAP = None

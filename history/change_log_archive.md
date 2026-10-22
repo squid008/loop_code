@@ -1,8 +1,87 @@
-# change_log 归档（v1.38.0 及以前）
+# change_log 归档（v1.38.1 及以前）
 
 > 本文件由 `ai_test/_cl_split.py` 从 `change_log.md` 切出（2026-09-27）——
 > 目的是让主 `change_log.md` 只保留近期版本、可读可查（原文**一字未改** ✓）。
 > 新增条目请照旧写进主 `change_log.md` 的**最新**位置 ✓。
+
+---
+
+## [1.38.1] — 2026-10-17
+
+> 主题：**L1 费后收益代理观测（阶段 1：只落盘、不改判定）** ✓ —— **引擎判定/排序零改动** ✗。
+> 起因：用户 _"不一定要 IC 高，因为 IC 高只是代表排序线性度好，应该是要年化收益高或者费后年化收益高"_ ✓
+> ⇒ 实测发现 **L1 根本没有"费后收益"这个量**（只有 ic / stab / 十档单调性 / 换手代理）
+> ⇒ 本次先把**原料与代理**落到独立观测文件，攒几代后用离线 join 决定排序目标 ✓。
+
+### 一、背景：为什么不是"简单换个排序"
+
+`docs/loop_style_obs.csv`（全候选 L1 指标）⨝ `docs/loop_archive.csv`（L2 结果），
+**n = 1683**，Spearman（`ai_test/_corr_obs_join.py` ✓）：
+
+| L1 指标 | vs calmar2 (gen<100) | vs calmar2 (gen>=100) | vs calmar (gen>=100) |
+|---|---|---|---|
+| **`score_new`（现行 `stab×(0.5+0.5·shape_pos)`）** | **−0.005** | **−0.066** | **−0.160** |
+| `score_old`（`\|ic_ir\|×(0.25+0.75·stab)`） | +0.609 | +0.398 | +0.566 |
+| `ic` | +0.571 | +0.415 | +0.556 |
+| **`stab`（现行主项）** | **−0.380** | **−0.283** | **−0.403** |
+| `shape_pos` | +0.206 | +0.102 | +0.054 |
+
+通过组 vs 未通过组中位数：`ic` **0.058 vs 0.020** · `ic_ir` 0.700 vs 0.192 ·
+**`stab` 0.919 vs 0.997（通过组反而更低）** · `max_ex_corr` **0.452 vs 0.772**。
+
+⚠ **与 `engine/loop_l1.py` 头部 2026-09 标定注释（stab 单独 +0.546 / ic_ir −0.317）方向相反** ✗
+⇒ 该标定已过期（或口径不同），**待阶段 2 用新口径重标后再动排序** ✓（本次不动 ✓）。
+
+★ 结论：IC 与费后年化只是**中等强度**正相关（0.54），不是目标本身；
+先把"费后年化/净夏普"的**廉价代理**量化出来，再决定拿什么当排序目标 ✓。
+
+### 二、改动（3 文件，只增不减）
+
+* **`engine/loop_metrics.py::decile_shape`**：返回新增 `std_top` / `std_spread`
+  （顶档 / 多空收益的**时序标准差**）；`d1`/`d10` 原本已算、此前只是没返回 ✓
+  * ⚠ 口径确认：分档 `floor((1−RS)·n)` ⇒ **D1 = 因子值最高档（多头档）**，不是 d10
+    （实现时差点搞反，已在 docstring 写死 ✓）
+* **`engine/loop_l1.py`**：
+  * `stats` 行新增 `ret_d1 / ret_d10 / std_top / std_spread`（**纯观测**）
+  * 新增 **`_write_obs_ret()`** → 写 **`docs/loop_style_obs_ret.csv`**（**独立文件**：
+    老 `loop_style_obs.csv` 已 5.5 万行 / 14 列，直接 append 新列会让新旧表头错位 ✗）
+  * 把 stats 装配段抽成 **`_append_stats()`** —— 新增字段把 `_l1_batches` 顶到 **125 行**
+    （R1 线 120 ✗）⇒ 抽出后回到线内 ✓
+* **`engine/loop_paths.py`**：新增 `STYLE_OBS_RET` 并纳入 `_PATH_KEYS`（各池仍独立轨迹 ✓）
+
+### 三、口径（写死，防再搞反）
+
+```
+ret_top_ann    = d1 × (252/FWD)                       # 多头（D1）费前年化
+ret_spread_ann = (d1 − d10) × (252/FWD)               # 多空费前年化
+net_ann        = ret_top_ann − cost × 2 × turn_est × (252/FWD)   # 费后年化代理
+net_sharpe     = net_ann / (std_top × √(252/FWD))
+turn_est       = 1 − stab                             # 现状换手代理（同源）
+```
+观测列：`gen, expr, sign, fwd, cost, stab, turn_est, ret_d1, ret_d10, std_top,
+ret_top_ann, ret_spread_ann, net_ann, net_sharpe`。
+
+### 四、验证（★ 据实）
+
+| 项 | 结果 |
+|---|---|
+| `py_compile` 三文件 | OK ✓ |
+| `_test_undefined_names` | **0 处**（185 文件）✓ |
+| `_test_ops_sync` | **28/28** ✓ |
+| 冒烟 `smoke_gen_only`（真跑引擎） | **4/4**：rc=0 · 无 Traceback/NameError · **全部 `loop_state*.pkl` SHA256 未变**（19 s）✓ |
+| 公式单元验证（`ai_test/_test_obs_ret.py`） | `ann=50.4`；`net_ann` 与手算**逐位一致**；`d1<0 ⇒ net_ann<0` ✓ |
+| 方向验证（不对称噪声） | 只给 D10 加噪声时 `std_top=0.00002` ⇒ 确认对应 **D1** ✓ |
+| R1 审计 | `_l1_batches` 回到 ≤120 ✓；`engine/` 评分范围只剩 **1 个既存**违规：`build_fa_pit.main()` **150 行**（v1.30.0 记录是 102 行 ⇒ **漂移，非本次引入** ✗，单独记账）|
+
+⚠ **本版行为变化：无** ✓（不读新字段、不改 score/门槛；`--gen_only` 冒烟已证 state 逐字节不变）。
+⚠ **观测文件本版还不会生成** —— `_write_obs_ret` 在 L1 之后才写，必须跑**完整一代**才有第一批数据 ✓。
+
+### 五、发版回归
+
+★ **全量回归：59/59 全绿** ✓（**实测 7.1 分钟** ✓；最慢 `_test_e2e_l1l2` 119 s ·
+`_test_parallel_runner` 107 s · `_test_daily_dd` 42 s ✓）。
+跑前 `ai_test/_tracks/_control.json` = `running=false / phase=idle`（无挖掘在跑 ✓，
+符合 `release_check` 的前提 ✓）；跑完**未起引擎** ✓、控制文件已复位 ✓。
 
 ---
 
