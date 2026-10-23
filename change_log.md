@@ -135,7 +135,11 @@
 
 ### 六、发版回归
 
-（待 `release_check` 跑完回填）
+★ **全量回归：60/60 全绿** ✓（**实测 8.7 分钟** ✓；最慢 `_test_parallel_runner` 173 s ·
+`_test_e2e_l1l2` 137 s · `_test_daily_dd` 46 s ✓）。
+* 首轮被**守门正确拒绝**：当时用户刚在看板启动了挖掘（gen210）⇒ 前提检查报
+  `挖掘正在跑（running=true, active all/gen210）` ✓ 这正是它该做的事。
+* 用户停掉后重跑，跑前确认 `running=False`、**0 个 loop 进程** ✓；跑完**未起引擎** ✓。
 
 ---
 
