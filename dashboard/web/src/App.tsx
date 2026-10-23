@@ -297,9 +297,10 @@ export default function App() {
               `.logo` 的光晕是 `box-shadow: 0 0 22px currentColor`，而这里原来**只设了 background**
               ⇒ `currentColor` 取的是继承的**文字色**（深色=白、浅色=墨黑）⇒ 浅色下是深灰光 ✗
               ⇒ 把 `color` 也设成灯色，光晕就跟着灯走（绿/蓝/黄/红）✓ */}
-          <span className="logo" style={{ background: runColor, color: runColor }} />
+          <span className={'logo' + (status?.anyRunning ? '' : ' idle')}
+                style={{ background: runColor, color: runColor }} />
           <div>
-            <h1>Loop 挖掘看板</h1>
+            <h1>数因工坊 · 智能指标发现平台</h1>
             <div className="sub">
               {status?.anyRunning
                 ? <>引擎 <b style={{ color: 'var(--ok)' }}>正在挖掘</b> — {status.summary.runningPoolCount} 个池在跑</>
@@ -614,7 +615,7 @@ export default function App() {
       {tab === 'meta' && meta && <MetaPanel m={meta} mine={mine} />}
 
       <footer className="foot">
-        <span>Loop 挖掘看板 · 项目版本 <b>v{meta?.version ?? '?'}</b></span>
+        <span>数因工坊 · 项目版本 <b>v{meta?.version ?? '?'}</b></span>
         <span>·</span>
         <span>版本来自 <code>VERSION</code></span>
         <span>·</span>
@@ -719,7 +720,8 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
   return (
     <div className={cls}>
       <div className="card-h">
-        <span className="dot" style={{ background: dotColor }} />
+        <span className={'dot' + (dotColor === 'var(--idle)' ? ' idle' : '')}
+              style={{ background: dotColor, color: dotColor }} />
         <b>{p.label}</b>
         <span className="pid">{p.key === 'all' ? '全A' : p.key}</span>
         <span className="state"
@@ -1987,8 +1989,10 @@ function FactorDetail({ f, metricsInfo, metricsMtime, metrics20Info, onClose }:
           {m.ic_doc !== undefined && m.ic_doc !== null && m.ic !== null && m.ic !== undefined &&
             Math.abs(m.ic - m.ic_doc) > 0.002 && (
               <div className="dt-warn">
-                归档时记录的 IC 是 {m.ic_doc.toFixed(4)}，这里重算是 {m.ic.toFixed(4)}（口径可能不同：
-                早期条目的成本档/窗口未必与现在一致）。本面板一律用上面这套统一口径。
+                归档时记录的是 5 日口径的 IC {m.ic_doc.toFixed(4)}，
+                当前面板显示的是 {use20 ? 20 : 5} 日口径的 {m.ic.toFixed(4)}
+                {use20 ? '（切回 5 日就能看到与归档一致的数字）'
+                       : '（差异来自成本档或回测窗口与当年不同）'}。
               </div>
             )}
           {d.metricsDocText && (

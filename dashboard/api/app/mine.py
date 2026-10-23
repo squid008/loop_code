@@ -66,7 +66,6 @@ DEFAULT_ROUNDS = 50
 #     ① `per_engine_gb(mem, panel_cache)` —— 一个引擎按多少 GB 算（面板缓存关着 ⇒ + 4.42 GB ✓）
 #     ② `slot_cap(free, n_pools, mem, panel_cache)` —— **此刻**能同时跑几个 ✓
 #   ⚠ 懒加载（不在本模块加载时 import）⇒ 不改后端启动顺序，也不吃它的 stdout 重配置 ✓
-MEM_DEFAULT = 7.0            # 每引擎内存预算 GB（★ = 实测**私有**峰值 ≈7.7 GB（v1.21.27）⇒ 取 7.0 ✓）
 MIN_FREE_GB = 3.0
 
 
@@ -100,7 +99,10 @@ def _OC():
 EXEC_MODES = ('rotate', 'parallel')
 PANEL_CACHES = ('off', 'use', 'build')
 PARALLEL_RANGE = (1, 6)
-MEM_DEFAULT = 3.0            # 每引擎内存预算 GB（仅 parallel 用）
+# ★★★ 2026-10-23：3.0 → **10.0**。gen209 实测单引擎占 **9.44 GB**（加 5 个替代数据叶子后
+#   从 ~5 GB 涨上来；面板 4.4 + alt 0.36 + L1 子面板 + L2 缓存）⇒ 按 3.0 估会严重低估，
+#   并行调度会把内存排爆（同日实测可用内存被压到 7.8 GB）。回退：改回 3.0。
+MEM_DEFAULT = 10.0           # 每引擎内存预算 GB（仅 parallel 用）
 PANEL_CACHE_DIR = os.path.join(settings.PROJECT_ROOT, 'engine', '_panel_cache')
 
 

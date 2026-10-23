@@ -129,14 +129,21 @@ body {
   font: 14px/1.55 -apple-system, "Segoe UI", "Microsoft YaHei", Roboto, sans-serif;
 }
 code, .mono { font-family: var(--mono); }
+/* ★★★ 2026-10-23（用户：按 DataCausal 的字形，细一些好看）——
+   `<button>` / `<input>` / `<select>` **默认不继承页面字体**（退回系统控件字体，
+   字重和字形都与正文不一致，同一排里"资料"和"深色"看着像两种字体 ✗）
+   ⇒ 显式 `font-family: inherit` ⇒ 全站统一雅黑细体 ✓ */
+button, input, select, textarea { font-family: inherit; }
 .wrap { max-width: 1320px; margin: 0 auto; padding: 20px 22px 40px; }
 
 /* ---------------- top ---------------- */
 .top { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: 13px; }
 /* ★ 2026-10-23（用户：改回初始的静态光晕）—— 保留 `currentColor` 光晕，
-   由 App 把 `color` 设成灯色 ⇒ 光晕跟着绿/蓝/黄/红走；**不做动画**（静态）✓ */
+   由 App 把 `color` 设成灯色 ⇒ 光晕跟着绿/蓝/黄/红走；**不做动画**（静态）✓
+   ★ 同日补充（用户：停止状态的灰色就不要有光晕了）⇒ 空闲时 `.idle` 直接去掉光晕 ✓ */
 .logo { width: 12px; height: 44px; border-radius: 7px; box-shadow: 0 0 22px currentColor; }
+.logo.idle { box-shadow: none; }
 h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .sub { color: var(--mut); font-size: 12.5px; margin-top: 2px; }
 /* ★★ 2026-09-16（用户："点并行后按钮都变两行了，这个不行"）：
@@ -305,7 +312,12 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
   .card.run::before { animation: none; }
 }
 .card-h { display: flex; align-items: center; gap: 9px; }
-.dot { width: 9px; height: 9px; border-radius: 50%; }
+/* ★ 2026-10-23（用户：红灯该是红晕、蓝灯该是蓝晕）——
+   小圆点的光晕同样用 `currentColor`（App 会把 `color` 设成点色）
+   ⇒ 绿点绿晕 / 红点(异常)红晕 / 蓝点(待跑)蓝晕 / 琥珀点(配置中)琥珀晕；
+   灰点(空闲/未配置) **不发光** ✓ */
+.dot { width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 6px currentColor; }
+.dot.idle { box-shadow: none; }
 .card-h b { font-size: 15px; }
 .pid { font-family: var(--mono); font-size: 11px; color: var(--mut); background: var(--card2);
        padding: 1px 7px; border-radius: 6px; border: 1px solid var(--bd); }

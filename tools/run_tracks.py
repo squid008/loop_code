@@ -713,7 +713,8 @@ def _parse_args():
     #     **`--pools` 被完全无视**了；且会继承**上一次会话残留的 `stopped`** ⇒ 实测
     #     `--pools=300,500` 却只起了一个池（ctl 里躺着 `stopped=['300']`）✗✗
     from_ctl = False
-    mem_per_engine = 3.0      # 每引擎内存预算 GB（仅 parallel 模式；不足就排队等）
+    # ★★★ 2026-10-23：3.0 → **10.0**（gen209 实测单引擎 9.44 GB；详见 mine.py 同处注释）
+    mem_per_engine = 10.0     # 每引擎内存预算 GB（仅 parallel 模式；不足就排队等）
     panel_cache = 'off'       # 透传给引擎：off(默认,现状) / use / build（见 tools/build_panel_cache.py）
     # ★★★★ 2026-09-19 两个新开关（用户："为什么要等三个池一起挖完才审查？…效率不是更高？"）
     #   · `--gens_per_round=K`（第 1 步）每池每轮连跑几代：`K>=1` 定量；**`0` = 不限**（默认 ✓）
