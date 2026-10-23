@@ -373,7 +373,8 @@ export default function App() {
               每轮结束会自动收尾；「全部停止」后**若有新进展**（本轮有代跑完）也会自动收尾 ✓ ——
               ⚠ 2026-09-23 更正：一代都没跑完时**会跳过收尾**（没有可审的东西，别白跑一遍全库体检 ✓）；
               想手动收尾：命令行 `python tools/run_tracks.py --rounds=0` ✓ */}
-          <button onClick={() => loadAll(true)} disabled={busy} className="btn">
+          {/* ★ 2026-10-23（用户：宽度要固定，否则变成刷新中时后面按钮会跟着位移） */}
+          <button onClick={() => loadAll(true)} disabled={busy} className="btn btn-fixed">
             {busy ? '刷新中…' : '立即刷新'}
           </button>
           <label className="chk">
@@ -908,7 +909,12 @@ function EntryLogCard({ d, onDetail }:
   return (
     <div className="card">
       <div className="card-h">
-        <span className="dot" style={{ background: 'var(--indigo)' }} />
+        {/* ★ 2026-10-23：① **必须同时给 color**（光晕用 currentColor），否则会取到文字的白 ✗
+            ② 用指示灯专用的亮紫 `--indigo-lt`（普通 `--indigo` 在深蓝底上偏暗）✓ */}
+        {/* 与其它灯**同一套渲染**（纯色 + 双层光晕），只有色相不同 ✓
+            ⚠ 必须同时给 `color`（光晕用 currentColor），否则会取到文字的白 ✗ */}
+        <span className="dot"
+              style={{ backgroundColor: 'var(--indigo-lt)', color: 'var(--indigo-lt)' }} />
         <b>新入库日志</b>
         <span className="pid" title={d?.note || ''}>
           最近 {rows.length} 条{d ? ` · 共 ${d.count}` : ''}

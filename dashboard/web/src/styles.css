@@ -58,6 +58,14 @@
   --shadow: #000;
   /* ★ 2026-10-23：图表悬浮数值面板的底色（深色=近黑半透明；浅色=近白不透明） */
   --tip-bg: rgba(12, 18, 34, 0.82);
+  /* ★ 2026-10-23（用户：紫灯要像蓝灯那样"亮"，但 #818cf8 只是变白）——
+     教训：`#818cf8`（indigo-400）的**明度 75%** ⇒ 颜色被冲淡、显白；
+     蓝/绿灯的明度只有 45~48%、饱和 70~89% ⇒ 才显得"亮而艳"。
+     ⇒ 改用 **violet-500 `#8b5cf6`**（色相 258°、饱和 90%、明度 66%）：更紫、不泛白 ✓
+     渲染与其它灯**完全一致**（纯色 + 双层光晕，无高光、无描边）✓ */
+  /* 亮度阶梯（实测感知亮度）：8b5cf6 0.198 → 8f68f7 **0.224(+13%)** → 9d76f8 0.268(+35%,过头)
+     → 818cf8 0.302(发白)；蓝灯 sky-500 = 0.329。用户拍板取 +15% 那档 ✓ */
+  --indigo-lt: #8f68f7;
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
@@ -118,6 +126,7 @@
   --sel-bg: #dde3fb;
   --shadow: #1f2937;
   --tip-bg: rgba(255, 255, 255, 0.97);
+  --indigo-lt: #6366f1;
 }
 
 * { box-sizing: border-box; }
@@ -138,7 +147,12 @@ button, input, select, textarea { font-family: inherit; }
 
 /* ---------------- top ---------------- */
 .top { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
-.brand { display: flex; align-items: center; gap: 13px; }
+/* ★★★ 2026-10-23（用户：刷新时这排按钮会跑到标题那一行上去）——
+   根因：`.top` 是 `flex-wrap: wrap`，`.brand` 与 `.ctrls` 的总宽**正好卡在临界值**；
+   刷新瞬时按钮文案会变（`立即刷新` / `刷新中…`）⇒ 宽度微变就越过临界 ⇒ 整排**上下跳** ✗
+   ⇒ 让 `.brand` **独占一行**（`flex-basis: 100%`）⇒ `.ctrls` 必然落在第二行、位置恒定 ✓
+   （`.ctrls` 侧保持 `flex: 0 0 auto`＋内部 `nowrap`，符合接线守门的要求 ✓） */
+.brand { display: flex; align-items: center; gap: 13px; flex: 1 1 100%; }
 /* ★ 2026-10-23（用户：改回初始的静态光晕）—— 保留 `currentColor` 光晕，
    由 App 把 `color` 设成灯色 ⇒ 光晕跟着绿/蓝/黄/红走；**不做动画**（静态）✓
    ★ 同日补充（用户：停止状态的灰色就不要有光晕了）⇒ 空闲时 `.idle` 直接去掉光晕 ✓ */
@@ -167,6 +181,10 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .ctrls > * { flex: 0 0 auto; }
 .ctrls .btn, .ctrls .seg, .ctrls .rounds, .ctrls .num, .ctrls .chk, .ctrls .res { white-space: nowrap; }
 /* 并行数 / 预算：紧凑的行内数字框（省地方，避免把这一排挤爆） */
+/* ★ 2026-10-23（用户：立即刷新按钮宽度要固定）——
+   文案在「立即刷新 / 刷新中…」之间切换，字数差 ⇒ 按钮变窄 ⇒ **后面那一排全跟着位移** ✗
+   ⇒ 给固定最小宽度（文字仍居中，按钮本身不会被撑变形）✓ */
+.ctrls .btn-fixed { min-width: 88px; }
 .ctrls .num { display: inline-flex; align-items: center; gap: 4px;
               color: var(--mut); font-size: 12.5px; }
 .ctrls .num input {
@@ -316,8 +334,23 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
    小圆点的光晕同样用 `currentColor`（App 会把 `color` 设成点色）
    ⇒ 绿点绿晕 / 红点(异常)红晕 / 蓝点(待跑)蓝晕 / 琥珀点(配置中)琥珀晕；
    灰点(空闲/未配置) **不发光** ✓ */
-.dot { width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 6px currentColor; }
+/* ★ 2026-10-23（用户：紫灯比黄灯模糊 / 后来：加白边又太突兀）——
+   根因是**暗色灯缺硬边界**（紫 indigo、蓝 sky 在深底上糊成一团），而亮色灯自带锐利感。
+   试过 `0 0 0 1px` 硬描边 ⇒ 在亮色上就成了一圈白边、对比过强 ✗（那次还因为
+   `EntryLogCard` 的灯**没设 `color`**，`currentColor` 取到了白色文字色，白得更明显）
+   ⇒ 最终用**双层柔光**：近处近实色（钉住边界、不糊）+ 远处半透明（保持柔和、不画圈）✓
+   ⚠ 前提：每处 `.dot` 都必须显式给 `color`（与 `background` 同色），否则光晕会取到文字色 ✗ */
+.dot { width: 9px; height: 9px; border-radius: 50%;
+       box-shadow: 0 0 3px color-mix(in srgb, currentColor 92%, transparent),
+                   0 0 9px color-mix(in srgb, currentColor 50%, transparent); }
 .dot.idle { box-shadow: none; }
+/* ★ 2026-10-23（用户：不要球形高光，要和蓝灯完全一样的效果）——
+   结论：**所有灯用同一套渲染**（纯色 + 双层光晕），差异只来自色相本身 ✓
+   试过的两条路都撤掉了：`0 0 0 1px` 硬描边（亮色上变白圈 ✗）、
+   `radial-gradient` 内部高光（变成玻璃球，不是要的效果 ✗）
+   ⚠ 关于"紫不如蓝亮"：那是**颜色物理**——蓝 #0ea5e9 感知亮度约 0.35、
+     紫 #8b5cf6 约 0.27；紫色要做到同等亮度只能往白里调（就是最初被否掉的 #818cf8）。
+     所以最终选择"同质感、不同色相"，不硬凑亮度 ✓ */
 .card-h b { font-size: 15px; }
 .pid { font-family: var(--mono); font-size: 11px; color: var(--mut); background: var(--card2);
        padding: 1px 7px; border-radius: 6px; border: 1px solid var(--bd); }

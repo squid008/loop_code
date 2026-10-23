@@ -1,8 +1,51 @@
-# change_log 归档（v1.39.0 及以前）
+# change_log 归档（v1.39.1 及以前）
 
 > 本文件由 `ai_test/_cl_split.py` 从 `change_log.md` 切出（2026-09-27）——
 > 目的是让主 `change_log.md` 只保留近期版本、可读可查（原文**一字未改** ✓）。
 > 新增条目请照旧写进主 `change_log.md` 的**最新**位置 ✓。
+
+---
+
+## [1.39.1] — 2026-10-19
+
+> 主题：**修 v1.39.0 的 CLI 漏改** ✗ —— `--score_mode=ic_n` 被 argparse 拒绝（引擎 rc=2）。
+> 起因：v1.39.0 只改了 `l1_score` / `_make_score`，**漏改 `loop_engine.py` 的
+> `choices=['old','new']`** ⇒ 实验启动后**连崩 2 次**（每次 0.1 分钟）、轮次被烧光 ✗。
+
+### 一、根因（调度器日志逐字）
+
+```
+pool=all gen=163 rc=2 :: 命令行/文件用法错误（argparse）
+  loop_engine.py: error: argument --score_mode: invalid choice: 'ic_n' (choose from 'old', 'new')
+```
+
+随后 `[CTL] ★ 本代崩溃 ⇒ 本轮立刻重试（1/2）` → 再崩 → `本轮已崩 2 次 ⇒ 不再重试`
+→ `轮数上限 1 已跑满` ⇒ 调度器干净退出（**没有脏数据** ✓，该代作废）。
+
+★ **为什么会漏**：v1.39.0 的验证只覆盖了**函数层**（`l1_score` / `_make_score` 单元）
+和**不带该参数的冒烟**（`smoke_gen_only` 默认参数）⇒ **CLI 解析路径从未被执行** ✗。
+这是"验收要覆盖实际路径"的又一例（同类教训：v1.23.0 的拆分事故）。
+
+### 二、修法 + 防再犯
+
+* `engine/loop_engine.py`：`choices=['old', 'new', 'ic_n']`（help 补口径与 `--style_obs` 依赖）
+* 单元 `ai_test/_test_score_icn.py` 新增 **[6] 静态断言**：源码必须含
+  `choices=['old', 'new', 'ic_n']`（漏改即 FAIL）
+* 冒烟改为**带 `--extra=--score_mode=ic_n` 真跑**（真正覆盖 argparse 路径 ✓）
+
+### 三、验证
+
+| 项 | 结果 |
+|---|---|
+| 单元 6 项 | 全过（含新增的 argparse 断言）✓ |
+| 冒烟 `smoke_gen_only --extra=--score_mode=ic_n` | **4/4**（rc=0 · 无 Traceback/NameError · 全部 state SHA256 未变）✓ |
+| 全量回归 | 见 §四 |
+
+### 四、发版回归
+
+★ **全量回归：59/59 全绿** ✓（**实测 6.7 分钟** ✓；最慢 `_test_e2e_l1l2` 114 s ·
+`_test_parallel_runner` 107 s · `_test_daily_dd` 36 s ✓）。
+跑前无挖掘在跑 ✓；跑完**未起引擎** ✓、控制文件已复位 ✓。
 
 ---
 
