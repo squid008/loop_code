@@ -1,8 +1,49 @@
-# change_log 归档（v1.38.3 及以前）
+# change_log 归档（v1.38.4 及以前）
 
 > 本文件由 `ai_test/_cl_split.py` 从 `change_log.md` 切出（2026-09-27）——
 > 目的是让主 `change_log.md` 只保留近期版本、可读可查（原文**一字未改** ✓）。
 > 新增条目请照旧写进主 `change_log.md` 的**最新**位置 ✓。
+
+---
+
+## [1.38.4] — 2026-10-18
+
+> 主题：**修 v1.38.3 的 `ic_n` 全 NaN** ✗ —— 观测字段的**行对齐 bug**，引擎判定零改动 ✓。
+> 起因：v1.38.3 上线后跑 gen161，`loop_style_obs_ret.csv` 的 `ic_n` **716/716 全为空** ✗。
+
+### 一、根因（已用最小用例复现）
+
+`Rsub_s_n` 在 `loop_stage` 里是 **`[::FWD]` 调仓日视图**
+（`Rsub_s = Rsub[::FWD]` → 再 `neutralize_rows`），而 `_ic_n()` 首版直接传了**全期** `vals`
+⇒ `batch_ic` 内部广播失败：
+
+```
+ValueError: operands could not be broadcast together with shapes (24,300) (120,300)
+```
+
+⇒ 被 `except` 吞掉 ⇒ 返回 `None` ⇒ 整列 NaN（**不报错、不写日志**，属于最坏的失败形态 ✗）。
+
+### 二、修法
+
+`_ic_n()` 内先抽样：`vs = [v[::_S.FWD] for v in vals]`，再
+`batch_ic(vs, Rsub_s_n, Usub_s, None)`。**判定/排序零改动**（仍是纯观测）。
+
+### 三、验证
+
+| 项 | 结果 |
+|---|---|
+| 最小用例（`ai_test/_test_ic_n.py`） | `_ic_n` 与 `batch_ic([v[::FWD]], …)` **逐位一致**（0.43068699 ✓） |
+| 旧形态复现 | 确实抛 `ValueError`（24×300 vs 120×300）✓ |
+| `Rsub_s_n=None` | 返回 `None`（不写假值）✓ |
+| `py_compile` / 未定义名 | OK / **0 处**（185 文件）✓ |
+| 冒烟 `smoke_gen_only` | **4/4**（rc=0 · 无 Traceback/NameError · 全部 state SHA256 未变）✓ |
+| 全量回归 | 见 §四 |
+
+### 四、发版回归
+
+★ **全量回归：59/59 全绿** ✓（**实测 8.7 分钟** ✓；最慢 `_test_parallel_runner` 143 s ·
+`_test_e2e_l1l2` 139 s · `_test_daily_dd` 51 s ✓）。
+跑前无挖掘在跑 ✓；跑完**未起引擎** ✓、控制文件已复位 ✓。
 
 ---
 

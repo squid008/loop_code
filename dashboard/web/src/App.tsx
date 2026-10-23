@@ -6,6 +6,8 @@ import {
   type ParamItem, type ParamsDto,
   type PoolStatus, type SelectedDto, type SelectedFactor, type StatusDto,
 } from './api'
+// ★ 2026-10-23：皮肤切换（深色/浅色；移植自 DataCausal）
+import { useTheme } from './theme'
 
 type TabKey = 'pools' | 'library' | 'selected' | 'process' | 'params' | 'meta'
 
@@ -82,6 +84,7 @@ export default function App() {
   const [entrySel, setEntrySel] = useState<LibraryEntryDto | null>(null)
   const [selected, setSelected] = useState<SelectedDto | null>(null)
   const [tab, setTab] = useState<TabKey>('pools')
+  const [themeMode, toggleTheme] = useTheme()   // ★ 2026-10-23 深色/浅色
   const [pool, setPool] = useState('1000')
   const [auto, setAuto] = useState(true)
   const [interval, setIntervalSec] = useState(10)
@@ -290,7 +293,11 @@ export default function App() {
     <div className="wrap">
       <header className="top">
         <div className="brand">
-          <span className="logo" style={{ background: runColor }} />
+          {/* ★ 2026-10-23（用户："浅色皮肤的绿灯搞灰色总感觉浮着"）——
+              `.logo` 的光晕是 `box-shadow: 0 0 22px currentColor`，而这里原来**只设了 background**
+              ⇒ `currentColor` 取的是继承的**文字色**（深色=白、浅色=墨黑）⇒ 浅色下是深灰光 ✗
+              ⇒ 把 `color` 也设成灯色，光晕就跟着灯走（绿/蓝/黄/红）✓ */}
+          <span className="logo" style={{ background: runColor, color: runColor }} />
           <div>
             <h1>Loop 挖掘看板</h1>
             <div className="sub">
@@ -379,6 +386,11 @@ export default function App() {
           <button className="btn" onClick={() => { setOpsOpen(true); if (!opsData) api.ops().then(setOpsData).catch(() => setErr('算子手册载入失败，稍后再试')) }}
                   title="查算子与字段的中文含义：ts_ 沿时间算、cs_ 当天在股票之间算，末尾数字是窗口期数">
             算子手册
+          </button>
+          {/* ★ 2026-10-23（用户：放算子手册后面）—— 深色/浅色皮肤切换 */}
+          <button className="btn" onClick={toggleTheme}
+            title={themeMode === 'dark' ? '切换到浅色皮肤' : '切换到深色皮肤'}>
+            {themeMode === 'dark' ? '浅色' : '深色'}
           </button>
         </div>
       </header>
@@ -623,13 +635,18 @@ function Kpi({ label, value, tone }: { label: string; value: string; tone: strin
 
 function Tag({ kind }: { kind: string }) {
   const map: Record<string, [string, string]> = {
-    driver: ['调度 run_tracks', '#6366f1'],
-    engine: ['引擎 loop_engine', '#10b981'],
-    watcher: ['守望 loop_watch', '#f59e0b'],
-    other: ['其它', '#94a3b8'],
+    driver: ['调度 run_tracks', 'var(--indigo)'],
+    engine: ['引擎 loop_engine', 'var(--ok)'],
+    watcher: ['守望 loop_watch', 'var(--amber)'],
+    other: ['其它', 'var(--idle2)'],
   }
   const [t, c] = map[kind] ?? map.other
-  return <span className="tag" style={{ background: c + '22', color: c, borderColor: c + '55' }}>{t}</span>
+  // ★ 2026-10-23：颜色已变量化 ⇒ **不能再拼** `c + '22'`（会得到 `var(--x)22` 无效值
+  //   ⇒ 浅色下标签变成透明/黑底 ✗）⇒ 改用 `color-mix` 做半透明 ✓
+  return <span className="tag" style={{
+    background: `color-mix(in srgb, ${c} 13%, transparent)`, color: c,
+    borderColor: `color-mix(in srgb, ${c} 33%, transparent)`,
+  }}>{t}</span>
 }
 
 function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
@@ -697,7 +714,7 @@ function PoolCard({ p, nowMs, mine, busy, onStart, onStop }:
   const crashed = !mining && crashN > 0
   const dotColor = mining ? 'var(--ok)'
     : (reviewing ? 'var(--amber)'
-      : (crashed ? '#ef4444'
+      : (crashed ? 'var(--red)'
         : (inRotation ? 'var(--sky)' : (configured ? 'var(--amber)' : 'var(--idle)'))))
   return (
     <div className={cls}>
@@ -820,7 +837,7 @@ const gradeOf = (strip?: string | null): string | null => {
   const m = /^\s*([ABCD])\b/.exec(strip || '')
   return m ? m[1] : null
 }
-const GRADE_COLOR: Record<string, string> = { A: '#10b981', B: '#f59e0b', C: '#ef4444', D: '#94a3b8', 未测: '#94a3b8' }
+const GRADE_COLOR: Record<string, string> = { A: 'var(--ok)', B: 'var(--amber)', C: 'var(--red)', D: 'var(--idle2)', 未测: 'var(--idle2)' }
 const GRADE_TIP: Record<string, string> = {
   A: 'A 独立有效：剥掉 11 个 Barra 风格后，日频 Calmar 仍不低于 0.30，且日频回撤优于 -0.20',
   B: 'B 弱独立：剥风格后日频 Calmar 在 0 到 0.30 之间，或回撤劣于 -0.20，因此不进精选池',
@@ -836,13 +853,14 @@ function GradeTag({ strip }: { strip?: string | null }) {
   //   ⚠ 仍然**不臆造档位** ✓ —— 之前是"不显示"✗，那会被读成"漏了/没这功能" ✗；
   //     标成"未测"才是实话 ✓（"不知道"和"没有记录"是两件事 ✓）
   const t = (g === 'A' || g === 'B' || g === 'C') ? g : '未测'
-  const c = GRADE_COLOR[t] ?? '#94a3b8'
+  const c = GRADE_COLOR[t] ?? 'var(--idle2)'
   return (
     // ★ 2026-09-21（用户："这个标签好像比旁边的 A 大了一点，搞成一样的"）：
     //   根因 = **中日韩字形在同样字号下字面比拉丁字母大** ✗（`未测` 两个汉字尤其明显）
     //   ⇒ 给汉字档位加 `cjk` 类，由 CSS 把字号调小一档 + **统一盒子高度** ✓
     <span className={'tag grade' + (t === '未测' ? ' cjk' : '')} title={GRADE_TIP[t] || ''}
-          style={{ background: c + '22', color: c, borderColor: c + '55' }}>{t}</span>
+          style={{ background: `color-mix(in srgb, ${c} 13%, transparent)`, color: c,
+               borderColor: `color-mix(in srgb, ${c} 33%, transparent)` }}>{t}</span>
   )
 }
 
@@ -862,7 +880,7 @@ function GradeTag({ strip }: { strip?: string | null }) {
  *        前端只做**查表**（`HZN_TIP` / `HZN_COLOR`）⇒ 不做任何算术 ✓
  */
 const HZN_CLASS: Record<string, string> = { '5': 'hz5', '20': 'hz20', '双': 'hzboth' }
-const HZN_COLOR: Record<string, string> = { '5': '#60a5fa', '20': '#c084fc', '双': '#fbbf24' }
+const HZN_COLOR: Record<string, string> = { '5': 'var(--blue-fg)', '20': '#c084fc', '双': 'var(--warn-fg)' }
 const HZN_TIP: Record<string, string> = {
   '5': '5 日调仓口径下更强：该口径超额 Calmar ≥ 0.624（2026-09-21 标定 · 全库 62 因子的中位）',
   '20': '20 日调仓口径下更强：该口径超额 Calmar ≥ 0.701（2026-09-21 标定 · 全库 62 因子的中位）',
@@ -877,7 +895,8 @@ function HzTag({ hzn }: { hzn?: string | null }) {
     // ★ 2026-09-21：`双` 是汉字 ⇒ 加 `cjk`（字号收一档 + 盒子等高）⇒ 与旁边的 `A` 一样大 ✓
     <span className={'tag hz ' + (HZN_CLASS[h] ?? 'hzboth') + (h === '双' ? ' cjk' : '')}
           title={HZN_TIP[h]}
-          style={{ background: c + '22', color: c, borderColor: c + '55' }}>{h}</span>
+          style={{ background: `color-mix(in srgb, ${c} 13%, transparent)`, color: c,
+               borderColor: `color-mix(in srgb, ${c} 33%, transparent)` }}>{h}</span>
   )
 }
 
@@ -1151,7 +1170,7 @@ const compactRound = (t?: string | null) => (t || '').replace(/^第\s*/, '').rep
 //   这里只负责画 ⇒ 打开详情 = 读一个几十 KB 的 JSON + 画 SVG，**对性能没有影响** ✓
 //   ★ 用**手写 SVG** 而不是引图表库：本项目前端零依赖（只有 react/react-dom），
 //     引库要多几十万字节 + 多一个升级面；这些图（折线/面积）手写 60 行足够 ✓
-const CPAL = ['#6366f1', '#22d3ee', '#f59e0b', '#34d399', '#f472b6',
+const CPAL = ['var(--indigo)', '#22d3ee', 'var(--amber)', '#34d399', '#f472b6',
               '#a78bfa', '#facc15', '#38bdf8', '#fb7185', '#4ade80']
 const dLab = (d: number) => `${String(d).slice(2, 4)}-${String(d).slice(4, 6)}`
 
@@ -1229,12 +1248,12 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false 
         <rect x={PL} y={PT} width={W - PL - PR} height={H - PT - PB} fill="transparent" />
         {yticks.map((tv, i) => (
           <g key={`y${i}`}>
-            <line x1={PL} y1={Y(tv)} x2={W - PR} y2={Y(tv)} stroke="#1e2846" strokeWidth="1" />
-            <text x={PL - 6} y={Y(tv) + 3.5} fontSize="10" fill="#8b9ac0" textAnchor="end">{fmt(tv)}</text>
+            <line x1={PL} y1={Y(tv)} x2={W - PR} y2={Y(tv)} stroke="var(--line)" strokeWidth="1" />
+            <text x={PL - 6} y={Y(tv) + 3.5} fontSize="10" fill="var(--mut)" textAnchor="end">{fmt(tv)}</text>
           </g>
         ))}
         {zero && lo < 0 && hi > 0 && (
-          <line x1={PL} y1={Y(0)} x2={W - PR} y2={Y(0)} stroke="#4b5b83" strokeDasharray="3 3" />
+          <line x1={PL} y1={Y(0)} x2={W - PR} y2={Y(0)} stroke="var(--bd2)" strokeDasharray="3 3" />
         )}
         {vis.map(({ s, i: oi }) => {
           let d = '', pen = false
@@ -1248,13 +1267,13 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false 
           if (kind === 'area' && oi === 0) {
             return <path key={`s${oi}`} d={`${d}L${X(n - 1).toFixed(1)},${Y(0).toFixed(1)}` +
                                          `L${X(0).toFixed(1)},${Y(0).toFixed(1)}Z`}
-                         fill={s.color + '2e'} stroke={s.color} strokeWidth="1.2" />
+                         fill={s.color} fillOpacity={0.18} stroke={s.color} strokeWidth="1.2" />
           }
           return <path key={`s${oi}`} d={d} fill="none" stroke={s.color} strokeWidth="1.6"
                        strokeDasharray={s.dashed ? '4 3' : undefined} />
         })}
         {xi.map(i => (
-          <text key={`x${i}`} x={X(i)} y={H - 4} fontSize="10" fill="#8b9ac0"
+          <text key={`x${i}`} x={X(i)} y={H - 4} fontSize="10" fill="var(--mut)"
                 textAnchor={i === 0 ? 'start' : (i === n - 1 ? 'end' : 'middle')}>
             {dLab(dates[i])}
           </text>
@@ -1329,16 +1348,16 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false 
           const by = Math.max(PT, Math.min(H - PB - bh, Y(rows[0].v as number) - bh / 2))
           return (
             <g pointerEvents="none">
-              <line x1={hx} y1={PT} x2={hx} y2={H - PB} stroke="#41527a" strokeDasharray="3 3" />
+              <line x1={hx} y1={PT} x2={hx} y2={H - PB} stroke="var(--bd3)" strokeDasharray="3 3" />
               <rect x={bx} y={by} width={bw} height={bh} rx="3"
-                    fill="rgba(12,18,34,0.82)" stroke="#33456b" strokeWidth="1" />
+                    fill="var(--tip-bg)" stroke="var(--bd3)" strokeWidth="1" />
               {/* 两列之间一条淡分隔线（多列时才画 ✓）—— 防止"左边数值被读成右边那条"✗ */}
               {cols > 1 && CWs.slice(1).map((_, i) => (
                 <line key={`sep${i}`} x1={bx + XO[i + 1] - GAP / 2} y1={by + 5}
                       x2={bx + XO[i + 1] - GAP / 2} y2={by + bh - 5}
-                      stroke="#2b3a5c" strokeWidth="1" />
+                      stroke="var(--bd3)" strokeWidth="1" />
               ))}
-              <text x={bx + PX} y={by + 10} fontSize="9" fill="#8fa0c4">{dLab(dates[hov])}</text>
+              <text x={bx + PX} y={by + 10} fontSize="9" fill="var(--mut)">{dLab(dates[hov])}</text>
               {rows.map((r, k) => {
                 const ci = Math.floor(k / per), ri = k % per
                 const tx = bx + XO[ci]
@@ -1346,8 +1365,8 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false 
                 return (
                   <g key={`hv${k}`}>
                     <circle cx={tx + 3} cy={ty - 3} r="2.4" fill={r.s.color} />
-                    <text x={tx + 9} y={ty} fontSize="9" fill="#c3cee6">{names[k]}</text>
-                    <text x={tx + CWs[ci] - 2} y={ty} fontSize="9" fill="#ffffff" textAnchor="end">
+                    <text x={tx + 9} y={ty} fontSize="9" fill="var(--fg2)">{names[k]}</text>
+                    <text x={tx + CWs[ci] - 2} y={ty} fontSize="9" fill="var(--fg)" textAnchor="end">
                       {valsT[k]}
                     </text>
                   </g>
@@ -1355,7 +1374,7 @@ function Chart({ series, dates, height = 132, kind = 'line', yFmt, zero = false 
               })}
               {rows.map((r, k) => (
                 <circle key={`hd${k}`} cx={hx} cy={Y(r.v as number)} r="2.6"
-                        fill={r.s.color} stroke="#0b1220" strokeWidth="1" />
+                        fill={r.s.color} stroke="var(--bg)" strokeWidth="1" />
               ))}
             </g>
           )
@@ -1417,9 +1436,9 @@ function BarChart({ rows, rowH = 15, domain, fmt, tag2 = '剥后', tag3 = '剥�
   return (
     <div className="ch">
       <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img">
-        <line x1={X(0)} y1={2} x2={X(0)} y2={H - 6} stroke="#4b5b83" strokeWidth="1" />
-        <line x1={X(-mx)} y1={2} x2={X(-mx)} y2={H - 6} stroke="#1e2846" />
-        <line x1={X(mx)} y1={2} x2={X(mx)} y2={H - 6} stroke="#1e2846" />
+        <line x1={X(0)} y1={2} x2={X(0)} y2={H - 6} stroke="var(--bd2)" strokeWidth="1" />
+        <line x1={X(-mx)} y1={2} x2={X(-mx)} y2={H - 6} stroke="var(--line)" />
+        <line x1={X(mx)} y1={2} x2={X(mx)} y2={H - 6} stroke="var(--line)" />
         {rows.map((r, i) => {
           const y = i * (rowH + gap) + 2
           const hh = Math.max(3, (rowH - 2) / nbar)
@@ -1428,12 +1447,12 @@ function BarChart({ rows, rowH = 15, domain, fmt, tag2 = '剥后', tag3 = '剥�
           if (has3 && r.v3 !== undefined && r.v3 !== null) nums.push(fv(r.v3))
           return (
             <g key={i}>
-              <text x={LX - 6} y={y + rowH / 2 + 3} fontSize="10.5" fill="#c8d3ee"
+              <text x={LX - 6} y={y + rowH / 2 + 3} fontSize="10.5" fill="var(--fg2)"
                     textAnchor="end">{r.label}</text>
               {!hide.a && bar(r.v1, y - 0.5, hh, CPAL[0])}
               {!hide.b && bar(r.v2, y + hh + 0.5, hh, CPAL[2])}
               {has3 && !hide.c && bar(r.v3, y + 2 * hh + 1.5, hh, CPAL[4])}
-              <text x={W - RX + 6} y={y + rowH / 2 + 3} fontSize="9.5" fill="#8b9ac0">
+              <text x={W - RX + 6} y={y + rowH / 2 + 3} fontSize="9.5" fill="var(--mut)">
                 {nums.join(' / ')}
               </text>
             </g>
@@ -2160,9 +2179,9 @@ function ParamsTab() {
           {d.items.filter(it => it.group === g).map(it => (
             <div className="prow" key={it.key}>
               <span>
-                {it.danger >= 2 && <span style={{ color: '#ef4444', marginRight: 4 }}
+                {it.danger >= 2 && <span style={{ color: 'var(--red)', marginRight: 4 }}
                   title="改动会直接影响入库严格度">●</span>}
-                {it.danger === 1 && <span style={{ color: '#f59e0b', marginRight: 4 }}
+                {it.danger === 1 && <span style={{ color: 'var(--amber)', marginRight: 4 }}
                   title="改前想清楚">●</span>}
                 <span title={it.flag}>{it.label}</span>
                 {it.overridden && <span className="note" style={{ marginLeft: 6 }}>已改</span>}

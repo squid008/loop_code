@@ -83,6 +83,65 @@
 
 > ⚠ **归档动作（2026-10-23）**：承诺只保留最近 15 个版本，当时已累积 **16** 条 ⇒ 已把最旧的 1 条**整段原文**搬进 `history/change_log_archive.md` ✓。
 
+> ⚠ **归档动作（2026-10-23 第二次）**：承诺只保留最近 15 个版本，当时已累积 **16** 条 ⇒ 已把最旧的 1 条**整段原文**搬进 `history/change_log_archive.md` ✓。
+
+## [1.48.0] — 2026-10-23
+
+> 主题：**浅色皮肤（两套皮肤）+ 状态动效 + 一批显示修复** ✓
+> 起因：用户「把 DataCausal 的浅色皮肤搞过来，我们也要两种皮肤」。
+
+### 一、浅色皮肤（移植自 `E:\datacausal`）
+
+* **唯一落点 `<html data-theme="dark|light">`**，配色全在 CSS 变量里 ⇒ 换肤只换变量、组件不动
+* 语义变量 **14 → 44 个**（补 `--glow / --panel / --line / --line2 / --bd2 / --hover / --fg2 /
+  --link / --code-* / --ok-* / --err-* / --warn-* / --seg-* / --sel-bg / --shadow / --tip-bg`）
+* `:root[data-theme="light"]` **全量覆盖** 44 个变量
+* **写死颜色替换 103 处**（`styles.css` 72 + `App.tsx` 31）→ `var(--xxx)`；
+  剩下 9 种是图表彩色（`#4ade80 / #c084fc / #22d3ee` 等，浅底可见，故意保留）
+* 顶栏「浅色 / 深色」按钮（**放在算子手册之后**），记忆在 `localStorage` 键 **`lc-theme`**
+* `main.tsx` 渲染前 `applyTheme()` ⇒ 浅色用户**不会先闪一帧深色**
+* 一并设 `color-scheme` ⇒ 滚动条/下拉框/复选框跟着变
+
+### 二、浅色下的三处"花"（都是替换时踩的，同一个根因）
+
+`var()` 是函数式值，**不能像 hex 那样拼透明度后缀** ⇒ 拼接会得到无效 CSS：
+
+| 症状 | 原写法 | 修法 |
+|---|---|---|
+| 回撤面积图**变黑** | `fill={s.color + '2e'}` | `fill={s.color}` + `fillOpacity={0.18}` |
+| 悬浮数值面板**看不清** | 底色写死 `rgba(12,18,34,.82)`，文字已变量化 ⇒ 深底深字 | 新增 `--tip-bg`（深=近黑 / 浅=近白） |
+| 档位/口径/进程标签**底色消失** | `background: c + '22'`、`borderColor: c + '55'` | `color-mix(in srgb, ${c} 13%, transparent)` |
+
+### 三、动效
+
+* **「挖掘中」卡片边框顺时针流光**：纯 CSS（`@property --sweep` + `conic-gradient` + `mask` 只留 1px 边框）
+  - 只在 `.card.run` 存在 ⇒ **不挖时零开销**；`prefers-reduced-motion` 自动关
+* **状态灯保持静态光晕**（试过"呼吸"，用户觉得浅色下像贴图 ⇒ 已回退），
+  但修掉了它「浅色发灰」的根因：`.logo` 的 `box-shadow` 用 `currentColor`，
+  而组件**只设了 `background` 没设 `color`** ⇒ 浅色下取到墨黑文字色。现在 `color` 也设为灯色 ✓
+
+### 四、显示修复（同期发现，非本版主题）
+
+* **家族串被截断**（用户："到价格后面就省略号了"）：`engine/loop_libdoc.py` 原来
+  `cat_s[:20] + '…'` ⇒ 阈值 20 → **40**，并**去重保序**（`财报、财报` 是 join 前没去重）
+  ⇒ 历史 F24/F52 在 **md 表格 + md 明细 + `library_entries.jsonl`** 三处一并补全
+* 因子库摘要列 `.sum` 的 `max-width` 160 → **280px**（只这一处用它）
+
+### 五、验证
+
+| 项 | 结果 |
+|---|---|
+| `tsc --noEmit` | 无错误 ✓ |
+| 前端接线守门 | 全过 ✓ |
+| 文案守门（`_test_ui_quotes`） | 全干净 ✓ |
+| 全量回归 | 见 §六 |
+
+### 六、发版回归
+
+（待 `release_check` 跑完回填）
+
+---
+
 ## [1.47.1] — 2026-10-23
 
 > 主题：**修 v1.46.0 的闪崩（B 方案把 `Node` 当列表迭代）** —— 已白跑 3 代 ✓
@@ -748,47 +807,6 @@ pool=all gen=163 rc=2 :: 命令行/文件用法错误（argparse）
 
 ★ **全量回归：59/59 全绿** ✓（**实测 6.7 分钟** ✓；最慢 `_test_e2e_l1l2` 113 s ·
 `_test_parallel_runner` 107 s · `_test_daily_dd` 36 s ✓）。
-跑前无挖掘在跑 ✓；跑完**未起引擎** ✓、控制文件已复位 ✓。
-
----
-
-## [1.38.4] — 2026-10-18
-
-> 主题：**修 v1.38.3 的 `ic_n` 全 NaN** ✗ —— 观测字段的**行对齐 bug**，引擎判定零改动 ✓。
-> 起因：v1.38.3 上线后跑 gen161，`loop_style_obs_ret.csv` 的 `ic_n` **716/716 全为空** ✗。
-
-### 一、根因（已用最小用例复现）
-
-`Rsub_s_n` 在 `loop_stage` 里是 **`[::FWD]` 调仓日视图**
-（`Rsub_s = Rsub[::FWD]` → 再 `neutralize_rows`），而 `_ic_n()` 首版直接传了**全期** `vals`
-⇒ `batch_ic` 内部广播失败：
-
-```
-ValueError: operands could not be broadcast together with shapes (24,300) (120,300)
-```
-
-⇒ 被 `except` 吞掉 ⇒ 返回 `None` ⇒ 整列 NaN（**不报错、不写日志**，属于最坏的失败形态 ✗）。
-
-### 二、修法
-
-`_ic_n()` 内先抽样：`vs = [v[::_S.FWD] for v in vals]`，再
-`batch_ic(vs, Rsub_s_n, Usub_s, None)`。**判定/排序零改动**（仍是纯观测）。
-
-### 三、验证
-
-| 项 | 结果 |
-|---|---|
-| 最小用例（`ai_test/_test_ic_n.py`） | `_ic_n` 与 `batch_ic([v[::FWD]], …)` **逐位一致**（0.43068699 ✓） |
-| 旧形态复现 | 确实抛 `ValueError`（24×300 vs 120×300）✓ |
-| `Rsub_s_n=None` | 返回 `None`（不写假值）✓ |
-| `py_compile` / 未定义名 | OK / **0 处**（185 文件）✓ |
-| 冒烟 `smoke_gen_only` | **4/4**（rc=0 · 无 Traceback/NameError · 全部 state SHA256 未变）✓ |
-| 全量回归 | 见 §四 |
-
-### 四、发版回归
-
-★ **全量回归：59/59 全绿** ✓（**实测 8.7 分钟** ✓；最慢 `_test_parallel_runner` 143 s ·
-`_test_e2e_l1l2` 139 s · `_test_daily_dd` 51 s ✓）。
 跑前无挖掘在跑 ✓；跑完**未起引擎** ✓、控制文件已复位 ✓。
 
 ---

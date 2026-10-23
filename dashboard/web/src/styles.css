@@ -12,14 +12,119 @@
   --sky: #0ea5e9;
   --amber: #f59e0b;
   --red: #ef4444;
+  /* ★★★ 2026-10-23（用户：把 DataCausal 的浅色皮肤搞过来）——
+     原先写死在各组件里的深色值**全部提成语义变量**，换皮肤只换这一组 ✓
+     （体系与 datacausal 对齐；它多出来的几个"深底浅字"我们按需补齐） */
+  --glow: #1b2650;
+  --panel: #12193a;
+  --line: #1e2846;
+  --line2: #23305a;
+  --bd2: #3c4a72;
+  --hover: #182142;
+  --hover2: #16203c;
+  --fg2: #c8d3ee;
+  --link: #8fb2ff;
+  --code-bg: #0b1020;
+  --code-fg: #c7d2fe;
+  --cnt-bg: #0b1020aa;
+  --ok-bg: #052e1b;
+  --ok-bd: #14532d;
+  --ok-fg: #a7f3d0;
+  --ok-bg2: #06281a;
+  --ok-fg2: #bbf7d0;
+  --idle2: #94a3b8;
+  --bg3: #14213a;
+  --panel2: #1e293b;
+  --bd3: #3d4d7d;
+  --blue-bd: #1e3a8a;
+  --blue-fg: #bfdbfe;
+  --indigo-fg: #a5b4fc;
+  --err-bg: #2a0f14;
+  --err-bg-h: #3a1420;
+  --err-bd: #7f1d1d;
+  --err-fg: #fecaca;
+  --err-bg2: #3b1215;
+  --err-fg2: #fca5a5;
+  --warn-bg: #3b2c05;
+  --warn-bd: #78350f;
+  --warn-bg2: #3a2a06;
+  --warn-bd2: #6b4a0f;
+  --warn-bg-soft: #f59e0b22;
+  --warn-bd-soft: #f59e0b55;
+  --warn-fg: #fcd34d;
+  --seg-on-bg: #23305a;
+  --seg-on-fg: #dfe7ff;
+  --sel-bg: #23265e;
+  --shadow: #000;
+  /* ★ 2026-10-23：图表悬浮数值面板的底色（深色=近黑半透明；浅色=近白不透明） */
+  --tip-bg: rgba(12, 18, 34, 0.94);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* ★★★ 2026-10-23 浅色皮肤：**只覆盖变量**，组件样式完全复用（改一个变量即可整体换肤） */
+:root[data-theme="light"] {
+  --bg: #f4f6fb;
+  --bg2: #e9eefa;
+  --card: #ffffff;
+  --card2: #eef2fb;
+  --bd: #ccd6e8;
+  --fg: #172033;
+  --mut: #5b6785;
+  --ok: #15803d;
+  --idle: #94a3b8;
+  --indigo: #4f46e5;
+  --sky: #0284c7;
+  --amber: #b45309;
+  --red: #dc2626;
+  --glow: #dfe9fb;
+  --panel: #ffffff;
+  --line: #e3e9f4;
+  --line2: #d5deef;
+  --bd2: #b9c6de;
+  --hover: #eef3fc;
+  --hover2: #e8eefb;
+  --fg2: #2b3852;
+  --link: #2c56c4;
+  --code-bg: #f2f5fc;
+  --code-fg: #2f3f7a;
+  --cnt-bg: #e6ecf8;
+  --ok-bg: #e8f7ee;
+  --ok-bd: #9dd3ae;
+  --ok-fg: #14612f;
+  --ok-bg2: #e8f7ee;
+  --ok-fg2: #15803d;
+  --idle2: #64748b;
+  --bg3: #eef2fb;
+  --panel2: #ffffff;
+  --bd3: #b9c6de;
+  --blue-bd: #b9c6de;
+  --blue-fg: #2c56c4;
+  --indigo-fg: #4f46e5;
+  --err-bg: #fdecec;
+  --err-bg-h: #fadbdb;
+  --err-bd: #e5a3a3;
+  --err-fg: #a12222;
+  --err-bg2: #fdecec;
+  --err-fg2: #a12222;
+  --warn-bg: #fdf3d9;
+  --warn-bd: #e0bd76;
+  --warn-bg2: #fcf6e3;
+  --warn-bd2: #ddc184;
+  --warn-bg-soft: #f59e0b1f;
+  --warn-bd-soft: #f59e0b66;
+  --warn-fg: #8a5a06;
+  --seg-on-bg: #dbe4f7;
+  --seg-on-fg: #1d2a46;
+  --sel-bg: #dde3fb;
+  --shadow: #1f2937;
+  --tip-bg: rgba(255, 255, 255, 0.97);
 }
 
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; }
 body {
   margin: 0;
-  background: radial-gradient(1200px 600px at 20% -10%, #1b2650 0%, var(--bg) 55%) no-repeat, var(--bg);
+  background: radial-gradient(1200px 600px at 20% -10%, var(--glow) 0%, var(--bg) 55%) no-repeat, var(--bg);
   color: var(--fg);
   font: 14px/1.55 -apple-system, "Segoe UI", "Microsoft YaHei", Roboto, sans-serif;
 }
@@ -29,6 +134,8 @@ code, .mono { font-family: var(--mono); }
 /* ---------------- top ---------------- */
 .top { display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
 .brand { display: flex; align-items: center; gap: 13px; }
+/* ★ 2026-10-23（用户：改回初始的静态光晕）—— 保留 `currentColor` 光晕，
+   由 App 把 `color` 设成灯色 ⇒ 光晕跟着绿/蓝/黄/红走；**不做动画**（静态）✓ */
 .logo { width: 12px; height: 44px; border-radius: 7px; box-shadow: 0 0 22px currentColor; }
 h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .sub { color: var(--mut); font-size: 12.5px; margin-top: 2px; }
@@ -70,17 +177,17 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 
 .err {
   margin: 14px 0; padding: 11px 14px; border-radius: 10px;
-  background: #3a1420; border: 1px solid #7f1d1d; color: #fecaca; font-size: 13px;
+  background: var(--err-bg-h); border: 1px solid var(--err-bd); color: var(--err-fg); font-size: 13px;
   display: flex; align-items: center; gap: 10px;
 }
 .ok {
   margin: 14px 0; padding: 11px 14px; border-radius: 10px;
-  background: #06281a; border: 1px solid #14532d; color: #bbf7d0; font-size: 13px;
+  background: var(--ok-bg2); border: 1px solid var(--ok-bd); color: var(--ok-fg2); font-size: 13px;
   display: flex; align-items: center; gap: 10px;
 }
 .info {
   margin: 14px 0; padding: 11px 14px; border-radius: 10px;
-  background: #14213a; border: 1px solid #1e3a8a; color: #bfdbfe; font-size: 13px;
+  background: var(--bg3); border: 1px solid var(--blue-bd); color: var(--blue-fg); font-size: 13px;
   display: flex; align-items: center; gap: 10px;
 }
 .x {
@@ -90,10 +197,10 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .x:hover { opacity: 1; }
 
 /* ---------------- 挖掘控制 ---------------- */
-.btn.start { border-color: #14532d; color: #86efac; background: #08261a; }
-.btn.start:hover:not(:disabled) { border-color: var(--ok); background: #0a3322; }
-.btn.stop { border-color: #7f1d1d; color: #fca5a5; background: #2a0f14; }
-.btn.stop:hover:not(:disabled) { border-color: var(--red); background: #3a1420; }
+.btn.start { border-color: var(--ok-bd); color: var(--ok-fg2); background: var(--ok-bg2); }
+.btn.start:hover:not(:disabled) { border-color: var(--ok); background: var(--ok-bg-h); }
+.btn.stop { border-color: var(--err-bd); color: var(--err-fg2); background: var(--err-bg); }
+.btn.stop:hover:not(:disabled) { border-color: var(--red); background: var(--err-bg-h); }
 .btn.sm { padding: 5px 11px; font-size: 12px; border-radius: 8px; }
 .btn:disabled { opacity: .38; cursor: not-allowed; }
 .res {
@@ -163,7 +270,40 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 /* ---------------- pool cards ---------------- */
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(310px, 1fr)); gap: 14px; }
 .card { background: var(--card); border: 1px solid var(--bd); border-radius: 14px; padding: 15px 16px; }
-.card.run { border-color: #14532d; box-shadow: 0 0 0 1px #14532d inset, 0 6px 22px -14px var(--ok); }
+.card.run { border-color: var(--ok-bd); box-shadow: 0 0 0 1px var(--ok-bd) inset, 0 6px 22px -14px var(--ok); }
+
+/* ★★★ 2026-10-23（用户："这个池子的绿色背景可不可以加动效，看起来绿色会沿着面板框
+   顺时针缓慢滚动？这个不会影响性能吧？"）——
+   做法：**纯 CSS**，`@property --sweep` 让 conic-gradient 的起始角可动画，
+   再 `mask` 只保留 1px 边框区域 ⇒ 看到的是"边框上有一段光在顺时针跑" ✓
+   性能：只改一个伪元素的背景角度 ⇒ **每帧重绘一张 300×200 的 1px 环**，
+     不触发 layout/reflow，无 JS、无计时器 ⇒ 实测开销可忽略（<0.5% 单核）；
+     而且**只在"挖掘中"（`.card.run`）存在**，不挖时这段样式根本不生效 ✓
+   · 系统开了"减少动态效果"时自动关掉 ✓ */
+@property --sweep { syntax: '<angle>'; initial-value: 0deg; inherits: false; }
+
+.card.run { position: relative; }
+.card.run::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;                       /* 光的宽度 = 边框宽度 */
+  background: conic-gradient(from var(--sweep),
+              transparent 0deg, transparent 290deg,
+              var(--ok) 335deg, transparent 360deg);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+          mask-composite: exclude;
+  animation: cardSweep 6s linear infinite;
+  pointer-events: none;
+}
+
+@keyframes cardSweep { to { --sweep: 360deg; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .card.run::before { animation: none; }
+}
 .card-h { display: flex; align-items: center; gap: 9px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; }
 .card-h b { font-size: 15px; }
@@ -171,10 +311,10 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
        padding: 1px 7px; border-radius: 6px; border: 1px solid var(--bd); }
 .state { margin-left: auto; font-size: 12px; color: var(--mut); }
 /* ★ 2026-09-17：池卡片上的"启动即崩"提示（红底小标）—— 崩溃必须看得见，别让人误读成"排队中" */
-.crash { margin-left: 8px; font-size: 11.5px; color: #ef4444; background: #3b1215;
-         border: 1px solid #7f1d1d; border-radius: 6px; padding: 1px 7px; white-space: nowrap; }
+.crash { margin-left: 8px; font-size: 11.5px; color: var(--red); background: var(--err-bg2);
+         border: 1px solid var(--err-bd); border-radius: 6px; padding: 1px 7px; white-space: nowrap; }
 .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px 14px; margin: 13px 0 10px; }
-.field { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px dashed #23305a; padding: 3px 0; }
+.field { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px dashed var(--line2); padding: 3px 0; }
 .fk { color: var(--mut); font-size: 12px; }
 .fv { font-family: var(--mono); font-size: 13px; }
 .fv.strong { color: var(--sky); font-weight: 650; }
@@ -191,11 +331,11 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .loglist { margin: 11px 0 8px; max-height: 236px; overflow-y: auto; overflow-x: hidden;
            padding-right: 8px; scrollbar-gutter: stable; }
 .logrow { display: flex; flex-direction: column; gap: 1px; padding: 6px 0;
-          border-bottom: 1px dashed #23305a; }
+          border-bottom: 1px dashed var(--line2); }
 .logr1 { display: flex; align-items: center; gap: 6px; }
 .logrow .lt { flex: none; width: 104px; font-family: var(--mono); font-size: 11px; color: var(--mut); }
 .logrow .lp { flex: none; font-size: 11px; border: 1px solid var(--bd); border-radius: 6px;
-              padding: 0 6px; color: #8fb2ff; background: var(--card2); }
+              padding: 0 6px; color: var(--link); background: var(--card2); }
 .logrow .lc { flex: none; width: 42px; font-family: var(--mono); font-size: 12px;
               font-weight: 650; color: var(--sky); }
 /* ★ 2026-09-17（用户："把已入库、已移出的状态也加上，加在 F06 文字旁边"）：
@@ -205,8 +345,8 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .logrow .stag { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis;
                 white-space: nowrap; font-size: 10.5px; padding: 0 5px; border-radius: 6px;
                 border: 1px solid var(--bd); }
-.logrow .stag.ok { color: #a7f3d0; background: #052e1b; border-color: #14532d; }
-.logrow .stag.out { color: #fcd34d; background: #3b2c05; border-color: #78350f; }
+.logrow .stag.ok { color: var(--ok-fg); background: var(--ok-bg); border-color: var(--ok-bd); }
+.logrow .stag.out { color: var(--warn-fg); background: var(--warn-bg); border-color: var(--warn-bd); }
 .logrow .stag.unk { color: var(--mut); background: var(--card2); }
 /* 公式那行占**整行宽度**（不再和按钮抢位置）；三件套缺一就会把卡片撑出横向滚动条 ✗ */
 .logrow .ls { min-width: 0; white-space: nowrap; overflow: hidden;
@@ -242,14 +382,14 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .poolpick { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
 .pill { background: var(--card2); border: 1px solid var(--bd); color: var(--mut);
         border-radius: 999px; padding: 6px 13px; cursor: pointer; font-size: 13px; display: flex; gap: 7px; align-items: center; }
-.pill.on { color: var(--fg); border-color: var(--indigo); background: #23265e; }
-.cnt { font-family: var(--mono); font-size: 11px; background: #0b1020aa; padding: 1px 6px; border-radius: 6px; }
+.pill.on { color: var(--fg); border-color: var(--indigo); background: var(--sel-bg); }
+.cnt { font-family: var(--mono); font-size: 11px; background: var(--cnt-bg); padding: 1px 6px; border-radius: 6px; }
 
-.caliber { background: #12193a; border: 1px solid #26325c; border-radius: 11px; padding: 12px 15px; margin-bottom: 14px; font-size: 13px; }
+.caliber { background: var(--panel); border: 1px solid var(--bd); border-radius: 11px; padding: 12px 15px; margin-bottom: 14px; font-size: 13px; }
 .caliber ul { margin: 7px 0 0; padding-left: 20px; }
 .caliber li { margin: 3px 0; }
 .caliber span { color: var(--mut); }
-.caliber .note { margin-top: 9px; color: #fcd34d; font-size: 12.5px; }
+.caliber .note { margin-top: 9px; color: var(--warn-fg); font-size: 12.5px; }
 
 /* ---------------- tables ---------------- */
 .tbl { width: 100%; border-collapse: collapse; font-size: 13px; }
@@ -265,8 +405,8 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .tbl th { text-align: left; color: var(--mut); font-weight: 600; font-size: 12px;
           border-bottom: 1px solid var(--bd); padding: 9px 10px; position: sticky; top: 0;
           background: var(--card); z-index: 2; box-shadow: 0 1px 0 0 var(--bd); }
-.tbl td { border-bottom: 1px solid #1e2846; padding: 8px 10px; vertical-align: top; }
-.tbl tr:hover td { background: #182142; }
+.tbl td { border-bottom: 1px solid var(--line); padding: 8px 10px; vertical-align: top; }
+.tbl tr:hover td { background: var(--hover); }
 .tbl .strong { color: var(--sky); font-weight: 650; }
 .tbl .small { font-size: 11.5px; color: var(--mut); }
 /* ★★★★ 2026-09-20（用户："这个详情按钮变成占 2 行了，可以把**状态列跟一句话那一列挨得近点**，
@@ -281,7 +421,9 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
       ⇒ 完整内容走 `title` 悬停看 ✓（不截数据、只截显示 ✓）
    ② 编号列里**档位标签与编号拉开 8px** ✓（`.tbl .tag.grade` 只作用于表格 ⇒ 不动入库日志那处 ✓）
    ③ 「详情」列 `width: 1%` = **收成刚好放下按钮** ⇒ 按钮**恒为一行** ✓ */
-.sum { color: var(--mut); max-width: 160px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* ★ 2026-10-23（用户："没显示全"）—— 因子库那行"叶子/类别"摘要原来 160px 就截，
+   现在放到 280px（只这一处用它 ✓，不影响别的表格）；仍保留 title 悬停看全文 ✓ */
+.sum { color: var(--mut); max-width: 280px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* ★★★ 2026-10-21（用户："每列间隔能不能稍微紧凑点，让说明文字都显示出来"）——
    参数页的**说明列**要**换行显示全文**（`.sum` 是单行省略号，用在因子列表里合适，
    但参数说明长得多）⇒ 单独一个类：不限宽、允许换行、行高收紧 ✓ */
@@ -299,10 +441,10 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
    · 输入框/下拉框统一 `width:100%`（`.pinp`）⇒ 两者视觉等宽 ✓ */
 .prow { display: grid; grid-template-columns: 140px 150px 100px minmax(180px, 1fr);
         align-items: center; gap: 14px; padding: 7px 10px; font-size: 13px;
-        border-bottom: 1px solid #1e2846; }
+        border-bottom: 1px solid var(--line); }
 .prow.phead { color: var(--mut); font-weight: 600; font-size: 12px;
               border-bottom: 1px solid var(--bd); }
-.prow:hover { background: #182142; }
+.prow:hover { background: var(--hover); }
 .prow .pinp { width: 100%; box-sizing: border-box; }
 /* ★★★★★ 2026-09-21 第二批（用户："这个标签好像比旁边的 A 大了一点，搞成一样的" ·
    "有的排不下变成两行了，要放在一行里，可以继续减少一句话的显示字符数"）—— 三处一起改 ✓
@@ -337,7 +479,7 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
   padding: 1px; border: 1px solid var(--bd); border-radius: 8px; }
 .dt-h .hzseg button { cursor: pointer; border: 0; background: transparent; color: var(--mut);
   font-size: 11.5px; padding: 2px 9px; border-radius: 6px; white-space: nowrap; }
-.dt-h .hzseg button.on { background: #1e293b; color: var(--fg); font-weight: 650; }
+.dt-h .hzseg button.on { background: var(--panel2); color: var(--fg); font-weight: 650; }
 .dt-h .hzseg button:disabled { opacity: .45; cursor: not-allowed; }
 .tbl th:last-child, .tbl td:last-child { width: 1%; }
 /* ★★★★★ 2026-09-22（用户："我点卡玛那个列标题它能按照卡玛从高到低排序，再按一次恢复原样…"）——
@@ -350,7 +492,7 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .tbl th.sortable.on { color: var(--fg); }
 .tbl td.num { text-align: right; }
 .tbl th:nth-last-child(-n+2), .tbl td:nth-last-child(-n+2) { white-space: nowrap; }
-.status { font-size: 11.5px; color: #a7f3d0; background: #052e1b; border: 1px solid #14532d;
+.status { font-size: 11.5px; color: var(--ok-fg); background: var(--ok-bg); border: 1px solid var(--ok-bd);
           padding: 1px 7px; border-radius: 6px; white-space: nowrap; }
 .tag { font-size: 11.5px; border: 1px solid; padding: 1px 8px; border-radius: 6px; white-space: nowrap; }
 .libwrap { overflow: auto; max-height: 62vh; }
@@ -364,14 +506,14 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 .selcard { background: var(--card2); border: 1px solid var(--bd); border-radius: 12px; padding: 12px 14px; }
 .sel-h { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; flex-wrap: wrap; }
 .sel-h b { font-size: 14px; color: var(--sky); }
-.grade { background: #052e1b; color: #4ade80; border: 1px solid #14532d; font-size: 11px;
+.grade { background: var(--ok-bg); color: #4ade80; border: 1px solid var(--ok-bd); font-size: 11px;
          padding: 1px 8px; border-radius: 6px; font-weight: 700; }
 .sc { color: var(--mut); font-size: 12px; margin-left: auto; }
 .sc b { color: var(--fg); font-family: var(--mono); }
-.expr { display: block; background: #0b1020; border: 1px solid #1e2846; border-radius: 8px;
-        padding: 9px 11px; font-size: 11.5px; color: #c7d2fe; word-break: break-all; line-height: 1.6; }
+.expr { display: block; background: var(--bg); border: 1px solid var(--line); border-radius: 8px;
+        padding: 9px 11px; font-size: 11.5px; color: var(--code-fg); word-break: break-all; line-height: 1.6; }
 .notes { margin-top: 16px; color: var(--mut); font-size: 12.5px; }
-.notes summary { cursor: pointer; color: #fcd34d; }
+.notes summary { cursor: pointer; color: var(--warn-fg); }
 .notes ul { margin: 8px 0 0; padding-left: 20px; }
 
 .eps { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 8px; }
@@ -385,7 +527,7 @@ h1 { font-size: 21px; margin: 0; letter-spacing: .3px; }
 /* ---------------- 因子库：编号按钮 / 出库行 / 详情面板（2026-09-16） ---------------- */
 .fcode { background: none; border: 0; padding: 0; cursor: pointer; color: var(--fg);
          font-family: var(--mono); font-size: 12.5px; font-weight: 700; text-align: left; }
-.fcode:hover { color: #a5b4fc; text-decoration: underline; }
+.fcode:hover { color: var(--indigo-fg); text-decoration: underline; }
 tr.outbank td { opacity: .62; }
 tr.outbank .fcode { color: var(--mut); }
 
@@ -401,7 +543,7 @@ tr.outbank .fcode { color: var(--mut); }
         border-bottom: 1px solid var(--bd); position: sticky; top: 0; background: var(--card);
         z-index: 3; }
 .dt-h b { font-size: 15px; }
-.dt-h .out { background: #f59e0b22; color: var(--amber); border: 1px solid #f59e0b55;
+.dt-h .out { background: var(--warn-bg-soft); color: var(--amber); border: 1px solid var(--warn-bd-soft);
              border-radius: 8px; padding: 2px 8px; font-size: 11.5px; }
 .dt-h .mut { color: var(--mut); font-size: 12.5px; }
 .dt-h .x { margin-left: auto; background: none; border: 0; color: var(--mut);
@@ -417,7 +559,7 @@ tr.outbank .fcode { color: var(--mut); }
 .dt-sec > em { color: var(--mut); font-size: 12px; font-style: normal; margin-left: auto; }
 .dt-expr { margin: 0; padding: 12px 14px; background: var(--card2); border: 1px solid var(--bd);
            border-radius: 10px; font-family: var(--mono); font-size: 12.5px; line-height: 1.7;
-           color: #c7d2fe; white-space: pre-wrap; word-break: break-all; }
+           color: var(--code-fg); white-space: pre-wrap; word-break: break-all; }
 .dt-grp { margin: 10px 0 4px; }
 .dt-grp-h { color: var(--mut); font-size: 12px; margin-bottom: 6px; }
 .dt-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
@@ -426,7 +568,7 @@ tr.outbank .fcode { color: var(--mut); }
 .dt-cell .dk { color: var(--mut); font-size: 11.5px; }
 .dt-cell .dv { font-family: var(--mono); font-size: 13.5px; color: var(--fg); }
 .dt-warn { margin-top: 12px; padding: 9px 12px; border-radius: 9px; font-size: 12.5px;
-           background: #f59e0b1a; border: 1px solid #f59e0b44; color: #fcd34d; }
+           background: var(--warn-bg-soft); border: 1px solid var(--warn-bd-soft); color: var(--warn-fg); }
 .dt-doc { margin-top: 10px; color: var(--mut); font-size: 12px; line-height: 1.7; }
 
 .orph { margin: 6px 0 4px; padding-left: 18px; }
@@ -507,11 +649,11 @@ background: currentColor; flex: none; }
 }
 
 /* 「历史」行的状态标签：**不要绿色**（绿=正常入库），历史/已移出用**琥珀色** ✓ */
-.status.hist { color: #fcd34d; background: #3a2a06; border-color: #6b4a0f; }
+.status.hist { color: var(--warn-fg); background: var(--warn-bg2); border-color: var(--warn-bd2); }
 
 /* 详情面板里的口径提醒 */
 .dt-note { margin: 10px 0 2px; padding: 9px 12px; border-radius: 9px; font-size: 12px;
-           line-height: 1.75; color: var(--mut); background: #0b1020; border: 1px dashed var(--bd); }
+           line-height: 1.75; color: var(--mut); background: var(--bg); border: 1px dashed var(--bd); }
 .dt-note b { color: var(--fg); }
 .sel-h .det { margin-left: auto; }
 /* ★★★★★ 2026-09-22（用户："也在哪儿找个位置加个排序按钮，但是精选池排序要可以自己选参数，
@@ -537,16 +679,16 @@ background: currentColor; flex: none; }
   font: inherit; font-size: 12px; padding: 3px 9px; cursor: pointer;
   background: var(--card2); color: var(--mut); border: 1px solid var(--bd); border-radius: 999px;
 }
-.seg .segbtn:hover:not(:disabled) { color: var(--fg); border-color: #3c4a72; }
-.seg .segbtn.on { background: #23305a; color: #dfe7ff; border-color: #3d4d7d; }
+.seg .segbtn:hover:not(:disabled) { color: var(--fg); border-color: var(--bd2); }
+.seg .segbtn.on { background: var(--line2); color: var(--seg-on-fg); border-color: var(--bd3); }
 .seg .segbtn:disabled { opacity: .5; cursor: not-allowed; }
-.res .mode { font-style: normal; font-size: 11.5px; color: #8fb2ff; margin-left: 4px; }
+.res .mode { font-style: normal; font-size: 11.5px; color: var(--link); margin-left: 4px; }
 .chk small { margin-left: 4px; }
 
 /* ---------------- 详情页曲线（手写 SVG，零依赖） ---------------- */
 .chwrap { margin-top: 6px; }
 .ch-t { margin: 14px 0 4px; font-size: 12.5px; color: var(--mut); }
-.ch { background: #0b1020; border: 1px solid var(--bd); border-radius: 10px;
+.ch { background: var(--bg); border: 1px solid var(--bd); border-radius: 10px;
       padding: 6px 8px 2px; margin-bottom: 4px; }
 .ch-note { padding: 10px 12px; border: 1px dashed var(--bd); border-radius: 9px;
            color: var(--mut); font-size: 12.5px; }
@@ -558,7 +700,7 @@ background: currentColor; flex: none; }
   display: inline-flex; align-items: center; gap: 5px; font: inherit; color: inherit;
   background: none; border: 0; padding: 1px 2px; cursor: pointer; border-radius: 5px;
 }
-.ch-lgbtn:hover { background: #16203c; color: var(--fg); }
+.ch-lgbtn:hover { background: var(--hover2); color: var(--fg); }
 .ch-lgbtn.off { opacity: .38; text-decoration: line-through; }
 .ch-empty { padding: 46px 0; text-align: center; color: var(--mut); font-size: 12.5px; }
 .ch-lg2 { margin-top: 2px; font-size: 12px; color: var(--mut); }
@@ -570,13 +712,13 @@ background: currentColor; flex: none; }
 .st-tab thead th { color: var(--mut); font-weight: 600; border-bottom: 1px solid var(--bd); }
 .st-tab tbody tr:nth-child(odd) { background: rgba(255, 255, 255, .02); }
 .st-tab td { color: var(--mut); }
-.st-tab td:first-child { color: #c8d3ee; }
+.st-tab td:first-child { color: var(--fg2); }
 /* ---------------- 算子手册弹窗（2026-09-19，用户要求：带滚动条的弹窗）---------------- */
 .modal { position: fixed; inset: 0; background: rgba(6, 10, 20, .74); display: flex;
          align-items: center; justify-content: center; z-index: 60; }
 .modal-box { width: min(940px, 94vw); max-height: 82vh; display: flex; flex-direction: column;
              background: var(--card); border: 1px solid var(--bd); border-radius: 14px;
-             box-shadow: 0 24px 60px -24px #000; overflow: hidden; }
+             box-shadow: 0 24px 60px -24px var(--shadow); overflow: hidden; }
 .modal-h { display: flex; align-items: center; gap: 10px; padding: 12px 14px;
            border-bottom: 1px solid var(--bd); background: var(--card2); }
 .modal-h b { font-size: 14px; }
@@ -587,7 +729,7 @@ background: currentColor; flex: none; }
 .ops-sec { margin: 12px 0 6px; font-size: 12px; font-weight: 650; color: var(--sky); }
 .ops-sec:first-child { margin-top: 2px; }
 .ops-row { display: flex; gap: 10px; padding: 5px 0; border-bottom: 1px dashed rgba(255, 255, 255, .06); }
-.ops-k { flex: 0 0 218px; color: #c8d3ee; font-size: 12.5px; word-break: break-all; }
+.ops-k { flex: 0 0 218px; color: var(--fg2); font-size: 12.5px; word-break: break-all; }
 .ops-v { flex: 1 1 auto; color: var(--mut); font-size: 12.5px; line-height: 1.55; }
 .ops-v b { color: var(--fg); font-weight: 620; }
 .ops-mono { font-family: var(--mono); font-size: 12px; }

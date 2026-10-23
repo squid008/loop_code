@@ -154,7 +154,13 @@ def _lib_rows(gen, rows, added_exprs, expr2nd, no, pool_tags, strip_grades, hori
             continue
         nd = expr2nd.get(expr)
         cat_s = str(r['cat']); leaf_s = str(r['leaf'])
-        fam = (cat_s[:20] + '…') if len(cat_s) > 20 else (cat_s or '未分类')
+        # ★ 2026-10-23（用户："家族到价格后面就省略号了，没显示全"）——
+        #   原来 `cat_s[:20]` 就截 ⇒ 8 个类别必然被切（"资金流、振幅、风格、财报、财报、量、价格…"）✗
+        #   ① 先去重保序（同一族出现两次是 join 前没去重，如 F52 的"财报、财报"）
+        #   ② 阈值 20 → **40**（类别串最长也就 8×4 字左右，够用）
+        if cat_s:
+            cat_s = '、'.join(dict.fromkeys([x for x in cat_s.split('、') if x]))
+        fam = (cat_s[:40] + '…') if len(cat_s) > 40 else (cat_s or '未分类')
         short = expr if len(expr) <= 44 else expr[:41] + '…'
         met = ('IC %.4f / IC_IR %.3f / 年化超额 %+.1f%% / 回撤 %.1f%% / '
                'Calmar %.3f / Sharpe %.3f / 最近年 %+.1f%% / 单期换手 %.1f%% / 负年 %d'

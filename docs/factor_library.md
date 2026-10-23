@@ -47,7 +47,7 @@
 | F21 | gen50 | 风格、风格、财报、财报 | max(add(barra_residual_volatility, barra_… | 已入库(auto) ⚠️冗余⑤ |
 | F22 | gen50 | 财报、风格、风格 | max(ts_min20(cs_rank(add(fa_ocf_yoy, barr… | 已入库(auto) ⚠️冗余⑤ |
 | F23 | gen50 | 风格、风格 | max(ts_min20(cs_rank(barra_leverage)), ba… | 已入库(auto) ⚠️冗余④ |
-| F24 | gen51 | 风格、财报、资金流、风格、资金流、风格、… | min(sub(barra_non_linear_size, min(div(fa… | 已入库(auto) |
+| F24 | gen51 | 风格、财报、资金流 | min(sub(barra_non_linear_size, min(div(fa… | 已入库(auto) |
 | F25 | gen52 | 风格、风格 | max(ts_mean150(corr100(ts_rank100(cs_rank… | 已入库(auto) |
 | F26 | gen58 | 风格 | ts_delta120(barra_non_linear_size) | 已入库(auto) |
 | F27 | gen58 | 资金流、振幅 | corr100(mf_m_sqty, hl_ratio) | 已入库(auto) |
@@ -75,7 +75,7 @@
 | F49 | gen165 | 量 | ts_std100(ts_resi5(ln_volume)) | 已入库(auto) |
 | F50 | gen166 | 财报、资金流、风格 | ema26(div(fa_ocf_ta, div(mf_l_buy, barra_… | 已入库(auto) |
 | F51 | gen168 | 风格、风格、资金流 | div(ts_mean200(sub(barra_non_linear_size,… | 已入库(auto) |
-| F52 | gen176 | 资金流、振幅、风格、财报、财报、量、价格… | div(div(max(add(corr200(mf_m_bqty, hl_rat… | 已入库(auto) |
+| F52 | gen176 | 资金流、振幅、风格、财报、量、价格 | div(div(max(add(corr200(mf_m_bqty, hl_rat… | 已入库(auto) |
 
 > 标记 `⚠️冗余①~⑤` = 库内近重复组成员（口径与明细见下方「库内冗余对清单」）；**每组按 1 个独立因子计**。
 
@@ -392,7 +392,7 @@ max(ts_min20(cs_rank(barra_leverage)), barra_residual_volatility)
 min(sub(barra_non_linear_size, min(div(fa_ocf_yoy, mf_s_bqty), ts_max100(barra_growth))), min(ts_mean5(corr100(mf_s_sqty, barra_liquidity)), ts_rank100(corr200(mf_m_bqty, barra_momentum))))
 ```
 - **符号 `sign`：`-1`**（★ 因子值须乘它才是"越大越好"的方向；不乘 ⇒ 反向选股）
-- 家族：风格、财报、资金流、风格、资金流、风格、…（auto）
+- 家族：风格、财报、资金流（auto）
 - 叶子：barra_non_linear_size、fa_ocf_yoy、mf_s_bqty、barra_growth、mf_s_sqty、barra_liquidity、mf_m_bqty、barra_momentum
 - 骨架：`min(sub(barra_non_linear_size,min(div(fa_ocf_yoy,mf_s_bqty),ts_max(barra_growth))),min(ts_mean(corr(mf_s_sqty,barra_liquidity)),ts_rank(corr(mf_m_bqty,barra_momentum))))`
 - 池标签：**`csi_all_only`** —— **只有全A通过** ⇒ 小盘/流动性溢价嫌疑，**指数增强不可用**
@@ -779,7 +779,7 @@ div(ts_mean200(sub(barra_non_linear_size, barra_beta)), mf_l_bqty)
 div(div(max(add(corr200(mf_m_bqty, hl_ratio), ts_mean10(barra_beta)), mul(fa_fcf_yield, corr200(fa_np_margin, ln_volume))), ts_mean10(vwap)), mf_s_sqty)
 ```
 - 符号 `sign`：**未记录**（缺失时不臆造，见 roadmap §8.45 铁律）
-- 家族：资金流、振幅、风格、财报、财报、量、价格…（auto）
+- 家族：资金流、振幅、风格、财报、量、价格（auto）
 - 叶子：mf_m_bqty、hl_ratio、barra_beta、fa_fcf_yield、fa_np_margin、ln_volume、vwap、mf_s_sqty
 - 骨架：`div(div(max(add(corr(mf_m_bqty,hl_ratio),ts_mean(barra_beta)),mul(fa_fcf_yield,corr(fa_np_margin,ln_volume))),ts_mean(vwap)),mf_s_sqty)`
 - 池标签：**`csi_all_only`** —— **只有全A通过** ⇒ 小盘/流动性溢价嫌疑，**指数增强不可用**
