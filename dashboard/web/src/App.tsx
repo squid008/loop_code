@@ -176,6 +176,14 @@ export default function App() {
   }, [rounds, loadAll])
 
   const doStop = useCallback(async (pool?: string) => {
+    // ★★★ 2026-10-23（用户：点全部停止却变成一键启动）——
+    //   根因：没在跑时「全部停止」是 **disabled**（点了毫无反馈）⇒ 用户以为点到了，其实点到
+    //   旁边绿色的「启动」⇒ 启动 ⇒ 再点一次停止才真停下 ✗
+    //   ⇒ 按钮不再按 running 置灰（永远可点），这里给一句明确提示 ⇒ 有反馈就不会误操作 ✓
+    if (!pool && !mine?.running) {
+      say('info', '当前没有在运行，无需停止（刚才可能点到了旁边的启动按钮）')
+      return
+    }
     setMineBusy(true)
     try {
       const r = await api.mineStop(pool)
@@ -194,7 +202,8 @@ export default function App() {
       say('err', `停止失败：${e instanceof Error ? e.message : String(e)}`)
       await loadAll(true)
     } finally { setMineBusy(false) }
-  }, [loadAll])
+    // ⚠ 依赖里加 `mine?.running`：上面的"未运行就直接提示"读它，漏了会用**过期闭包**判断 ✗
+  }, [loadAll, mine?.running])
 
   // 单独启动 / 恢复某个池（调度器不在时会自动重启）
   // ★★★★★ 2026-09-23（用户："我单池点启动，面板上轮数我填了 50，怎么轮数上限还是 1 呢？"）：
@@ -350,7 +359,12 @@ export default function App() {
           {/* ★★★ 2026-09-16（用户："把轮转/并行按钮都隐藏了，先直接默认并行吧"）：
               模式按钮**撤掉** —— 看板一律并行（并行数按内存自动算、面板共享默认开、预算不暴露）✓
               ⚠ 想回到"轮转"：CLI/API 仍支持（`--exec_mode=rotate`），随时能再放出来 ✓ */}
-          <button className="btn start" disabled={mineBusy || !!mine?.running} onClick={() => doStart([])}
+          {/* ★★★ 2026-10-23（用户：点全部停止却变成一键启动）——
+              根因不是逻辑：没在跑时「停止」是 **disabled**（点了毫无反应）⇒ 用户以为点到了、
+              实际点到旁边绿色的「启动」⇒ 启动 ⇒ 再点一次停止才真停下 ✗
+              ⇒ 两个按钮都改成「**永远可点、点了必有反馈**」：不该操作时给一句明确提示，
+                不再出现"点了没反应因此乱点"的情况 ✓ */}
+          <button className="btn start" disabled={mineBusy} onClick={() => doStart([])}
                   title={mine?.running
                     /* ★ 2026-09-23（统一口径）：这里原来显示命令行的 `--max_parallel`（= 天花板，
                        实测显示"并行×1"而真实跑 2 个 ✗）⇒ 改显示**此刻真能跑几个**
@@ -363,7 +377,7 @@ export default function App() {
                       '之前单独停止过的池也会重新加入；已经在跑的话就地更新设置'}>
             {mine?.running ? '已在运行' : (mineBusy ? '处理中…' : '一键启动全部')}
           </button>
-          <button className="btn stop" disabled={mineBusy || !mine?.running} onClick={() => doStop()}
+          <button className="btn stop" disabled={mineBusy} onClick={() => doStop()}
                   title={mine?.running
                     ? '全部停止：结束当前那一代（作废、下次重跑）。若本轮有代跑完，调度器会先自动收尾审查再退出；一代都没跑完就直接退出，不做无谓的收尾'
                     : '当前没有在运行，无需停止'}>
