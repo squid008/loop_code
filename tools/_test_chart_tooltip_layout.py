@@ -94,7 +94,21 @@ print('\n【4】悬停四件套在位（整块功能别被后来改动删掉 ✗
 chk('十字准线（随鼠标走的竖虚线 ✓）', re.search(r'<line x1=\{hx\} y1=\{PT\}', src) is not None)
 chk('每条可见曲线的**锚点圆点** ✓（`cx={hx} cy={Y(值)}` + 独立 key `hd…` ✓）',
     ('cx={hx} cy={Y(r.v as number)}' in src) and ('`hd${k}`' in src))
-chk('半透明底（后面曲线能透出来 ✓）', "fill=\"rgba(12,18,34,0.82)\"" in src)
+# ★ 2026-10-23：底色已**变量化**（`--tip-bg`，深/浅各一套）⇒ 原来死盯字面量会误判 ✗
+#   改为：① fill 走 `var(--tip-bg)` ② styles.css 里该变量确实是 **半透明 rgba（alpha<1）** ✓
+_CSS = io.open(os.path.join(ROOT, 'dashboard', 'web', 'src', 'styles.css'),
+               encoding='utf-8').read()
+_m_tip = re.search(r'--tip-bg:\s*(rgba?\([^)]*\))', _CSS)
+_alpha_ok = False
+if _m_tip:
+    try:
+        _parts = [x.strip() for x in _m_tip.group(1).rstrip(')').split('(')[-1].split(',')]
+        _alpha_ok = len(_parts) == 4 and float(_parts[3]) < 1.0
+    except (ValueError, IndexError):
+        _alpha_ok = False
+chk('半透明底（fill 走 --tip-bg，且该变量 alpha<1 ⇒ 曲线能透出来 ✓）',
+    'fill="var(--tip-bg)"' in src and _alpha_ok,
+    'var(--tip-bg) 缺失，或 styles.css 里它不是半透明 rgba')
 chk('不抢鼠标（pointerEvents none ✓）', 'pointerEvents="none"' in src)
 chk('透明捕获面（空处也响应 ✓）', 'fill="transparent"' in src)
 chk('移开就收起（onMouseLeave ✓）', 'onMouseLeave={() => setHov(null)}' in src)

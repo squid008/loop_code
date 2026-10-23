@@ -57,7 +57,7 @@
   --sel-bg: #23265e;
   --shadow: #000;
   /* ★ 2026-10-23：图表悬浮数值面板的底色（深色=近黑半透明；浅色=近白不透明） */
-  --tip-bg: rgba(12, 18, 34, 0.94);
+  --tip-bg: rgba(12, 18, 34, 0.82);
   --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
