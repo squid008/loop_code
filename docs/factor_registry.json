@@ -1,14 +1,14 @@
 {
  "schema": 1,
- "generatedAt": "2026-10-20 16:29:05",
+ "generatedAt": "2026-10-25 00:13:48",
  "source": "docs/factor_library*.md（编号/代数/家族/一句话/公式/指标）+ engine/loop_state*.pkl（入库 Node 结构，权威口径）",
  "why": "pkl 不进 git ⇒ 换机器（家里 pull）时本文件是\"重建 facs/指标/曲线\"的**唯一入口** ✓",
  "counts": {
   "all": {
-   "listed": 51,
-   "overview": 51,
-   "detail": 51,
-   "bank": 51,
+   "listed": 52,
+   "overview": 52,
+   "detail": 52,
+   "bank": 52,
    "bank_only": 0
   },
   "300": {
@@ -46,8 +46,8 @@
    "expr": "ts_mean150(corr100(ts_mean5(div(mf_m_bqty, hl_ratio)), ts_mean60(ts_mean5(turn_ratio))))"
   }
  ],
- "n_factors": 72,
- "n_with_node": 72,
+ "n_factors": 73,
+ "n_with_node": 73,
  "factors": [
   {
    "pool": "all",
@@ -1576,7 +1576,7 @@
    "pool": "all",
    "no": "F24",
    "gen": 51,
-   "family": "风格、财报、资金流、风格、资金流、风格、…",
+   "family": "风格、财报、资金流",
    "oneLiner": "min(sub(barra_non_linear_size, min(div(fa…",
    "status": "已入库(auto)",
    "expr": "min(sub(barra_non_linear_size, min(div(fa_ocf_yoy, mf_s_bqty), ts_max100(barra_growth))), min(ts_mean5(corr100(mf_s_sqty, barra_liquidity)), ts_rank100(corr200(mf_m_bqty, barra_momentum))))",
@@ -3118,7 +3118,7 @@
    "pool": "all",
    "no": "F52",
    "gen": 176,
-   "family": "资金流、振幅、风格、财报、财报、量、价格…",
+   "family": "资金流、振幅、风格、财报、量、价格",
    "oneLiner": "div(div(max(add(corr200(mf_m_bqty, hl_rat…",
    "status": "已入库(auto)",
    "expr": "div(div(max(add(corr200(mf_m_bqty, hl_ratio), ts_mean10(barra_beta)), mul(fa_fcf_yield, corr200(fa_np_margin, ln_volume))), ts_mean10(vwap)), mf_s_sqty)",
@@ -3208,6 +3208,86 @@
      {
       "op": "mf_s_sqty",
       "args": []
+     }
+    ]
+   }
+  },
+  {
+   "pool": "all",
+   "no": "F53",
+   "gen": 218,
+   "family": "风格、成交额、财报、资金流",
+   "oneLiner": "ts_std150(corr200(sub(mul(barra_beta, tur…",
+   "status": "已入库(auto)",
+   "expr": "ts_std150(corr200(sub(mul(barra_beta, turnover), mul(barra_liquidity, fa_roe)), div(cs_scale(mf_l_sqty), fa_lev)))",
+   "sign": null,
+   "poolTag": "csi500_1000_all",
+   "note": null,
+   "ic": 0.0124,
+   "icIr": 0.196,
+   "annEx": 0.039,
+   "dd": -0.06,
+   "calmar": 0.651,
+   "sharpe": 0.952,
+   "recentYear": 0.027999999999999997,
+   "turn": 0.099,
+   "inBank": true,
+   "node": {
+    "op": "ts_std150",
+    "args": [
+     {
+      "op": "corr200",
+      "args": [
+       {
+        "op": "sub",
+        "args": [
+         {
+          "op": "mul",
+          "args": [
+           {
+            "op": "barra_beta",
+            "args": []
+           },
+           {
+            "op": "turnover",
+            "args": []
+           }
+          ]
+         },
+         {
+          "op": "mul",
+          "args": [
+           {
+            "op": "barra_liquidity",
+            "args": []
+           },
+           {
+            "op": "fa_roe",
+            "args": []
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "op": "div",
+        "args": [
+         {
+          "op": "cs_scale",
+          "args": [
+           {
+            "op": "mf_l_sqty",
+            "args": []
+           }
+          ]
+         },
+         {
+          "op": "fa_lev",
+          "args": []
+         }
+        ]
+       }
+      ]
      }
     ]
    }

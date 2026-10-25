@@ -24,7 +24,7 @@
 > 而 `--decorr` / `--dup_ex_corr` 正是拿 `bank` 当对照集的，对照集变弱，引擎更容易重复挖，又被拦，就成了死循环。
 > 所以：**`bank` 照旧增长（它是对照集，越大去重越强）**，另设本精选层。
 
-## 精选清单（10 个）
+## 精选清单（11 个）
 
 > ★ **表达式是完整的**（不截断）—— 本文件可直接给下游用，不必回各池库翻。
 > 需要**可复制的全文** / `sign` / h5 路径 → 见下方「[精选因子明细](#精选因子明细可直接复制使用)」。
@@ -38,9 +38,10 @@
 | 5 | `F25` | **A** | **0.537** | +3.9% | 1.295 | `max(ts_mean150(corr100(ts_rank100(cs_rank(barra_leverage)), ts_min20(cs_rank(barra_leverage)))), barra_residual_volatility)` |
 | 6 | `F07_1000` | **A** | **0.464** | +6.3% | 0.506 | `ts_mean200(mul(add(sub(overnight, barra_beta), ts_mean60(barra_residual_volatility)), ts_max20(ts_mean60(barra_size))))` |
 | 7 | `F50` | **A** | **0.417** | +4.3% | 0.621 | `ema26(div(fa_ocf_ta, div(mf_l_buy, barra_liquidity)))` |
-| 8 | `F33` | **A** | **0.373** | +3.9% | 0.847 | `ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_beta), ts_std150(mf_x_bqty))))` |
-| 9 | `F05_500` | **A** | **0.332** | +2.3% | 0.802 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` |
-| 10 | `F21` | **A** | **0.305** | +2.2% | 0.868 | `max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_ocf_yoy, fa_gm))), barra_residual_volatility))` |
+| 8 | `F53` | **A** | **0.402** | +3.8% | 0.651 | `ts_std150(corr200(sub(mul(barra_beta, turnover), mul(barra_liquidity, fa_roe)), div(cs_scale(mf_l_sqty), fa_lev)))` |
+| 9 | `F33` | **A** | **0.373** | +3.9% | 0.847 | `ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_beta), ts_std150(mf_x_bqty))))` |
+| 10 | `F05_500` | **A** | **0.332** | +2.3% | 0.802 | `corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)` |
+| 11 | `F21` | **A** | **0.305** | +2.2% | 0.868 | `max(add(barra_residual_volatility, barra_leverage), max(ts_min20(cs_rank(div(fa_ocf_yoy, fa_gm))), barra_residual_volatility))` |
 
 ---
 
@@ -182,7 +183,26 @@ ema26(div(fa_ocf_ta, div(mf_l_buy, barra_liquidity)))
 | 剥风格后 Calmar（日频）/ 超额 | **0.417** / +4.3% |
 | 原（未剥）Calmar / 超额 / IC | 0.621 / +8.9% / 0.010 |
 
-### 8. `F33`
+### 8. `F53`
+
+**完整表达式**
+```
+ts_std150(corr200(sub(mul(barra_beta, turnover), mul(barra_liquidity, fa_roe)), div(cs_scale(mf_l_sqty), fa_lev)))
+```
+
+| 项 | 值 |
+|---|---|
+| **`sign`（方向，必须乘）** | **-1** |
+| 因子值 h5 | `facs/17/F53/values.h5` |
+| 快查副本（uint8，截面秩） | `facs/17/F53/values_q.h5` |
+| 形状 | 3309 日 × 5384 股 |
+| 来源 | `lib:all:genNone` |
+| 建于 | 2026-10-24 22:20:17 |
+| 剥风格判定 | **A 独立有效**（剥掉 lncap+lnamt 后**日频** Calmar 0.402 ≥ 0.30）|
+| 剥风格后 Calmar（日频）/ 超额 | **0.402** / +3.8% |
+| 原（未剥）Calmar / 超额 / IC | 0.651 / +3.9% / 0.012 |
+
+### 9. `F33`
 
 **完整表达式**
 ```
@@ -201,7 +221,7 @@ ts_delta120(add(ts_max20(ts_max100(barra_non_linear_size)), div(cs_rank(barra_be
 | 剥风格后 Calmar（日频）/ 超额 | **0.373** / +3.9% |
 | 原（未剥）Calmar / 超额 / IC | 0.847 / +11.3% / 0.027 |
 
-### 9. `F05_500`
+### 10. `F05_500`
 
 **完整表达式**
 ```
@@ -220,7 +240,7 @@ corr100(mul(mf_m_sqty, ts_std60(mf_x_buy)), mf_m_sqty)
 | 剥风格后 Calmar（日频）/ 超额 | **0.332** / +2.3% |
 | 原（未剥）Calmar / 超额 / IC | 0.802 / +4.0% / 0.009 |
 
-### 10. `F21`
+### 11. `F21`
 
 **完整表达式**
 ```
