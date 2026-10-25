@@ -1,8 +1,68 @@
-# change_log 归档（v1.39.1 及以前）
+# change_log 归档（v1.40.0 及以前）
 
 > 本文件由 `ai_test/_cl_split.py` 从 `change_log.md` 切出（2026-09-27）——
 > 目的是让主 `change_log.md` 只保留近期版本、可读可查（原文**一字未改** ✓）。
 > 新增条目请照旧写进主 `change_log.md` 的**最新**位置 ✓。
+
+---
+
+## [1.40.0] — 2026-10-19
+
+> 主题：**新增「剥风格独立通道」（通道 B）** ✓ —— 纯 alpha 型因子的第二条入库路。
+> 起因：用户 _"同意改造，把剥风格口径变成独立通道"_（在 `ic_n` 排序实验之后）。
+
+### 一、为什么必须分开（数据）
+
+现有入库是 **AND**：`calmar2 ≥ 0.701`（含风格 beta）∧ `strip_calmar ≥ 0.15`（剥风格 alpha）
+∧ `neg_yr ≤ 2` … ⇒ 实际要求"**既有 beta 又有 alpha**"，而实测两类**不可兼得**：
+
+| 代 | 排序 | L2 候选 | `strip_calmar` 中位 | max | >0 条数 | `calmar2` 中位 |
+|---|---|---|---|---|---|---|
+| gen162 | `new`（stab） | 28 | −0.160 | −0.090 | **0** | 0.397 |
+| gen163 | `ic_n` | 30 | −0.139 | **+1.150** | **4** | −0.069 |
+
+gen163 最强的一条 **`ts_std100(ln_volume)`**：`strip_calmar` **1.150** /
+`strip_ann_ex` **6.93%** / `strip_sharpe` **1.349** / `strip_dd` −7.78%，
+但 `calmar2` 仅 0.204、`neg_yr` 4 ⇒ 被 AND 门槛拒（用户已拿去独立复测）。
+
+### 二、阈值标定（`loop_archive` ⨝ `loop_strip_style`，gen>=100 共 1496 条）
+
+* `strip_calmar` 中位 **−0.167**、99 分位 0.038；
+* `>=0.15` 仅 **5** 条 · `>=0.3` **4** 条 · **`>=0.5` 仅 1 条**（正是上面那条）；
+* 历史入库者（12 条有剥风格观测）`strip_calmar` 中位 −0.014、max 0.604。
+⇒ 取**极严档**：`0.5 / 3% / 0.8`（**不是**"放宽门槛凑数量"）。
+
+### 三、改动
+
+* `engine/loop_l2.py`
+  * 新增 **`strip_channel_b_ok(rr, strip_rec, args, mec)`** —— 纯判定，
+    **不要求**原始 calmar / 年超额 / neg_yr（只要求剥风格口径自身 + `|ic|` + 相关性）
+  * 新增 **`_apply_strip_channel_b(...)`** —— 接线 + 审计打印（从 `_l2_candidates` 抽出，守 R1）
+  * 通道 B 在 `_mec`（与库收益流相关性）**之后**判定 ⇒ 与主通道**同一去重口径** ✓
+* `engine/loop_engine.py`：新增 5 个参数（`--strip_channel_b` 默认关；阈值默认 0.5/0.03/0.8/0.02）
+* `tools/run_tracks.py`：生产 `extra` 启用通道 B（阈值同上）
+* ⚠ **不加 `--strip_channel_b` ⇒ 行为完全不变** ✓
+
+### 四、验证
+
+| 项 | 结果 |
+|---|---|
+| 单元（`ai_test/_test_strip_channel_b.py`） | **11/11**：默认关 / 各阈值边界（含 `=` 不通过）/ 相关性超限 / 缺字段不抛 ✓ |
+| `py_compile` / 未定义名 | OK / **0 处** ✓ |
+| R1 审计 | 回到 1 个**既存**违规（`build_fa_pit.main()` 150 行）✓；中途 `_l2_candidates` 被顶到 126 行，已抽函数修回 **120** ✓ |
+| 冒烟 `smoke_gen_only` | **4/4**（rc=0 · 无 Traceback/NameError · 全部 state SHA256 未变）✓ |
+| 全量回归 | 见 §五 |
+
+### 五、发版回归
+
+* **第 1 轮：58/59** ✗ —— 唯一失败 `_test_gen_determinism.py`（同 seed 逐行一致）。
+  **根因是守门自身缺陷**，不是本次改动：它构造子进程 env 时**没固定 `PYTHONHASHSEED`**
+  （`tools/_pool_traj.py` 早就设了 ✓，本文件漏了），而差异行只是 `leaf_hist` 的
+  **dict 键序**（`amplitude`/`true_range` 顺序互换，**内容完全相同**）⇒ 它变成了"测哈希顺序"。
+  ⇒ 已给该守门补 `PYTHONHASHSEED='0'`（含注释说明原因），单独重跑**通过** ✓。
+* **第 2 轮：59/59 全绿** ✓（**实测 8.1 分钟** ✓；最慢 `_test_parallel_runner` 167 s ·
+  `_test_e2e_l1l2` 123 s · `_test_daily_dd` 37 s ✓）。
+  跑前无挖掘在跑 ✓；跑完**未起引擎** ✓、控制文件已复位 ✓。
 
 ---
 

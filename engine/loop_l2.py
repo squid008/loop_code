@@ -504,6 +504,55 @@ def _drop_hist_skipped(top, args):
     return top
 
 
+# ============================================================ 替代数据保底名额（A 方案，2026-10-25）
+# ★ 为什么（实测 gen210~229，20 代）：L1 全部候选里**含替代数据**的占 **5.2%（743/14359）**，
+#   但真正进 L2 的只有 **0.9%（3/328）** ⇒ 生成端没问题，是**排序**把它们挤掉了：
+#   `mono_n` 按"十档单调性"排序，而龙虎榜/大宗**当日非零仅约 1%** ⇒ 单调性天然接近 0 ✗
+#   ⇒ 不保底的话，这 5 个字段**永远轮不到回测**，也就永远无法判断它们有没有 alpha。
+# ⚠ 默认 0 ⇒ 行为与改造前**逐位一致**（不传就等于没这功能）✓
+ALT_PREFIXES = ('mg_', 'lhb_', 'block_')
+
+
+def _is_alt(node):
+    """该候选是否用到替代数据族（两融 `mg_*` / 龙虎榜 `lhb_*` / 大宗 `block_*`）。"""
+    try:
+        from loop_expr import leaves as _leaves      # 局部 import（别名，避免被当成全局）
+        return any(str(x).startswith(ALT_PREFIXES) for x in _leaves(node))
+    except Exception:                                # noqa: BLE001
+        return False
+
+
+def _boost_alt_top(top, l1, args):
+    """★ A 方案：从 L1 里**补** N 个"含替代数据"的候选进 L2（挤掉 top 末尾 N 个）。
+
+    * 只在 `--alt_l2_slots > 0` 时生效；`0` ⇒ 原样返回 `top`（零行为变化 ✓）
+    * "挤掉末尾"而不是"扩大名额" ⇒ 每代回测数量不变、耗时不变 ✓
+    * 已经在 `top` 里的不重复补；补不到就原样返回（不报错）✓
+    """
+    n = int(getattr(args, 'alt_l2_slots', 0) or 0)
+    if n <= 0 or top is None or l1 is None or not len(top) or 'node' not in l1.columns:
+        return top
+    try:
+        # ⚠ 两条硬约束（2026-10-25 单测抓到的）：
+        #   ① **总数绝不扩大**（L2 耗时是按条数算的）；② 最多**挤掉一半** ⇒ 原有排序仍占主导
+        #   ⇒ `want = min(名额, len(top)//2)`：top 只有 1 条时 want=0 ⇒ 原样返回 ✓
+        want = min(n, len(top) // 2)
+        if want <= 0:
+            return top
+        alt = l1[l1['node'].map(_is_alt)]
+        have = set(top['node'].map(str))
+        add = alt[~alt['node'].map(str).isin(have)].head(want)
+        if not len(add):
+            return top
+        keep = top.iloc[:len(top) - len(add)]              # 挤掉 mono_n 最低的末尾
+        out = pd.concat([keep, add], ignore_index=True)
+        print(f"  [替代数据保底] 补 {len(add)} 个进 L2（top {len(top)} → {len(out)}）", flush=True)
+        return out
+    except Exception as e:                                # noqa: BLE001
+        print(f"  [替代数据保底] 失败（不影响主流程）: {type(e).__name__}: {e}")
+        return top
+
+
 def _run_l2_phase(ctx, args):
     """L2 费后精筛 + 剥风格/池指标/收益流去重 + 落盘 -> 写回 ctx"""
     cal = _L2In.of(ctx)   # ★ 只读口径（23 项 ✓）
@@ -520,6 +569,7 @@ def _run_l2_phase(ctx, args):
             MCAP = None
     # ★ 5 行累加器初始化已收进 `_L2Acc` 的字段默认值 ✓
     # ★ S3b-3：本块已抽成 `_l2_candidates(...)` ✓（形参/回传由 AST 机器算 ✓）
+    top = _boost_alt_top(top, cal.l1, args)  # ★ A 方案：替代数据保底名额（默认 0 = 关）
     top = _drop_hist_skipped(top, args)     # ★ B 方案：同口径已测且未过 ⇒ 不再回测
     acc = _l2_candidates(MCAP, POOL_M, _lp, acc, args, cal, top)
     print(f"  [计时] L2 费后精筛 {len(top)} 个 用时 {time.time() - _t_l2:.0f}s", flush=True)

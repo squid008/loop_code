@@ -58,6 +58,11 @@ PARAM_SPECS = [
     dict(key='l2', flag='--l2', label='L2 名额', group='L2 门槛', type='int',
          default=30, lo=5, hi=120, danger=1,
          desc='每代最多回测多少个候选。调大更慢（每个约 56 秒）'),
+    dict(key='alt_l2_slots', flag='--alt_l2_slots', label='替代数据保底名额',
+         group='L2 门槛', type='int', default=0, lo=0, hi=10, danger=1,
+         desc='从 L1 里补几个用到替代数据（两融、龙虎榜、大宗）的候选进 L2，'
+              '换取它们被回测的机会。实测 L1 里这类占 5.2%，但排序把它们压到 0.9%。'
+              '0 等于不保底，建议 3'),
     dict(key='min_ic', flag='--min_ic', label='IC 准入门槛', group='L2 门槛', type='float',
          default=-1.0, lo=-1.0, hi=0.2, danger=2,
          desc='-1=关闭（现状）。调正值会把 IC 变成准入条件'),

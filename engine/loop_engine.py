@@ -433,6 +433,11 @@ if __name__ == '__main__':
     ap.add_argument('--l2_hist_skip', type=int, default=0,
                     help='历史跳过(默认 0=关): 同 `(expr, window, cost)` 已测过且主/副口径都没过 '
                          '⇒ 本代不再回测。⚠ 调低门槛时要关掉它（门槛不进指纹，旧结论会残留）')
+    # ★★★ 2026-10-25（A 方案）：**替代数据保底名额**
+    #   实测：L1 里含替代数据占 5.2%，进 L2 只剩 0.9%（mono_n 对稀疏字段结构性不利）
+    ap.add_argument('--alt_l2_slots', type=int, default=0,
+                    help='替代数据保底名额(默认 0=关): 从 L1 里补几个「含 mg_/lhb_/block_」的候选 '
+                         '进 L2（挤掉 top 末尾同等数量）⇒ 0 与改造前逐位一致')
     # ★ 2026-10-20（用户拍板 A 方案）：生成端拦截「纯风格组合」
     ap.add_argument('--style_gate', type=int, default=0,
                     help='生成端拦截纯风格组合(默认 0=关): `barra_*` 叶子占比>=0.5，或直接进 div 分子 '
