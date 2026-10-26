@@ -10630,3 +10630,945 @@ leaf_w={}
 > (4) 无实际动作可停。
 > 否决: 无
 
+
+## 第 230 代 (B角诊断)
+
+时间: 2026-10-25 10:26:25 +0800 · 开工 2026-10-25 09:24:10 · 已跑 1h2m14s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 37 | 0.024 | 0.046 | 0.877 | 0.000 | 0.351 | 0.973 | 16 | 0.405 | 24 | 0 | 0.038 | 0.000 | 0.150 | 0.750 | 0.750 | 0.750 | 0.333 | 1.000 | 0.250 | 0.458 | 0.792 | 0.008 | 0.056 | 0.063 | 0.007 | 0.007 | 0.048 | 0.050 | 0.006 |
+
+叶子使用: {'low': 13, 'high': 11, 'ln_mktcap': 10, 'vwap': 8, 'turnover': 5, 'barra_liquidity': 1}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 230代)**: 调用3次, 解析通过34条, 引导位使用34条
+> 主动资金流的方向性失衡(超大单与中小单的净买入背离)在截面上的持续性,叠加融资杠杆变化与价格不涨的拥挤度背离,能预测未来5日截面收益;资金流强度与价格动量错配的股票后续会向资金方向修正。
+
+
+**LLM 候选审查(B角 230代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ts_rank200(ts_slope10(ts_mean200(ts_slope20(ts_mean200(ts_delta10(ts_mean20(mul(ema26(ts_slope20(ts_mean200(ts_delta10(ema20(mul(ts_rank60(neg(ln_mktcap)), high)))))), high))))))))`
+  > 理由: 19层嵌套同源时序算子冗余，窗口堆叠无经济含义，仅市值与高价拼凑，属参数海捞针
+- KILL `ts_resi60(ema20(ts_delta5(ts_mean200(ts_mean120(vwap)))))`
+  > 理由: 多层同源均值嵌套120/200冗余，残差窗口60无机制，参数堆砌难解释
+- KILL `ema20(ts_delta20(ts_slope60(ts_delta5(ts_mean200(ts_mean120(ts_delta10(ema20(cs_scale(low)))))))))`
+  > 理由: 多层嵌套同源时序算子冗余，窗口堆叠无经济含义，属参数拼凑
+- KILL `ts_slope5(ts_mean200(ts_slope60(ts_mean200(ts_delta10(ts_mean20(mul(ts_rank60(turnover), high)))))))`
+  > 理由: 多层同源均值/斜率嵌套冗余，窗口堆叠无机制，实为换手率老故事再包装
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根:IC天花板仅0.046且negyear全灭(1.0),信号是低换手慢因子,但收益路径不稳,不是搜索不足而是方向偏。
+> (2) 两条建议均被永久拦截,等于无动作;交叉加深对calmar无效,深度放宽只会放大过拟合,二者互相冲突于stab约束。
+> (3) mix=[0.1,0.3,0.2,0.25,0.15] depth=[2,3,3] min_stab=0.8 decorr=0.7:压深度、提引导与去相关,先救negyear而非追IC。
+> (4) 无实际动作可停,但应继续封禁深度放宽类。
+> 否决: 无
+
+## 第 231 代 (B角诊断)
+
+时间: 2026-10-25 11:37:39 +0800 · 开工 2026-10-25 10:26:31 · 已跑 1h11m7s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 31 | 0.034 | 0.049 | 0.869 | 0.000 | 0.355 | 0.968 | 14 | 0.484 | 21 | 0 | 0.041 | 0.000 | 0.150 | 0.571 | 0.571 | 0.667 | 0.238 | 1.000 | 0.190 | 0.238 | 0.714 | 0.021 | 0.093 | 0.099 | 0.021 | 0.020 | 0.091 | 0.099 | 0.018 |
+
+叶子使用: {'low': 11, 'high': 11, 'turnover': 9, 'ln_mktcap': 6, 'vwap': 3, 'barra_liquidity': 1}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 231代)**: 调用3次, 解析通过26条, 引导位使用26条
+> 融资融券与龙虎榜等场外行为数据刻画的是知情/杠杆资金的慢速累积：当融资余额占比持续抬升而价格未同步上涨（加杠杆不涨=拥挤且被套），或机构席位在龙虎榜上累计净买入强度上升时，未来5日截面收益更弱/更强的分化会被放大，且这类慢变量需要60日累计平滑才可预测。
+
+
+**LLM 候选审查(B角 231代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ts_resi60(ts_mean200(ts_delta120(ts_mean20(mul(ts_rank60(turnover), high)))))`
+  > 理由: 多层嵌套均值+残差+秩，窗口20/60/120/200堆叠冗余，经济含义拼凑难解释，过拟合嫌疑
+- KILL `ts_delta20(ts_slope5(ts_mean200(ts_mean200(ts_slope20(ts_mean200(ts_delta10(ema20(mul(ts_rank60(low), high)))))))))`
+  > 理由: 多层同源平滑嵌套冗余，仅高低价拼凑，无清晰量价机制，疑参数海捞针
+- KILL `ts_slope20(ts_mean200(ts_slope20(ts_mean200(ts_resi60(low)))))`
+  > 理由: 多层嵌套同源平滑斜率算子，窗口20/60/200冗余，经济含义难解释，疑似参数海捞针
+- KILL `ema26(ts_slope20(ts_mean200(ts_delta10(ema20(ts_rank60(turnover))))))`
+  > 理由: 多层同源平滑嵌套冗余，仅换手率老故事，无增量机制，参数堆叠难解释
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1)病根:IC中位仅0.034且L2全灭,neg_yr=1.0说明因子在时间维度上不稳定,不是深度或交叉不足。
+> (2)两条建议均被永久否决,本轮无实际动作可评;但下代表格depth=[3,4,4]与"深度放宽"意图相悖,min_stab=0.75低于当前stab_med=0.869,会放水;decorr=0.65偏高,在leaf_conc=0.355下易误杀。
+> (3)mix=[0.1,0.35,0.2,0.2,0.15]偏扰动与引导以破时间不稳;depth=[2,3,4]控复杂度;min_stab=0.85守稳定;decorr=0.5给结构多样性留口。
+> (4)见下。
+> 否决: 无
+
+## 第 232 代 (B角诊断)
+
+时间: 2026-10-25 17:09:01 +0800 · 开工 2026-10-25 16:09:45 · 已跑 59m16s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 33 | 0.033 | 0.048 | 0.857 | 0.000 | 0.424 | 0.970 | 7 | 0.303 | 15 | 0 | 0.027 | 0.000 | 0.150 | 0.733 | 0.733 | 0.667 | 0.133 | 1.000 | 0.133 | 0.133 | 0.800 | 0.011 | 0.077 | 0.071 | 0.013 | 0.012 | 0.081 | 0.081 | 0.013 |
+
+叶子使用: {'low': 14, 'high': 13, 'ln_mktcap': 8, 'turnover': 2, 'vwap': 2, 'barra_liquidity': 1}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r1_leaf_conc] LLM 已【永久】否决，后续各代一律不再施加 —— 叶子过度集中 -> 压低该叶子权重
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 3 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 232代)**: 调用3次, 解析通过14条, 引导位使用14条
+> 资金流的方向性失衡(大单主动净买入占比)与价格动量背离时,未来5日截面收益更高——即'钱进价未动'的隐性吸筹被市场逐步定价。
+
+
+**LLM 候选审查(B角 232代)**: 深判 5 个, KILL 3 个(剔除出 L2 费后回测)
+- KILL `ts_delta20(ts_slope5(ts_mean200(ts_mean200(ts_slope20(ln_mktcap)))))`
+  > 理由: 多层嵌套均值斜率作用于市值，纯数学冗余，无增量量价机制，属已知市值因子再表达
+- KILL `cs_rank(corr60(mul(low, ts_mean200(ts_mean120(low))), high))`
+  > 理由: low与high相乘再与长周期均价求相关，量纲与含义拼凑，窗口120/200冗余，无清晰量价机制
+- KILL `ts_resi60(ts_slope20(ts_delta5(ts_mean200(ts_mean120(low)))))`
+  > 理由: 多层同源时序算子嵌套冗余，长窗平滑后取斜率残差无清晰量价机制，参数堆叠疑过拟合
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根在L2：neg_yr全≥3、fail_negyear=1.0，说明因子只是截面排序好看，时序上长期亏钱，L1的ic/stab是假象。
+> (2) 三条建议均已被永久否决，本轮实际未施加任何动作，故无对症可言；真正该动的是neg_year与turn，而非再压叶子或加深深度。depth放宽到3~5与decorr=0.65会进一步稀释信号，属互相冲突。
+> (3) mix=[0.1,0.35,0.2,0.2,0.15]，depth=[2,3,3]，min_stab=0.8，decorr=0.55；理由：收窄深度、提高稳定性门槛，优先救时序负年而非堆复杂度。
+> 否决: 无
+
+## 第 233 代 (B角诊断)
+
+时间: 2026-10-25 18:03:57 +0800 · 开工 2026-10-25 17:09:11 · 已跑 54m45s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 30 | 0.032 | 0.051 | 0.852 | 0.000 | 0.333 | 1.000 | 11 | 0.400 | 23 | 0 | 0.051 | 0.000 | 0.150 | 0.826 | 0.826 | 0.696 | 0.261 | 1.000 | 0.261 | 0.087 | 0.870 | 0.013 | 0.076 | 0.071 | 0.015 | 0.017 | 0.079 | 0.073 | 0.018 |
+
+叶子使用: {'low': 10, 'turnover': 7, 'ln_mktcap': 5, 'vwap': 4, 'high': 4, 'barra_liquidity': 3}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 233代)**: 调用3次, 解析通过33条, 引导位使用33条
+> 融资杠杆在价格未同步走强时持续累积，反映的是拥挤的被动加仓而非真实需求，这类标的未来5日截面收益偏弱；相反，杠杆温和且价格趋势确认的标的更可能延续。
+
+
+**LLM 候选审查(B角 233代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ts_resi60(ts_mean200(ts_delta120(turnover)))`
+  > 理由: 仅换手率长周期平滑后取残差，属已知换手率族再表达，无增量机制且窗口冗余
+- KILL `ts_resi60(ts_mean200(ts_delta120(mul(low, high))))`
+  > 理由: 高低价相乘无经济含义，三层嵌套窗口冗余，属参数拼凑
+- KILL `ts_slope20(ts_mean200(ts_slope5(ts_mean120(ts_slope20(vwap)))))`
+  > 理由: 多层同源均值与斜率嵌套冗余，窗口5/20/120/200无机制依据，属参数海捞针
+- KILL `ts_slope20(ts_slope20(ts_mean200(ts_mean200(ts_slope20(vwap)))))`
+  > 理由: 多层同源ts_slope/ts_mean嵌套冗余，仅vwap单字段，无清晰量价机制，属参数堆叠
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根在L2：IC尚可但Calmar全灭、neg_yr普遍4~7年，说明因子是"高IC低赔率"的伪信号，且叶子过度集中于low/turnover，结构多样性形同虚设。
+> 
+> (2) 两条建议均被永久否决，实际无动作可评；但需指出：靠"交叉+15%/深度加深"救Calmar本就无效——问题在信号赔率而非搜索广度，加深depth只会放大过拟合，与min_stab下调方向冲突。
+> 
+> (3) mix=[0.15,0.3,0.2,0.2,0.15] depth=[3,4,4] min_stab=0.8 decorr=0.7；理由：压低变异、抬高引导与去相关，逼因子跳出low/turnover同质簇，同时用更严stab过滤伪高IC。
+> 
+> (4) 本代无实际动作，但下代应继续停用已关闭项中仍可能被引擎复活的深度放宽倾向。
+> 
+> 否决: 无
+
+## 第 234 代 (B角诊断)
+
+时间: 2026-10-25 19:01:17 +0800 · 开工 2026-10-25 18:04:02 · 已跑 57m15s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 30 | 0.029 | 0.049 | 0.859 | 0.000 | 0.300 | 0.967 | 4 | 0.300 | 23 | 0 | 0.034 | 0.000 | 0.150 | 0.783 | 0.783 | 0.652 | 0.261 | 1.000 | 0.217 | 0.217 | 0.826 | 0.014 | 0.068 | 0.056 | 0.016 | 0.014 | 0.070 | 0.072 | 0.016 |
+
+叶子使用: {'high': 9, 'vwap': 8, 'ln_mktcap': 7, 'low': 6, 'turnover': 2, 'barra_liquidity': 2}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 234代)**: 调用3次, 解析通过29条, 引导位使用29条
+> 融资融券与龙虎榜等场外行为数据刻画的是知情资金/杠杆资金的慢速累积过程：融资余额占比抬升而价格未同步上涨代表杠杆拥挤（未来5日截面收益偏弱），而机构席位龙虎榜净买入与大宗折价成交热度在长窗累计后代表机构承接强度（未来5日截面收益偏强），二者叠加资金流大单净额可区分真实承接与散户接盘。
+
+
+**LLM 候选审查(B角 234代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ts_delta20(ts_delta20(ts_mean200(ts_sum100(ts_slope10(ln_mktcap)))))`
+  > 理由: 仅ln_mktcap多层嵌套差分平滑，纯市值老故事且结构冗余难解释
+- KILL `ts_slope20(ts_mean200(ts_delta120(ts_slope5(ts_mean200(ts_slope20(ts_mean200(ts_slope20(ln_mktcap))))))))`
+  > 理由: 多层同源ts_slope/ts_mean嵌套冗余，仅反复平滑市值，无增量量价机制，属参数堆砌
+- KILL `ts_slope20(ts_mean200(neg(ts_resi60(ts_mean200(ln_mktcap)))))`
+  > 理由: 仅对市值做多层平滑残差斜率，属市值老故事且嵌套冗余难解释
+- KILL `ts_resi60(ts_mean200(ts_slope20(cs_demean(ts_resi60(ts_mean200(ts_slope20(high)))))))`
+  > 理由: 同源算子嵌套重复两遍，纯属冗余堆叠，无清晰量价机制，属参数海捞针
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根是表达式嵌套过深、因子高度同质(叶子集中在high/low/vwap/ln_mktcap),IC中位仅0.029,而negyear全灭、seg_kill 0.826,说明信号跨期不稳而非结构不足。
+> 
+> (2) 两条建议均被永久拦截,实际未施加任何动作,故无对症可言;真正该动的是深度与叶子多样性,而非继续放宽depth——放宽只会加剧过拟合与同质。
+> 
+> (3) mix=[0.15,0.3,0.2,0.2,0.15] depth=[2,3,3] min_stab=0.8 decorr=0.7;理由:压深度、提稳定性门槛、加扰动与去相关,直击negyear与同质。
+> 
+> (4) 本代未施加动作,无可停;但永久关闭项中r1_leaf_conc与r4_fail_turn方向正确,应维持。
+> 
+> 否决: 无
+
+## 第 235 代 (B角诊断)
+
+时间: 2026-10-25 19:56:36 +0800 · 开工 2026-10-25 19:01:49 · 已跑 54m47s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 33 | 0.030 | 0.048 | 0.864 | 0.000 | 0.455 | 0.970 | 5 | 0.242 | 18 | 0 | 0.031 | 0.000 | 0.150 | 0.667 | 0.667 | 0.722 | 0.222 | 1.000 | 0.167 | 0.222 | 0.667 | 0.009 | 0.066 | 0.068 | 0.013 | 0.012 | 0.051 | 0.056 | 0.015 |
+
+叶子使用: {'high': 15, 'ln_mktcap': 8, 'low': 7, 'vwap': 6, 'mf_x_buy': 2, 'mf_s_sell': 1}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r1_leaf_conc] LLM 已【永久】否决，后续各代一律不再施加 —— 叶子过度集中 -> 压低该叶子权重
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 3 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 235代)**: 调用3次, 解析通过28条, 引导位使用28条
+> 当超大单主动买入与中小单方向背离、且价格未随之上涨时，代表知情资金在静默吸筹，未来5日截面收益更高；用资金流强度与价格动量的背离刻画这种静默吸筹。
+
+
+**LLM 候选审查(B角 235代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ts_slope20(ts_mean200(ts_delta20(ts_slope5(ts_mean200(ln_mktcap)))))`
+  > 理由: 多层同源时序算子嵌套市值，无增量量价机制，属参数冗余堆叠
+- KILL `ts_slope20(ts_mean20(ts_delta20(ts_slope5(ts_mean200(ln_mktcap)))))`
+  > 理由: 多层同源时序算子嵌套于市值字段，无清晰量价机制，属参数冗余堆叠
+- KILL `ts_mean200(ts_resi60(ts_resi60(ts_mean200(turnover))))`
+  > 理由: 对换手率做双重同源残差嵌套，属冗余结构，无增量经济含义
+- KILL `ts_slope20(ts_mean200(neg(ts_delta10(ts_mean20(mul(corr60(mul(low, high), high), high))))))`
+  > 理由: 多层嵌套同源平滑与相关算子冗余，经济含义拼凑难解释，窗口参数堆叠似过拟合
+
+
+**AI 审查(DeepSeek deepseek-flash, 3s)**:
+
+> (1) 病根:IC中位仅0.030且L2全灭,neg_yr=1.000与seg_kill=0.667说明因子是"高稳定低信息"的时序平滑残渣,深度堆叠只放大噪声不增alpha。
+> 
+> (2) 三条建议全被永久否决,本轮无实际动作,故无对症可言;真正该动的是neg_yr与seg_kill,而非已关闭的calmar/深度项。下代表格depth=[3,4,4]与"深度放宽"意图相悖,min_stab=0.75偏低会放行更多平滑残渣,与decorr=0.65的分散目标冲突。
+> 
+> (3) mix=[0.35,0.2,0.15,0.2,0.1] 提变异降交叉,避免同族平滑结构复制;depth=[2,3,3] 压浅层;min_stab=0.82 提门槛;decorr=0.75 强去相关。理由:先破结构同质,再谈IC。
+> 
+> 否决: 无
+
+## 第 236 代 (B角诊断)
+
+时间: 2026-10-25 20:50:54 +0800 · 开工 2026-10-25 19:56:45 · 已跑 54m8s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 32 | 0.029 | 0.048 | 0.859 | 0.000 | 0.469 | 0.969 | 10 | 0.156 | 15 | 0 | 0.021 | 0.000 | 0.150 | 0.600 | 0.600 | 0.733 | 0.200 | 1.000 | 0.133 | 0.267 | 0.600 | 0.007 | 0.050 | 0.054 | 0.008 | 0.013 | 0.063 | 0.067 | 0.012 |
+
+叶子使用: {'high': 15, 'vwap': 7, 'low': 6, 'ln_mktcap': 5, 'mf_x_buy': 4, 'barra_beta': 2}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r1_leaf_conc] LLM 已【永久】否决，后续各代一律不再施加 —— 叶子过度集中 -> 压低该叶子权重
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 3 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 236代)**: 调用3次, 解析通过27条, 引导位使用27条
+> 融资杠杆资金的行为具有慢变量特征：融资余额占比的相对抬升若伴随融资买入强度同步走强，说明杠杆资金在持续加仓而非一次性冲动，这类标的未来5日截面收益更优；反之'余额升而买入强度衰减'或'加杠杆但价格不涨'构成拥挤度风险，未来收益偏弱。
+
+
+**LLM 候选审查(B角 236代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `ts_slope20(ts_mean200(ts_mean200(ts_resi60(mul(high, high)))))`
+  > 理由: high平方后双重200均值再残差斜率，含义拼凑且窗口冗余，无清晰量价机制
+- KILL `corr60(mul(low, high), high)`
+  > 理由: low*high与high做相关，量纲拼凑无经济含义，属数学巧合
+- KILL `ts_slope20(ts_mean200(neg(ts_delta10(ts_mean20(mul(ts_rank60(ts_slope20(ts_mean200(vwap))), high))))))`
+  > 理由: 多层同源时序算子嵌套冗余，窗口堆叠无经济机制，属参数拼凑
+- KILL `ts_slope10(ts_mean200(neg(ts_delta10(ts_mean20(mul(ts_rank60(vwap), high))))))`
+  > 理由: 多层嵌套同源时序算子冗余，窗口堆叠难解释，无清晰量价机制
+- KILL `ts_resi60(ts_mean200(ts_resi60(ts_mean200(mul(ts_rank60(mf_x_buy), high)))))`
+  > 理由: 嵌套同源算子冗余，残差套均值再残差无经济含义，参数拼凑似过拟合
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根：IC中位数仅0.029，且neg_yr全为3~4年，说明因子在时间维度上不稳定；叶子集中在high/vwap，导致同源冗余，L2无法通过。
+> 
+> (2) 三条建议均被永久否决，本轮无实际动作，因此不存在对症问题；但下代表格中depth=[3,4,4]与min_stab=0.75偏松，可能继续产出高IC、低Calmar的样本，与“0通过”病根不对症。
+> 
+> (3) mix=[0.15,0.35,0.15,0.2,0.15]，depth=[2,3,3]，min_stab=0.82，decorr=0.75；理由：收紧稳定门槛与去相关，压交叉、提变异，避免同源叶子堆叠。
+> 
+> (4) 本代未施加动作，无需停掉；但已永久关闭的r5/r1/r7/r4维持关闭。
+> 
+> 否决: 无
+
+## 第 237 代 (B角诊断)
+
+时间: 2026-10-25 21:53:58 +0800 · 开工 2026-10-25 20:51:01 · 已跑 1h2m57s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 28 | 0.028 | 0.048 | 0.870 | 0.000 | 0.429 | 0.964 | 7 | 0.250 | 20 | 0 | 0.026 | 0.000 | 0.150 | 0.500 | 0.500 | 0.550 | 0.150 | 1.000 | 0.050 | 0.250 | 0.600 | 0.008 | 0.055 | 0.060 | 0.015 | 0.011 | 0.055 | 0.060 | 0.015 |
+
+叶子使用: {'high': 12, 'vwap': 11, 'ln_mktcap': 7, 'mf_x_buy': 6, 'low': 4, 'barra_beta': 1}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r1_leaf_conc] LLM 已【永久】否决，后续各代一律不再施加 —— 叶子过度集中 -> 压低该叶子权重
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 237代)**: 调用3次, 解析通过29条, 引导位使用29条
+> 融资杠杆资金在价格未同步走强时持续加仓，形成拥挤的多头杠杆堆积；这类'加杠杆但价格不涨'的背离，会在未来5日截面收益上表现为负向反转。
+
+
+**LLM 候选审查(B角 237代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ts_mean200(ts_resi60(ts_delta5(ts_mean200(ema5(vwap)))))`
+  > 理由: 多层同源平滑嵌套，窗口5/60/200冗余，残差含义难解释，属参数堆砌
+- KILL `cs_rank(ts_resi60(ts_mean200(ts_slope20(ts_mean200(ts_slope10(ln_mktcap))))))`
+  > 理由: 仅对市值做多层嵌套平滑斜率残差，无增量量价机制，属已知市值因子冗余再表达
+- KILL `ts_delta20(ts_slope20(ts_mean200(ts_slope20(ts_mean200(mul(ts_rank60(vwap), high))))))`
+  > 理由: 多层同源平滑嵌套冗余，vwap与high相乘含义拼凑，无清晰量价机制
+- KILL `ts_resi60(ts_mean200(ts_slope60(ln_mktcap)))`
+  > 理由: 仅对市值做多层时序平滑斜率残差，无价量机制，属市值老故事冗余变体
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根是信号全挤在长周期均值/斜率类慢变量上，neg_year 全灭、calmar 极低，IC 高但不可交易。
+> (2) 两条建议均已被永久否决，本轮实际未施加动作，故无对症可言；r7 的“深度放宽”若复活会与 min_stab 收紧冲突，且不解决慢变量同质化。
+> (3) mix=[0.15,0.3,0.2,0.2,0.15] depth=[2,3,4] min_stab=0.8 decorr=0.75；理由：提高扰动与交叉打破慢变量同质，降 depth 抑制过平滑，抬 decorr 逼出差异化。
+> (4) 无实际动作可停。
+> 否决: 无
+
+## 第 238 代 (B角诊断)
+
+时间: 2026-10-25 22:49:09 +0800 · 开工 2026-10-25 21:54:32 · 已跑 54m36s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 30 | 0.031 | 0.048 | 0.885 | 0.000 | 0.333 | 0.933 | 7 | 0.267 | 17 | 0 | 0.013 | 0.000 | 0.150 | 0.647 | 0.647 | 0.706 | 0.118 | 1.000 | 0.000 | 0.412 | 0.647 | 0.015 | 0.066 | 0.073 | 0.014 | 0.015 | 0.078 | 0.078 | 0.015 |
+
+叶子使用: {'vwap': 10, 'high': 9, 'ln_mktcap': 8, 'low': 7, 'barra_beta': 1, 'mf_s_sell': 1}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 238代)**: 调用3次, 解析通过32条, 引导位使用32条
+> 在资金流与日内交易者行为层面，超大单主动净买入相对中小单的持续背离，叠加隔夜跳空与日内收益的错配，能刻画知情资金建仓而散户尚未跟风的股票，这类股票未来5日截面收益更高。
+
+
+**LLM 候选审查(B角 238代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ts_slope20(ts_mean200(ts_slope10(ts_mean200(ts_mean5(ts_resi60(ts_mean200(barra_beta)))))))`
+  > 理由: 多层同源平滑斜率嵌套，窗口堆叠冗余，经济含义不可解释，属参数海捞针
+- KILL `ts_resi60(ts_rank60(ts_mean200(ts_slope5(ts_resi60(ts_delta20(ts_mean200(ema5(vwap))))))))`
+  > 理由: 多层同源平滑与残差嵌套冗余，窗口堆叠无经济机制，属参数拼凑
+- KILL `ts_slope10(ts_mean200(ts_resi60(ts_delta20(ts_mean200(ema5(vwap))))))`
+  > 理由: 多层同源平滑嵌套(ema5+mean200+delta20+resi60+slope10)，冗余难解释，近参数海捞针
+- KILL `ts_slope10(ts_mean200(ts_slope5(ts_mean200(ts_slope10(ts_mean200(ts_mean20(ts_delta10(ln_mktcap))))))))`
+  > 理由: 多层嵌套同源平滑斜率，仅ln_mktcap，属市值老故事且结构冗余难解释
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根是信号全是同一族 vwap/ln_mktcap 的长窗平滑残差，结构多样性 0.933 只是假象，L2 上 neg_yr 全灭说明因子没有跨年稳健性，而非参数不够深。
+> (2) 两条建议都被永久拦截，等于本轮无动作；r5、r7 关闭合理，但把 depth 放宽到 3~5 与 min_stab=0.75 冲突，会放行低稳深树，加剧过拟合；真正该动的是叶子族约束和 decorr，而非深度。
+> (3) mix=[0.15,0.3,0.2,0.2,0.15] depth=[2,3,3] min_stab=0.82 decorr=0.75；理由：压深度、抬稳定性门槛、强去相关，逼引擎离开 vwap 族。
+> 否决: 无
+
+## 第 239 代 (B角诊断)
+
+时间: 2026-10-25 23:46:48 +0800 · 开工 2026-10-25 22:49:18 · 已跑 57m29s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 26 | 0.030 | 0.048 | 0.892 | 0.000 | 0.346 | 1.000 | 13 | 0.308 | 13 | 0 | 0.018 | 0.000 | 0.150 | 0.846 | 0.846 | 0.692 | 0.077 | 1.000 | 0.077 | 0.231 | 0.769 | 0.010 | 0.060 | 0.069 | 0.009 | 0.014 | 0.076 | 0.076 | 0.013 |
+
+叶子使用: {'high': 9, 'low': 9, 'ln_mktcap': 8, 'vwap': 5, 'barra_beta': 2, 'mf_s_sell': 2}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 239代)**: 调用3次, 解析通过23条, 引导位使用23条
+> 融资融券与龙虎榜等行为数据刻画的是知情/杠杆资金在少数交易日的集中介入，这种介入在横截面上是稀疏事件；用长窗累计其强度并与价格、换手的变化做背离，可捕捉到'资金已布局但价格尚未反应'的5日截面补涨。
+
+
+**LLM 候选审查(B角 239代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `ts_mean200(ts_resi60(ts_resi60(ts_mean200(ts_slope20(ts_mean200(ts_slope5(ts_mean200(ts_slope20(mul(low, high))))))))))`
+  > 理由: 多层同源均值/斜率/残差嵌套冗余，窗口堆叠无经济机制，属参数拼凑
+- KILL `ts_slope5(ts_mean200(ts_slope10(ts_mean200(ts_resi60(ts_mean200(vwap))))))`
+  > 理由: 多层同源均值/斜率嵌套冗余，窗口拼凑无经济机制，属参数海捞针
+- KILL `ts_slope10(ts_mean200(ts_mean5(ts_resi60(ts_mean200(ts_resi60(ts_mean200(mul(mul(low, high), high))))))))`
+  > 理由: 多层同源均值/残差嵌套冗余，low*high^2尺度拼凑无经济含义，参数堆砌过拟合
+- KILL `ts_delta20(ts_slope5(ts_mean200(ts_mean200(ts_slope20(ts_mean200(ts_slope10(vwap)))))))`
+  > 理由: 多层嵌套同源均值/斜率算子冗余，窗口200重复堆叠，经济含义不可解释，属参数拼凑
+- KILL `ts_resi60(ts_mean200(ts_delta120(ema20(ts_mean20(ts_delta5(ts_slope20(low)))))))`
+  > 理由: 多层同源平滑嵌套冗余，窗口参数堆砌难解释，无清晰量价机制
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1)病根:IC中位仅0.030且negyear全灭、seg_kill 0.769,信号是市值/量价残差的同质复制,缺独立alpha而非深度不够。
+> 
+> (2)规则B角两条均已被永久否决,本代实际未施加任何动作,建议本身空转;r5_calmar_cross与r7_zero_pass互相冲突(一个加深交叉一个放宽深度),且都不治negyear病根,无效。
+> 
+> (3)mix=[0.15,0.3,0.2,0.2,0.15] depth=[3,4,4] min_stab=0.8 decorr=0.75:提高扰动与去相关、抬高稳定门槛,逼出与市值正交的因子。
+> 
+> (4)本代无实际动作可停,仅确认永久关闭项。
+> 
+> 否决: 无
+
+## 第 240 代 (B角诊断)
+
+时间: 2026-10-26 00:49:55 +0800 · 开工 2026-10-25 23:46:57 · 已跑 1h2m57s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 29 | 0.031 | 0.048 | 0.883 | 0.000 | 0.483 | 1.000 | 7 | 0.379 | 18 | 0 | 0.027 | 0.000 | 0.150 | 0.500 | 0.500 | 0.444 | 0.111 | 1.000 | 0.056 | 0.056 | 0.667 | 0.015 | 0.082 | 0.085 | 0.015 | 0.015 | 0.081 | 0.083 | 0.015 |
+
+叶子使用: {'high': 14, 'ln_mktcap': 11, 'low': 9, 'vwap': 3, 'mf_s_sell': 2, 'barra_beta': 1}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r1_leaf_conc] LLM 已【永久】否决，后续各代一律不再施加 —— 叶子过度集中 -> 压低该叶子权重
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 240代)**: 调用3次, 解析通过35条, 引导位使用35条
+> 近5日超大单主动净买入相对中小单的方向性背离，叠加隔夜跳空与日内振幅的错配，刻画的是知情资金在低关注度下的建仓行为，该行为在截面维度上预测未来5日收益。
+
+
+**LLM 候选审查(B角 240代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ts_slope5(ts_mean60(ts_resi60(ts_mean200(ts_resi60(ts_mean200(mul(mul(low, high), hl_ratio)))))))`
+  > 理由: 多层同源均值/残差嵌套冗余，hl_ratio与高低价拼凑，经济含义不清，属参数堆叠
+- KILL `ts_slope10(ts_mean200(ts_mean5(ts_delta20(ts_slope10(ts_mean200(ts_mean20(mul(ts_rank60(ln_mktcap), high))))))))`
+  > 理由: 多层同源时序算子嵌套冗余，市值与最高价相乘含义拼凑，无清晰量价机制
+- KILL `ts_resi20(ts_mean60(ts_resi60(ts_mean200(high))))`
+  > 理由: 多层同源均线残差嵌套，窗口20/60/200冗余，无清晰量价机制，属参数堆叠
+- KILL `ts_mean200(ts_resi5(ts_delta20(ts_mean200(ts_mean5(ts_resi60(ts_mean200(vwap)))))))`
+  > 理由: 多层嵌套均值残差冗余，窗口堆叠无经济机制，属参数拼凑
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根：IC 中位数只有 0.031，且叶子集中在 high、ln_mktcap、low 三个字段，导致因子同源、结构单一；L2 的 neg_yr 全部≥3，说明信号在时间维度上不稳定，并非深度不够。
+> 
+> (2) 两条建议都被永久拦截，因此本轮实际没有施加任何动作，等于没有对症下药。r7_zero_pass 被否决是对的，因为 0 通过的原因是 negy_yr 为 1.0，而不是深度不足；放宽 depth 只会增加噪声。r1_leaf_conc 被否决也合理，但叶子集中问题仍未解决，需要靠 decorr 和 mix 来间接压制，而不是直接压低权重。
+> 
+> (3) mix=[0.1,0.35,0.2,0.2,0.15] depth=[3,4,4] min_stab=0.8 decorr=0.75。理由：提高交叉和扰动占比，以打破 high/ln_mktcap 同源；提高 decorr 和 min_stab，以抑制同质叶子和时间不稳定的因子。
+> 
+> 否决: 无
+
+## 第 241 代 (B角诊断)
+
+时间: 2026-10-26 01:46:14 +0800 · 开工 2026-10-26 00:50:29 · 已跑 55m45s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 32 | 0.027 | 0.048 | 0.910 | 0.000 | 0.438 | 1.000 | 4 | 0.312 | 15 | 0 | 0.020 | 0.000 | 0.150 | 0.533 | 0.533 | 0.733 | 0.200 | 1.000 | 0.133 | 0.133 | 0.733 | 0.009 | 0.055 | 0.065 | 0.010 | 0.013 | 0.069 | 0.069 | 0.012 |
+
+叶子使用: {'high': 14, 'ln_mktcap': 10, 'low': 5, 'vwap': 4, 'barra_beta': 3, 'mf_s_sell': 3}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r1_leaf_conc] LLM 已【永久】否决，后续各代一律不再施加 —— 叶子过度集中 -> 压低该叶子权重
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 3 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 241代)**: 调用3次, 解析通过27条, 引导位使用27条
+> 日内交易者情绪与真实资金流的错配：当收盘价被推高到日内区间上沿但主动大单净买入并未跟随（或中小单接盘而超大单出货）时，未来5日截面收益偏弱；反之日内被打压但大单持续吸筹的股票后续占优。
+
+
+**LLM 候选审查(B角 241代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `ts_mean200(ts_resi20(ts_slope20(ts_mean200(high))))`
+  > 理由: 多层同源平滑嵌套，200/20窗口冗余，仅用high无价量机制，难解释
+- KILL `ts_resi20(ts_mean60(ts_resi60(ts_mean200(high))))`
+  > 理由: 多层同源均线嵌套残差，窗口20/60/200冗余，无清晰量价机制，属参数拼凑
+- KILL `ts_mean200(ts_delta120(ema20(ts_mean20(low))))`
+  > 理由: 多层同源均线嵌套再差分，窗口20/120/200无机制解释，属参数冗余堆叠
+- KILL `ts_slope20(ts_mean200(neg(ts_delta10(ts_mean20(mul(corr60(low, ln_mktcap), high))))))`
+  > 理由: 多层嵌套同源时序算子，窗口10/20/60/200堆叠冗余，经济含义难解释，属参数拼凑
+- KILL `ts_delta20(ts_slope10(ts_mean200(ts_mean20(mul(ts_rank60(low), high)))))`
+  > 理由: 多层同源平滑嵌套(20/200/10/20)冗余难解释，low与high相乘含义拼凑，属参数海捞针
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根在L2端：neg_yr=3~5、calmar≈0，说明信号是长期趋势/规模暴露的伪alpha，IC高但不可交易。
+> (2) 三条建议全被永久否决，本轮无实际动作，故无对症可言；但需警惕：把depth放宽到3~5只会加剧过拟合与neg_yr，与decorr=0.65的分散诉求冲突；min_stab降到0.75会放行stab=0.77的弱叶。
+> (3) mix=[0.1,0.35,0.2,0.2,0.15] depth=[2,3,3] min_stab=0.82 decorr=0.75：压深度、提稳定性门槛，逼因子脱离规模/趋势骨架。
+> (4) 本代无实际动作可停。
+> 否决: 无
+
+## 第 242 代 (B角诊断)
+
+时间: 2026-10-26 02:40:49 +0800 · 开工 2026-10-26 01:46:20 · 已跑 54m29s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 32 | 0.024 | 0.048 | 0.880 | 0.000 | 0.375 | 1.000 | 12 | 0.375 | 17 | 0 | 0.023 | 0.000 | 0.150 | 0.824 | 0.824 | 0.765 | 0.353 | 1.000 | 0.059 | 0.353 | 0.647 | 0.008 | 0.042 | 0.050 | 0.011 | 0.012 | 0.051 | 0.051 | 0.013 |
+
+叶子使用: {'ln_mktcap': 12, 'vwap': 8, 'low': 6, 'high': 6, 'barra_beta': 5, 'mf_s_sell': 2}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 242代)**: 调用3次, 解析通过21条, 引导位使用21条
+> 资金流与价格行为的方向背离(大单主动净买入强而价格未跟上、或融资加杠杆但价格不涨)反映知情资金吸筹/拥挤度累积,可在未来5日截面收益上产生可预测的超额。
+
+
+**LLM 候选审查(B角 242代)**: 深判 5 个, KILL 2 个(剔除出 L2 费后回测)
+- KILL `ts_slope5(ts_mean200(ts_slope5(ts_mean200(ts_mean20(ts_slope20(open))))))`
+  > 理由: 多层同源均值斜率嵌套冗余，窗口5/20/200拼凑，无清晰量价机制，属参数海捞针
+- KILL `ts_resi60(ts_mean200(ts_slope20(ts_mean200(mul(ts_rank10(open), high)))))`
+  > 理由: 多层同源时序算子嵌套冗余，open与high相乘含义拼凑，窗口堆叠似参数捞针，经济机制不可解释
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根:因子全挤在ln_mktcap/vwap/low-high同一族,结构多样性1.0是假象,neg_yr=1.0说明全是同向beta暴露,IC再高也过不了L2。
+> 
+> (2) 两条建议均被永久否决,本轮无实际动作,故无对症与否;但注意:若下代靠depth放宽到3~5救0通过,只会放大同族过拟合,与decorr=0.65自相矛盾。
+> 
+> (3) mix取[0.1,0.4,0.15,0.2,0.15]偏交叉合理但需先降同族;depth取[2,3,3]防深挖;min_stab=0.75可;decorr提到0.8强制分族;理由:先破族再谈深度。
+> 
+> (4) 无实际动作可停,但永久关闭项维持。
+> 
+> 否决: 无
+
+## 第 243 代 (B角诊断)
+
+时间: 2026-10-26 03:33:36 +0800 · 开工 2026-10-26 02:40:56 · 已跑 52m39s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 29 | 0.028 | 0.048 | 0.876 | 0.000 | 0.517 | 1.000 | 11 | 0.552 | 15 | 0 | 0.027 | 0.000 | 0.150 | 0.733 | 0.733 | 0.800 | 0.467 | 1.000 | 0.133 | 0.333 | 0.867 | 0.009 | 0.048 | 0.054 | 0.010 | 0.014 | 0.077 | 0.082 | 0.015 |
+
+叶子使用: {'ln_mktcap': 15, 'high': 8, 'low': 7, 'vwap': 6, 'ln_volume': 1, 'mf_s_sell': 1}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r1_leaf_conc] LLM 已【永久】否决，后续各代一律不再施加 —— 叶子过度集中 -> 压低该叶子权重
+- 【拦截】[r4_fail_turn] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因换手失败 -> min_stab 再+0.10
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 4 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 243代)**: 调用3次, 解析通过38条, 引导位使用38条
+> 资金流方向与价格变动出现分歧时，主动大单净买入占优但价格未跟上，反映知情资金在低调吸筹，未来5日截面收益更高。
+
+
+**LLM 候选审查(B角 243代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `ts_delta20(ts_slope20(ts_mean200(ln_mktcap)))`
+  > 理由: 仅对市值做多层时序平滑与斜率差分，属市值老故事冗余结构，无增量量价机制
+- KILL `ts_slope10(ts_mean200(ts_resi60(ema20(ln_mktcap))))`
+  > 理由: 仅ln_mktcap单字段多层嵌套平滑，无增量量价机制，属市值老故事冗余结构
+- KILL `ts_slope5(ts_mean60(ts_resi60(ts_mean200(ts_delta20(ts_slope20(ts_mean200(ln_mktcap)))))))`
+  > 理由: 仅ln_mktcap单字段多层嵌套平滑斜率残差，纯市值平滑的数学堆叠，无增量量价机制
+- KILL `ts_delta20(ts_slope10(ts_mean200(ts_mean20(mul(ts_rank200(neg(barra_beta)), high)))))`
+  > 理由: 多层同源时序算子嵌套冗余，beta排名乘高价含义拼凑，难解释且过拟合
+- KILL `ts_slope5(ts_mean200(ts_slope5(ts_mean200(ts_mean20(ts_slope20(ts_delta60(ema20(ln_mktcap))))))))`
+  > 理由: 仅ln_mktcap市值字段，多层同源平滑斜率嵌套冗余，无增量量价机制，属已知市值族再表达
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根: 因子全挤在 ln_mktcap/high/low 的时序平滑残差上, 结构同质(struct_div=1.0)且 neg_yr 全灭, 是"换皮不换信号", 不是参数问题。
+> 
+> (2) 四条建议全被永久否决, 本轮实际无动作, 故无对症可言; 真正冲突在于: 建议里想放宽 depth 救 0 通过, 但 fail_negyear=1.0 说明深度只会放大同族噪声, 放宽无效; min_stab 已 0.876 高位, 再加也压不动换手失败。
+> 
+> (3) mix=[0.15,0.3,0.2,0.2,0.15] depth=[2,3,3] min_stab=0.80 decorr=0.75: 降深度、提扰动与去相关, 逼引擎离开 mktcap 骨架去碰 mf_s_sell/ln_volume 这类未饱和叶子。
+> 
+> (4) 本代无实际动作可停。
+> 
+> 否决: 无
+
+## 第 244 代 (B角诊断)
+
+时间: 2026-10-26 04:28:24 +0800 · 开工 2026-10-26 03:34:08 · 已跑 54m15s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 26 | 0.028 | 0.048 | 0.862 | 0.000 | 0.385 | 1.000 | 8 | 0.269 | 16 | 0 | 0.026 | 0.000 | 0.150 | 0.750 | 0.750 | 0.938 | 0.312 | 1.000 | 0.125 | 0.375 | 0.875 | 0.007 | 0.045 | 0.056 | 0.012 | 0.012 | 0.066 | 0.058 | 0.014 |
+
+叶子使用: {'vwap': 10, 'high': 9, 'low': 8, 'ln_mktcap': 6, 'ln_volume': 1, 'mf_s_sell': 1}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 244代)**: 调用3次, 解析通过24条, 引导位使用24条
+> 融资融券与龙虎榜等行为数据在日频上稀疏，但累计后的杠杆拥挤度与机构席位参与度反映知情交易者的慢速建仓；当融资加杠杆而价格未跟随（拥挤度背离），或机构席位累计净买入强于营业部时，未来5日截面收益有负向/正向分化。
+
+
+**LLM 候选审查(B角 244代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `ts_mean200(ts_resi20(ts_resi60(ts_slope20(ts_mean200(ts_max20(ln_mktcap))))))`
+  > 理由: 多层同源时序算子嵌套冗余，仅ln_mktcap市值老故事，无增量量价机制
+- KILL `ts_slope5(ts_mean60(ts_resi60(ts_mean200(fa_pb))))`
+  > 理由: 仅用pb字段多层同源平滑残差斜率，无成交量价机制，属参数堆叠冗余
+- KILL `ts_mean5(ts_slope20(ts_mean200(neg(ts_delta10(ts_mean20(mul(ts_rank20(vwap), high)))))))`
+  > 理由: 多层嵌套同源平滑，窗口堆叠无经济机制，属参数拼凑冗余结构
+- KILL `ts_delta20(ts_slope20(ts_mean200(ts_mean60(ts_slope20(vwap)))))`
+  > 理由: 多层同源均值与斜率嵌套冗余，窗口20/60/200无机制，属参数堆砌难解释
+- KILL `ts_slope10(ts_slope20(ts_mean200(ts_slope60(ln_mktcap))))`
+  > 理由: 多层斜率嵌套市值，纯数学冗余，无增量量价机制，属已知市值族
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根：L2 全灭于 neg_yr 与 calmar，因子全是 ts_slope/ts_resi 嵌套的时序平滑堆叠，方向性收益缺失，IC 高但无经济含义。
+> (2) 两条建议均被永久否决，本代无动作，故无对症可言；若下代重启 r5_calmar_cross 会与 min_stab=0.75 的宽松筛选冲突，加深 depth 又会加剧嵌套过拟合，二者互相抵消。
+> (3) mix=[0.15,0.3,0.2,0.2,0.15] depth=[2,3,3] min_stab=0.8 decorr=0.7：降深度破嵌套、提 decorr 逼出横截面新骨架。
+> (4) 本代无动作可停。
+> 否决: 无
+
+## 第 245 代 (B角诊断)
+
+时间: 2026-10-26 05:27:14 +0800 · 开工 2026-10-26 04:28:30 · 已跑 58m43s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 30 | 0.029 | 0.048 | 0.852 | 0.000 | 0.333 | 1.000 | 4 | 0.300 | 21 | 0 | 0.022 | 0.000 | 0.150 | 0.857 | 0.857 | 0.905 | 0.333 | 1.000 | 0.095 | 0.095 | 0.905 | 0.013 | 0.066 | 0.074 | 0.010 | 0.013 | 0.064 | 0.066 | 0.011 |
+
+叶子使用: {'vwap': 10, 'high': 10, 'low': 10, 'ln_mktcap': 7, 'open': 2, 'ln_volume': 2}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 245代)**: 调用3次, 解析通过38条, 引导位使用38条
+> 融资融券与龙虎榜等行为数据经长窗累计后，刻画的是杠杆资金与机构席位的持续性建仓拥挤度；当加杠杆、上榜热度抬升而价格未同步走强时，未来5日截面收益偏弱（拥挤反转），反之资金流入与价格确认背离的个股占优。
+
+
+**LLM 候选审查(B角 245代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ts_slope10(ts_mean200(ts_resi60(ts_mean120(mul(high, high)))))`
+  > 理由: 仅用high字段多层嵌套均值与残差，无成交量价配合，经济含义不清且窗口冗余，属参数堆砌
+- KILL `ts_slope10(cs_rank(ts_resi60(ts_mean60(ts_delta120(ema20(high))))))`
+  > 理由: 多层同源平滑嵌套(ema/mean/resi/slope)冗余难解释，窗口堆叠似参数捞针，经济含义拼凑
+- KILL `ts_slope10(ts_slope20(ts_mean200(ts_mean120(ts_mean200(ts_max20(ln_mktcap))))))`
+  > 理由: 多层同源均值嵌套市值，仅平滑尺度无增量机制，属已知市值族冗余结构
+- KILL `ts_slope5(ts_mean200(ts_mean5(ts_slope10(ts_slope20(ts_mean200(ts_max20(vwap)))))))`
+  > 理由: 多层同源均值/斜率嵌套冗余，窗口堆叠无经济机制，属参数拼凑
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根: 因子全在低IC(≤0.048)高stab的平滑残差区, 信号被过度平滑, 无alpha可挖, 0通过是结构性问题而非参数问题。
+> (2) 规则B角两条建议均已被永久否决, 本轮实际未施加任何动作, 故无对症可言; 下代表格把mix交叉提到0.4、depth放宽到4, 与"信号过平滑"病根方向相反, 会加剧无效探索; min_stab=0.75偏低, 会放进更多平滑噪声。
+> (3) mix=[0.15,0.2,0.25,0.25,0.15] depth=[2,3,3] min_stab=0.85 decorr=0.7; 理由: 降交叉、提扰动与引导、压深度与提stab, 逼出更短周期更锐利的信号。
+> (4) 本代无实际动作, 无新可停; 已永久关闭项维持关闭。
+> 否决: 无
+
+## 第 246 代 (B角诊断)
+
+时间: 2026-10-26 06:22:02 +0800 · 开工 2026-10-26 05:27:21 · 已跑 54m40s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 30 | 0.028 | 0.048 | 0.866 | 0.000 | 0.400 | 0.967 | 4 | 0.167 | 17 | 0 | 0.008 | 0.000 | 0.150 | 0.824 | 0.824 | 0.824 | 0.235 | 1.000 | 0.000 | 0.176 | 1.000 | 0.013 | 0.073 | 0.078 | 0.014 | 0.013 | 0.068 | 0.072 | 0.013 |
+
+叶子使用: {'high': 12, 'low': 11, 'vwap': 10, 'ln_volume': 3, 'ln_mktcap': 2, 'open': 2}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 2 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 246代)**: 调用3次, 解析通过23条, 引导位使用23条
+> 日内交易者情绪与真实资金流方向背离时，未来5日截面收益可预测：尾盘/日内涨幅被中小单主动买入推高、而超大单净卖出(聪明钱派发)，随后5日跑输；反之日内被砸但超大单净吸筹的票跑赢。
+
+
+**LLM 候选审查(B角 246代)**: 深判 5 个, KILL 5 个(剔除出 L2 费后回测)
+- KILL `ts_mean200(ts_resi20(ts_delta5(ts_mean60(ts_resi60(ts_mean200(low))))))`
+  > 理由: 多层均值残差嵌套冗余，窗口堆叠无清晰量价机制，属参数拼凑
+- KILL `ts_slope20(ts_mean200(ts_slope5(ts_mean200(ts_mean20(ts_slope20(vwap))))))`
+  > 理由: 多层同源均值斜率嵌套冗余，窗口堆叠无经济含义，属参数拼凑
+- KILL `ts_slope5(ts_slope20(ts_mean200(ts_mean120(ts_slope20(vwap)))))`
+  > 理由: 多层同源平滑与斜率嵌套冗余，窗口堆叠无经济机制，属参数拼凑
+- KILL `ts_mean5(ts_resi60(ts_slope20(ts_mean200(ts_max20(vwap)))))`
+  > 理由: 多层同源时序算子嵌套冗余，窗口堆叠无明确量价机制，难解释易过拟合
+- KILL `ts_resi60(ts_mean60(ts_resi60(ts_mean200(low))))`
+  > 理由: 对low做200日均线再60日残差，又套60日均线再残差，同源算子嵌套冗余，无清晰量价机制
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根是因子全挤在ts_mean200长窗与high/low/vwap价格类叶子上, 信号同质、换手过低且neg_yr普遍3-4年, 不是深度不够。
+> 
+> (2) 两条建议均被永久否决, 本轮实际无动作, 故无对症可言; 但下代表格depth=[3,4,4]与「深度放宽」意图自相矛盾, mix交叉0.4偏高会加剧同质, decorr=0.65偏低难解leaf_conc。
+> 
+> (3) mix=[0.15,0.2,0.15,0.3,0.2] depth=[2,3,4] min_stab=0.8 decorr=0.8; 理由: 提引导与去相关、压交叉、控深度以跳出长窗价格族。
+> 
+> (4) 本代无实际动作可停, 但下代表格若沿用高交叉需警惕。
+> 
+> 否决: 无
+
+## 第 247 代 (B角诊断)
+
+时间: 2026-10-26 07:15:34 +0800 · 开工 2026-10-26 06:22:33 · 已跑 53m1s（诊断落档时刻 · 本机时区；此刻 AI 审查/存盘未跑完 ⇒ 只报"已跑"）
+
+| n_l1 | ic_med | ic_max | stab_med | stab_lt50 | leaf_conc | struct_div | fam_blocked | known_ratio | n_l2 | n_pass | ex_max | gate_min_calmar | gate_min_pool_calmar | fail_calmar | fail_calmar_neg | fail_pool_calmar | fail_turn | fail_negyear | fail_lastyr | fail_ic | seg_kill | st_l2_lncap | st_l2_lnamt | st_l2_lntr | st_l2_lnpx | st_l1_lncap | st_l1_lnamt | st_l1_lntr | st_l1_lnpx |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 27 | 0.029 | 0.048 | 0.857 | 0.000 | 0.519 | 1.000 | 5 | 0.222 | 14 | 0 | 0.019 | 0.000 | 0.150 | 0.786 | 0.786 | 0.857 | 0.214 | 1.000 | 0.214 | 0.143 | 1.000 | 0.013 | 0.071 | 0.078 | 0.013 | 0.014 | 0.072 | 0.078 | 0.016 |
+
+叶子使用: {'high': 14, 'vwap': 7, 'low': 7, 'ln_mktcap': 3, 'ln_volume': 3, 'open': 2}
+
+**B角建议(下一代策略)**:
+- 【拦截】[r1_leaf_conc] LLM 已【永久】否决，后续各代一律不再施加 —— 叶子过度集中 -> 压低该叶子权重
+- 【拦截】[r5_calmar_cross] LLM 已【永久】否决，后续各代一律不再施加 —— L2 多因 Calmar 不足 -> 交叉+15% / 深度加深
+- 【拦截】[r7_zero_pass] LLM 已【永久】否决，后续各代一律不再施加 —— 本代 0 通过 -> 深度放宽到 3~5
+- —— 本代共拦截 3 条动作（饱和/LLM 否决），详见上面【拦截】行
+
+```
+mix=[0.1, 0.4, 0.15, 0.2, 0.15]  depth=[3, 4, 4]  min_stab=0.75  decorr=0.65  fsa_th=0.15  bank_skel_max=1
+leaf_w={}
+```
+
+**规则动作留痕**:
+- `r1_leaf_conc` 叶子过度集中 -> 压低该叶子权重 —— 施加于第 [79, 80] 代（**已永久关闭**）
+- `r4_fail_turn` L2 多因换手失败 -> min_stab 再+0.10 —— 施加于第 [172, 198] 代（**已永久关闭**）
+- `r5_calmar_cross` L2 多因 Calmar 不足 -> 交叉+15% / 深度加深 —— 施加于第 [77, 80] 代（**已永久关闭**）
+- `r7_zero_pass` 本代 0 通过 -> 深度放宽到 3~5 —— 施加于第 [80, 81] 代（**已永久关闭**）
+- ⛔ **被 LLM 永久否决的动作**（用户要求「让它永久闭嘴」）：`r5_calmar_cross`, `r1_leaf_conc`, `r7_zero_pass`, `r4_fail_turn`
+
+**LLM 引导(A角 247代)**: 调用3次, 解析通过30条, 引导位使用30条
+> 融资杠杆拥挤度与龙虎榜机构席位资金的方向背离：当融资余额占市值比在长窗内抬升但股价未随之上涨（加杠杆不涨=拥挤风险），同时龙虎榜机构席位净买入累计强度偏弱时，未来5日截面收益偏低；反之杠杆温和且机构席位资金持续净流入的个股未来5日跑赢。
+
+
+**LLM 候选审查(B角 247代)**: 深判 5 个, KILL 4 个(剔除出 L2 费后回测)
+- KILL `ts_mean200(ts_resi20(ts_delta20(ts_mean60(ts_resi60(ts_mean200(low))))))`
+  > 理由: 多层均值残差嵌套冗余，参数20/60/200拼凑，经济含义难解释，过拟合嫌疑
+- KILL `ts_mean5(ts_resi60(ts_mean200(ts_resi60(ts_mean200(mul(high, ln_volume))))))`
+  > 理由: 多层同源ts_resi/ts_mean嵌套冗余，窗口5/60/200无机制，价量相乘含义拼凑，难解释
+- KILL `ts_slope5(ts_mean200(ts_delta5(ts_mean200(neg(ts_delta10(ts_sum20(vwap)))))))`
+  > 理由: 多层同源均值/差分嵌套冗余，200窗套200窗，经济含义拼凑难解释，过拟合嫌疑
+- KILL `ts_resi60(ts_mean200(mul(ts_delta120(ema20(high)), high)))`
+  > 理由: 多层同源价格算子嵌套冗余，窗口20/60/120/200无机制依据，经济含义难解释
+
+
+**AI 审查(DeepSeek deepseek-flash, 2s)**:
+
+> (1) 病根是 L1 的 IC 和稳定性都够，但 L2 的 calmar 全为负、neg_yr 普遍 3~5，说明因子只停留在“统计显著”，没跨过“经济显著”，且叶子集中在 high/vwap/low 上，同质化严重。
+> (2) 三条建议全被永久否决，等于没建议；r5_calmar_cross 与 r7_zero_pass 本就互相冲突（一个加深、一个放宽），r1_leaf_conc 被否决后叶子集中问题无人处理，是当前最大缺口。
+> (3) mix=[0.15,0.35,0.15,0.2,0.15] depth=[3,4,4] min_stab=0.8 decorr=0.7：略提变异与去相关、抬 min_stab，压住同质叶子、逼出经济显著。
+> 否决: 无
