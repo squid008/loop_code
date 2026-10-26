@@ -93,6 +93,61 @@
 
 > ⚠ **归档动作（2026-10-26）**：承诺只保留最近 15 个版本，当时已累积 **16** 条 ⇒ 已把最旧的 1 条**整段原文**搬进 `history/change_log_archive.md` ✓。
 
+> ⚠ **归档动作（2026-10-26 第二次）**：承诺只保留最近 15 个版本，当时已累积 **16** 条 ⇒ 已把最旧的 1 条**整段原文**搬进 `history/change_log_archive.md` ✓。
+
+## [1.50.2] — 2026-10-26
+
+> 主题：**补 `requirements.txt` + README「环境准备」**（换机器不用猜依赖）✓
+> 起因：用户问「家里装在 `D:\quant\loop_code` 会不会有问题」⇒ 一查发现**项目根本没有依赖清单** ✗
+
+### 一、`requirements.txt`
+
+* 用 `ast` 扫描 `engine/` · `tools/` · `dashboard/api/app/` 的 import，得出**真正用到的包**
+  —— 不用 `pip freeze`（那会把环境里装过的所有东西都列进来，换机器时纯属干扰）
+* **10 个直接依赖**：`numpy` · `pandas` · `scipy` · `h5py` · **`tables`** · `fastapi` ·
+  `uvicorn` · `pydantic` · `tushare` · `requests`
+* ⚠ **`tables`（PyTables）是"扫不到但必须"**：`pd.HDFStore(...)` 少了它会直接抛
+  `HDFStore requires PyTables`，而代码里**没有任何 `import tables`** ⇒ 只有靠人记住 ✓
+* 版本写**兼容区间**而不是精确锁定（`numpy>=1.24,<2.1`）：
+  - 精确到 `1.26.4` 这种粒度，换机器容易找不到对应 wheel
+  - 上界只卡**有破坏性变更**的大版本：numpy 2.x 的 ABI、pandas 3.x 的 copy-on-write
+* 实测：`pip install -r requirements.txt --dry-run` **全部 already satisfied** ✓；
+  `pip check` → **No broken requirements found** ✓
+
+### 二、README 补「环境准备」一节
+
+* Python **3.11** + `pip install -r requirements.txt`；前端 `npm install`
+* **必须一起带走的文件**（都在 `.gitignore` 里，`git clone` 拿不到）：
+
+  | 内容 | 约 | 能否重建 |
+  |---|---|---|
+  | `engine/*.h5` | 2.6 GB | 能（需 `E:\rq` 原始数据 + tushare token） |
+  | `docs/*.csv`（逐代档案） | 200 MB | **不能** |
+  | `engine/loop_state*.pkl` | 几十 MB | **不能** |
+  | `config.local.json` | 1 KB | 能（自行填 token，不入库） |
+
+* **路径说明**（直接回答"家里装 D 盘会不会有问题"）：代码**零绝对路径**
+  （全相对 `__file__` 或 `dashboard/config.json` 的 `project.root: ".."`）
+  ⇒ **整个目录搬走即可，不需要改任何配置**。
+  只有 6 个**数据构建脚本**写死 `E:\rq`（一次性用，日常挖掘不碰）
+* 自检：`python tools/release_check.py`（60 项守门）
+* 顺手把 `loop_fields.py` 的描述从"=63"改成"**68**"（加替代数据后过时了）
+
+### 三、验证
+
+| 项 | 结果 |
+|---|---|
+| 依赖区间 | `--dry-run` 全满足 · `pip check` 无冲突 ✓ |
+| 全量回归 | 见 §四 |
+
+### 四、发版回归
+
+★ **全量回归：60/60 全绿** ✓（**实测 6.6 分钟** ✓；最慢 `_test_e2e_l1l2` 122 s ·
+`_test_parallel_runner` 107 s · `_test_daily_dd` 37 s ✓）。
+跑前 `running=False`、**0 个 loop 进程**、可用内存 21.2 GB ✓。
+
+---
+
 ## [1.50.1] — 2026-10-26
 
 > 主题：**修保底名额「静默失效」**（`_is_alt` 不认字符串形态）—— 7 轮 21 代白跑 ✓
@@ -819,51 +874,6 @@ TypeError: 'Node' object is not iterable
 ### 五、20 日回填
 
 （待补测跑完后回填——本次补测会给全库 68 个因子补上 20 日剥风格）
-
----
-
-## [1.40.2] — 2026-10-19
-
-> 主题：**面板补齐「超额 · 剥风格后」＋ 分组重排** ✓
-> （用户："面板里是不是还得加超额口径·剥风格后的各种指标？然后把组合自身口径期频打点和日频打点
-> 放在超额口径上面"）—— 纯展示改动，**判定/排序零改动** ✓。
-
-### 一、改动
-
-* `engine/loop_l2.py`：`strip_rec` 补 **`strip_dd`**（超额 · **期频**回撤 —— 此前只存了日频 `dd_d`）
-* `tools/build_facs.py`：汇总表加 `strip_dd` 列
-* `dashboard/api/app/sources/factors.py`：
-  * 并入 `metrics` 的剥风格字段从 7 个扩到 **14 个**
-    （补超额四件套 `strip_ann_ex / strip_dd / strip_calmar / strip_sharpe` 与日频三项）
-  * **`strip_dd` 缺失时用恒等式派生**：`|dd| = ann_ex / calmar`
-    （老汇总表没有这一列 ⇒ **不必重跑 50 分钟补测**就能显示 ✓）
-* `dashboard/web/src/App.tsx`：`METRIC_GROUPS` 顺序改为
-  **组合自身（期频 / 日频 / 剥风格期频 / 剥风格日频）→ 超额（同四格）→ 其他**
-* **`dashboard/api/app/sources/core.py`：修 `cached()` 的 TTL 起点（真 BUG）** ——
-  原实现用**扫描开始前**的 `now` 当时间戳 ⇒ 冷扫耗时（实测 2.0s）把 2 秒 TTL 直接吃光
-  ⇒ 缓存**刚写完就已过期** ⇒ 前端每 2 秒轮询几乎每次真扫进程（这也是用户长期抱怨
-  `/api/status` 常 2 秒+ 的根因）。改为用**写入完成时刻** ⇒ 缓存读从 **1.2s → 0.0000s** ✓
-
-### 二、验证（实测）
-
-| 项 | 结果 |
-|---|---|
-| 单元（`ai_test/_test_strip_rec_of.py`） | **22 字段齐** · 组合自身取值对 · 超额口径未变 · 缺字段记 None 不抛 ✓ |
-| `py_compile` / 未定义名 | OK / **0 处** ✓ |
-| R1 审计 | 无新增（`engine/` 仍只剩既存 `build_fa_pit.main()` 150 行）✓ |
-| 前端接线守门 | **全过** ✓ |
-| 后端实测（重启后 `/api/library/all`） | F48 的 **14 个 `strip_*` 全部可读**；派生 `strip_dd = −6.02%`、真值 `strip_dd_d = −7.78%`（日频更深，符合"逐日 mark"定义 ✓） |
-| 全量回归 | 见 §三 |
-
-### 三、发版回归
-
-* **第 1 轮：58/59** ✗ —— 唯一失败 `_test_api_speed.py`（两项：缓存命中加速比、`fresh=True` 重扫）。
-  实测数字：冷扫 **5.139s** · 缓存读 **2.8598s** · 强制扫 2.701s ⇒ 缓存读**根本没命中** ✗。
-  **根因是 `cached()` 的真 BUG**（见 §一 最后一条），不是本次展示改动。
-  ⇒ 改为"写入完成时刻"作 TTL 起点后：缓存读 **1.2s → 0.0000s**、冷扫 2.525s ⇒ 守门**全过** ✓。
-* **第 2 轮：59/59 全绿** ✓（**实测 12.9 分钟** —— 机器仍偏慢，
-  `_test_e2e_l1l2` 219 s / `_test_parallel_runner` 174 s）。
-  跑前无挖掘在跑 ✓；跑完**未起引擎** ✓、控制文件已复位 ✓。
 
 ---
 

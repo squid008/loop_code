@@ -1,9 +1,44 @@
 # loop_code — Loop 式因子自动挖掘引擎
 
-> **当前版本 v1.50.1**（2026-10-26）
+> **当前版本 v1.50.2**（2026-10-26）
 
 
 从 `D:\rqalpha_demo` 整理迁移（2026-09-08），原目录保留备份。机器外部数据依赖：米筐 bundle `E:\rq`（本地数据盘）。
+
+## 环境准备（新机器 / 换盘）
+
+**1) Python 环境**（开发机实测 **3.11.15**）
+
+```bash
+pip install -r requirements.txt
+```
+
+**2) 前端依赖**
+
+```bash
+cd dashboard/web && npm install
+```
+
+**3) 必须一起带走的文件**（都在 `.gitignore` 里，`git clone` 拿不到）
+
+| 文件 / 目录 | 约 | 能否重建 |
+|---|---|---|
+| `engine/panel.h5` · `barra.h5` · `fa_pit.h5` · `alt_data.h5` | **2.6 GB** | 能（`build_*.py` + `tools/fetch_alt_data.py`，但需要 `E:\rq` 原始数据与 tushare token） |
+| `docs/loop_archive*.csv` · `docs/loop_style_obs*.csv` · `docs/loop_strip_style*.csv` 等 | 200 MB | **不能**（逐代档案，删了就没了） |
+| `engine/loop_state*.pkl` | 几十 MB | **不能**（挖掘轨迹） |
+| `config.local.json` | 1 KB | 能（自己填 tushare token），但**不入库** |
+
+> **路径说明**：代码里**没有任何绝对路径**（全部相对 `__file__` 或 `dashboard/config.json` 的
+> `project.root`）⇒ 整个目录放到 `D:\quant\loop_code` 也能直接跑，**不需要改配置**。
+> 只有 6 个**数据构建脚本**（`build_barra.py` / `build_fa_pit.py` / `build_mf_leaves.py` /
+> `augment_panel.py` / `build_moneyflow.py` / `audit_f11.py`）写死了 `E:\rq` —— 它们是一次性
+> 数据构建用的，**日常挖掘不碰**。
+
+**4) 自检**
+
+```bash
+python tools/release_check.py     # 60 项守门；全绿 = 环境就绪
+```
 
 ## 目录结构
 - `engine/` — **Loop 挖掘引擎（可独立运行，相互引用均用相对自身路径）**
@@ -16,7 +51,7 @@
   - `loop_critic.py` B角诊断（每代自动写 gen 建议进 journal）+ `loop_llm.py` LLM 双子（A角语义引导 / B角候选审查 / 代末 AI 审查）
   - `loop_watch.py` 常驻接力进程（每 5min 轮询，空闲自动启下一代，支持无人值守多代跑）
   - `loop_status.py` 进度/进程/档案查询
-  - `loop_fields.py` **叶子字段单一事实源**（基础7+派生12+资金流16+BARRA11+财报17=**63**；新增字段族只改这一处）
+  - `loop_fields.py` **叶子字段单一事实源**（基础7+派生12+资金流16+BARRA11+财报17+替代数据5=**68**；新增字段族只改这一处）
   - `factor_miner.py` 因子挖掘基础框架（panel 加载/预筛选/两段式验证）
   - `fastops.py` L1 向量化快速算子
   - `build_mf_leaves.py` / `build_barra.py` / `build_fa_pit.py` 扩展数据源叶子构建（资金流16列入 panel / barra.h5 / fa_pit.h5，幂等可重建）

@@ -1,0 +1,33 @@
+# 数因工坊 · loop_code —— Python 依赖
+#
+# 环境：Python **3.11**（开发机实测 3.11.15）
+# 安装： pip install -r requirements.txt
+#
+# ⚠ 本文件只列**代码真正用到的包**（用 ast 扫描 engine/ · tools/ · dashboard/api/app/ 得出）。
+#   环境里装了别的包不影响运行；这里不列，是为了换机器时不被无关依赖卡住 ✓
+#
+# ⚠ 版本用「兼容区间」而不是精确锁定：
+#   锁定到 3.11.15 / numpy 1.26.4 这种粒度，换机器时很容易因为找不到完全匹配的 wheel 卡住。
+#   区间上界只卡**有已知破坏性变更**的大版本（numpy 2.x 的 ABI、pandas 3.x 的 CoW）。
+#
+# 前端依赖不在这里（见 dashboard/web/package.json，用 npm install）。
+
+# ---- 核心计算（引擎 / L1 / L2 / 回测）----
+numpy>=1.24,<2.1          # 开发机 1.26.4
+pandas>=2.0,<3.0          # 开发机 2.3.3；pandas 3.0 改了 copy-on-write 默认值，未验证
+scipy>=1.10,<2.0          # 开发机 1.17.1（回归、统计）
+h5py>=3.8,<4.0            # 开发机 3.16.0（读 panel/barra/fa_pit/alt_data.h5）
+
+# ---- 面板存储（`pd.HDFStore` 必需）----
+# ⚠ 代码里**没有直接 import 它**，但 `pd.HDFStore(...)` 少了它会直接抛
+#   "HDFStore requires PyTables" —— 扫描 import 时扫不到，只能靠人记住 ✓
+tables>=3.8,<4.0          # 开发机 3.11.1（PyTables）
+
+# ---- 看板后端 ----
+fastapi>=0.100,<1.0       # 开发机 0.141.1
+uvicorn>=0.23,<1.0        # 开发机 0.53.0
+pydantic>=2.0,<3.0        # 开发机 2.13.5（fastapi 0.100+ 走 v2）
+
+# ---- 数据拉取 / 通知 ----
+tushare>=1.4,<2.0         # 开发机 1.4.29（两融 / 龙虎榜 / 大宗；token 放 config.local.json）
+requests>=2.28,<3.0       # 开发机 2.34.2（飞书通知等）
