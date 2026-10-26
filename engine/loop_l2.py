@@ -511,15 +511,30 @@ def _drop_hist_skipped(top, args):
 #   ⇒ 不保底的话，这 5 个字段**永远轮不到回测**，也就永远无法判断它们有没有 alpha。
 # ⚠ 默认 0 ⇒ 行为与改造前**逐位一致**（不传就等于没这功能）✓
 ALT_PREFIXES = ('mg_', 'lhb_', 'block_')
+# 精确的 5 个叶子名（子串匹配用；比按前缀匹配更不容易误判）
+ALT_NAMES = ('mg_bal_ratio', 'mg_buy_ratio', 'lhb_net_ratio',
+             'lhb_inst_ratio', 'block_vol_ratio')
 
 
 def _is_alt(node):
-    """该候选是否用到替代数据族（两融 `mg_*` / 龙虎榜 `lhb_*` / 大宗 `block_*`）。"""
+    """该候选是否用到替代数据族（两融 / 龙虎榜 / 大宗）。
+
+    ⚠⚠ **两种形态都要认** —— 2026-10-25 实测：保底**一次都没触发**，根因就在这里 ✗
+      ① `Node` 对象：`loop_expr.leaves()` 正常返回叶子名 ✓
+      ② **字符串表达式**：`leaves()` 会把**整串**当成"一个叶子"（`['div(mg_buy_ratio, …)']`）
+         ⇒ 名字 `startswith('mg_')` 恒为 False ⇒ 整条候选被误判成"不含替代数据" ✗
+      判据：`leaves()` 只返回 1 个元素、且它**等于** `str(node)` ⇒ 说明它把整串当叶子了，
+      此时退化用**精确叶子名子串匹配** ✓
+    """
     try:
         from loop_expr import leaves as _leaves      # 局部 import（别名，避免被当成全局）
-        return any(str(x).startswith(ALT_PREFIXES) for x in _leaves(node))
+        names = [str(x) for x in _leaves(node)]
     except Exception:                                # noqa: BLE001
-        return False
+        names = []
+    if names and not (len(names) == 1 and names[0] == str(node)):
+        return any(x.startswith(ALT_PREFIXES) for x in names)
+    s = str(node)                                    # 形态②：按精确叶子名做子串匹配
+    return any(nm in s for nm in ALT_NAMES)
 
 
 def _boost_alt_top(top, l1, args):
@@ -533,6 +548,17 @@ def _boost_alt_top(top, l1, args):
     if n <= 0 or top is None or l1 is None or not len(top) or 'node' not in l1.columns:
         return top
     try:
+        # ⚠ 一次性诊断（首次调用打印入参形状）—— 2026-10-25 保底**一次都没触发**，
+        #   日志里既没有"补 N 个"也没有"失败"，说明它在**静默提前返回** ⇒ 必须看到真实入参
+        if not getattr(_boost_alt_top, '_dbg', False):
+            _boost_alt_top._dbg = True
+            try:
+                _n0 = int(l1['node'].map(_is_alt).sum()) if 'node' in l1.columns else -1
+                print(f"  [替代数据保底] 诊断: l1={len(l1)} top={len(top)} slots={n} "
+                      f"列={list(l1.columns)[:6]} node={type(l1['node'].iloc[0]).__name__} "
+                      f"命中={_n0}", flush=True)
+            except Exception as _e:                  # noqa: BLE001
+                print(f"  [替代数据保底] 诊断失败: {type(_e).__name__}: {_e}", flush=True)
         # ⚠ 两条硬约束（2026-10-25 单测抓到的）：
         #   ① **总数绝不扩大**（L2 耗时是按条数算的）；② 最多**挤掉一半** ⇒ 原有排序仍占主导
         #   ⇒ `want = min(名额, len(top)//2)`：top 只有 1 条时 want=0 ⇒ 原样返回 ✓

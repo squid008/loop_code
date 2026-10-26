@@ -1,8 +1,54 @@
-# change_log 归档（v1.40.0 及以前）
+# change_log 归档（v1.40.1 及以前）
 
 > 本文件由 `ai_test/_cl_split.py` 从 `change_log.md` 切出（2026-09-27）——
 > 目的是让主 `change_log.md` 只保留近期版本、可读可查（原文**一字未改** ✓）。
 > 新增条目请照旧写进主 `change_log.md` 的**最新**位置 ✓。
+
+---
+
+## [1.40.1] — 2026-10-19
+
+> 主题：**组合自身口径的剥风格指标** ✓（用户："组合自身口径下面要不要也加上剥风格后的指标？"）
+> 纯展示字段 —— **判定/排序零改动** ✓。
+
+### 一、为什么加
+
+现有 `strip_*` 全是**超额**口径（组合 − 池内等权基准）。指数增强最终看的是
+**组合自身的绝对收益**；只看超额回答不了"剥掉风格后这个组合自己还能不能赚"。
+`evaluate_real` 本来就返回组合自身四件套 ⇒ **零额外回测成本** ✓。
+
+### 二、改动（4 处）
+
+* `engine/loop_l2.py`：新增 **`_strip_rec_of()`**（主/副口径共用）；`strip_rec` 增加 **7 字段**：
+  `strip_ann_top / strip_dd_top / strip_calmar_top / strip_sharpe_top`
+  ＋ 日频 `strip_dd_top_d / strip_calmar_top_d / strip_sharpe_top_d`
+  （原主口径 10 行、副口径 8 行的 dict 构造收敛到同一函数 ⇒ `_l2_candidates` 反而更短 ✓）
+* `tools/build_facs.py`：剥风格补测汇总表加这 7 列（`_merge_csv` 按 key 写，旧行自动补空 ✓）
+* `dashboard/api/app/sources/factors.py`：`library()` 里把 7 个字段并进 `f['metrics']`
+  （新增按 mtime 缓存的 `_strip_bank_map()`；CSV 字符串转 float）
+* `dashboard/web/src/App.tsx`：`METRIC_GROUPS` 新增两格 ——
+  「组合自身口径 · 剥风格后（剥 lncap+lnamt）· 期频/日频打点」
+
+### 三、验证
+
+| 项 | 结果 |
+|---|---|
+| 单元（`ai_test/_test_strip_rec_of.py`） | **4/4**：21 字段齐 / 组合自身取值对 / 超额口径逐字未变 / 缺字段记 `None` 不抛 ✓ |
+| `py_compile` / 未定义名 | OK / **0 处** ✓ |
+| R1 审计 | 无新增（`engine/` 仍只剩既存 `build_fa_pit.main()` 150 行）✓ |
+| 冒烟 `smoke_gen_only` | **4/4**（rc=0 · 无 Traceback/NameError · 全部 state SHA256 未变）✓ |
+| 全量回归 | 见 §四 |
+
+### 四、发版回归
+
+* **第 1 轮：58/59** ✗ —— 唯一失败 `_test_api_speed.py`
+  （"第二次命中缓存应比冷扫快一个量级"）。
+  **根因是本次改动的缓存实现**：`_strip_bank_map()` 首版先调 `strip_bank()` 再比对 mtime
+  ⇒ 每次仍把整张 `loop_strip_style_bank.csv` 读一遍（表达式很长）⇒ 缓存命中时仍有 IO ✗。
+  ⇒ 改为**先用 `os.path.getmtime` 判缓存**（命中直接返回，零 IO），单独重跑**全过** ✓。
+* **第 2 轮：59/59 全绿** ✓（**实测 17.4 分钟** —— 本轮机器同时跑着别的重活，
+  `_test_e2e_l1l2` 261 s / `_test_parallel_runner` 258 s 均为平时的 2 倍以上）。
+  跑前无挖掘在跑 ✓；跑完**未起引擎** ✓、控制文件已复位 ✓。
 
 ---
 
