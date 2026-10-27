@@ -2,7 +2,7 @@
 """
 audit_f11.py —— 复现 F11 引擎评测 + BUG①(涨停买入剔除不一致)/②(卖出顺延)敏感性
 只读验证: 不修改 factor_miner / loop_engine 任何代码。
-用法: cd E:\\quant\\loop_code\\engine && D:\\miniconda3\\envs\\rqdata\\python.exe audit_f11.py
+用法: cd D:\\quant\\loop_code\\engine && D:\\miniconda3\\envs\\rqdata\\python.exe audit_f11.py
 """
 import os
 import sys
@@ -210,10 +210,12 @@ def audit_idx(fac, close, member, tag, pct=None, nfix=None):
 import h5py
 print("\n===== F11(-取反) 全市场 vs 成分内增强(2018起, 费后) =====")
 cl_i = cl.index.values
-cases = (("沪深300内Top10%", r"E:\rq\constituents\index\000300.XSHG.h5", 0.10, None),
-         ("中证500内Top10%", r"E:\rq\constituents\index\000905.XSHG.h5", 0.10, None),
-         ("沪深300内Top30只", r"E:\rq\constituents\index\000300.XSHG.h5", None, 30),
-         ("中证500内Top50只", r"E:\rq\constituents\index\000905.XSHG.h5", None, 50))
+import loop_env as _E     # ★ 外部数据根的唯一事实源（config.local.json 的 paths 段）
+_IDX = _E.data('constituents', 'index')
+cases = (("沪深300内Top10%", os.path.join(_IDX, '000300.XSHG.h5'), 0.10, None),
+         ("中证500内Top10%", os.path.join(_IDX, '000905.XSHG.h5'), 0.10, None),
+         ("沪深300内Top30只", os.path.join(_IDX, '000300.XSHG.h5'), None, 30),
+         ("中证500内Top50只", os.path.join(_IDX, '000905.XSHG.h5'), None, 50))
 for nm, path, pct, nfix in cases:
     mem = load_member(path, cl_i, list(cl.columns))
     print("\n--", nm)

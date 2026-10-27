@@ -15,7 +15,8 @@ import h5py
 import numpy as np
 import pandas as pd
 
-B = r'E:\rq\bundle'
+import loop_env as _E     # ★ 外部数据根的唯一事实源（config.local.json 的 paths 段）
+B = _E.data('bundle')
 HERE = os.path.dirname(os.path.abspath(__file__))
 PANEL = os.path.join(HERE, 'panel.h5')
 OUT = os.path.join(HERE, 'universe.h5')

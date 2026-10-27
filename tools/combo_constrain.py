@@ -44,6 +44,7 @@ sys.path.insert(0, ENGINE)        # ★ 必须！否则 `import loop_pools`（�
 
 import numpy as np                                     # noqa: E402
 import pandas as pd                                    # noqa: E402
+import loop_env as _E                                  # noqa: E402  外部数据根唯一事实源
 
 PANEL = os.path.join(ENGINE, 'panel.h5')
 UNIV = os.path.join(ENGINE, 'universe.h5')
@@ -52,10 +53,12 @@ OUT_MD = os.path.join(HERE, '_combo_constrain.md')
 COST_ONE_WAY = 0.001
 ANN_DAYS = 243.0
 
-# ★★ 真实指数（用于"指数增强"口径）—— `E:\rq\bundle\indexes.h5` 是 **h5py 结构**：
+# ★★ 真实指数（用于"指数增强"口径）—— `<数据根>\bundle\indexes.h5` 是 **h5py 结构**
+#   （数据根见 config.local.json 的 paths 段；本文件用 `_E.data('bundle', 'indexes.h5')` 取）
+#   。文件格式：
 #   每个 key = 一个指数代码，值 = 结构化数组，字段
 #   `('datetime','<i8')` 的**格式是 `YYYYMMDDHHMMSS`**（实测 `20050104000000`）⇒ 取 `//1000000` 得 YYYYMMDD。
-INDEXES = r'E:\rq\bundle\indexes.h5'
+INDEXES = _E.data('bundle', 'indexes.h5')
 IDXMAP = {'300': '000300.XSHG', '500': '000905.XSHG', '1000': '000852.XSHG'}
 
 

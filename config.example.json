@@ -1,0 +1,32 @@
+{
+  "_note": "模板 —— 复制成 config.local.json 后填自己的值（config.local.json 已 gitignore，绝不入库）。",
+  "paths": {
+    "_comment": "外部路径唯一事实源，由 engine/loop_env.py 读取。公司=company / 家里=home；active 写 auto 就按数据根是否存在自动选。",
+    "active": "auto",
+    "profiles": {
+      "company": {
+        "data_root": "E:/rq",
+        "project_root": "E:/quant/loop_code"
+      },
+      "home": {
+        "data_root": "D:/rq",
+        "project_root": "D:/quant/loop_code"
+      }
+    }
+  },
+  "sources": {
+    "tushare": {
+      "token": ""
+    }
+  },
+  "notify": {
+    "feishu": {
+      "enabled": false,
+      "webhook": "",
+      "app_id": "",
+      "app_secret": "",
+      "chat_id": "",
+      "proxy": ""
+    }
+  }
+}

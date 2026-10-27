@@ -16,7 +16,8 @@ import h5py
 import numpy as np
 import pandas as pd
 
-BUNDLE = r'E:\rq\bundle'
+import loop_env as _E     # ★ 外部数据根的唯一事实源（config.local.json 的 paths 段）
+BUNDLE = _E.data('bundle')
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'turnover_concentration.csv')
 
 t0 = time.time()

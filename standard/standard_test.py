@@ -24,13 +24,14 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 MYTEST = os.path.dirname(HERE)
 sys.path.insert(0, os.path.join(MYTEST, 'engine'))
 from cost_presets import COST_PRESETS, STRESS_COST, resolve_cost, cost_label  # noqa: E402  成本档单一事实源
+import loop_env as _E                                                          # noqa: E402  外部数据根唯一事实源
 # ★ 2026-09-15：原为硬编码 `D:\loop_code\engine\*.h5` ⇒ 换目录即崩 ✗
 #   改为**复用上面已有的 `MYTEST`**（`sys.path` 那里本来就在用它）⇒ 零行为变更 ✓
 PANEL = os.path.join(MYTEST, "engine", "panel.h5")
 UNIVERSE = os.path.join(MYTEST, "engine", "universe.h5")
 BARRA = os.path.join(MYTEST, "engine", "barra.h5")
-IDX_PATH = {'300': r'E:\rq\constituents\index\000300.XSHG.h5',
-            '500': r'E:\rq\constituents\index\000905.XSHG.h5'}
+IDX_PATH = {'300': _E.data('constituents', 'index', '000300.XSHG.h5'),
+            '500': _E.data('constituents', 'index', '000905.XSHG.h5')}
 
 FAC_SRC, NAME, START, FWD_MAIN, COST = None, None, 20180101, 15, STRESS_COST
 FREQS, FORCE_NEG, ENGINE = [5, 10, 15, 21], False, {}

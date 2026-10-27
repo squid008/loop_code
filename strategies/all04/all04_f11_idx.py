@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-cd E:\quant\loop_code\strategies\all04; D:\miniconda3\envs\rqdata\python.exe all04_f11_idx.py --idx=300
+cd D:\quant\loop_code\strategies\all04; D:\miniconda3\envs\rqdata\python.exe all04_f11_idx.py --idx=300
 
 【F11 指数内增强回测】(rqalpha 真实撮合, 全摩擦)
 ================================================================
@@ -15,6 +15,15 @@ cd E:\quant\loop_code\strategies\all04; D:\miniconda3\envs\rqdata\python.exe all
 """
 import os
 import sys
+
+# ★ 外部数据路径的唯一事实源 = config.local.json 的 paths 段（与 engine/ 共用同一份配置）
+import importlib.util as _ilu
+import os as _os
+_spec = _ilu.spec_from_file_location('loop_env', _os.path.join(
+    _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+    'engine', 'loop_env.py'))
+_E = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_E)
 import time
 import bisect
 import numpy as np
@@ -55,8 +64,8 @@ inactive_limit = True
 HERE = os.path.dirname(os.path.abspath(__file__))
 F11_PATH = os.path.join(HERE, 'f11_daily.pkl')
 REGIME_PATH = os.path.join(HERE, 'market_regime.csv')
-IDX_PATH = {'300': r'E:\rq\constituents\index\000300.XSHG.h5',
-            '500': r'E:\rq\constituents\index\000905.XSHG.h5'}
+IDX_PATH = {'300': _E.data('constituents', 'index', '000300.XSHG.h5'),
+            '500': _E.data('constituents', 'index', '000905.XSHG.h5')}
 IDX_BENCH = {'300': '000300.XSHG', '500': '000905.XSHG'}
 
 
@@ -73,7 +82,7 @@ def load_index_items(path):
             out.append((int(d.replace('-', '')), mem))
     out.sort(key=lambda x: x[0])
     return out
-# 迁移后 universe.h5 随引擎放在 E:\quant\loop_code\engine（相对定位，支持整仓搬迁）
+# 迁移后 universe.h5 随引擎放在 D:\quant\loop_code\engine（相对定位，支持整仓搬迁）
 UNIV_PATH = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), 'engine', 'universe.h5')
 
 
@@ -260,7 +269,7 @@ if __name__ == '__main__':
             "start_date": start_date,
             "end_date": end_date,
             "accounts": {"stock": 10000000},
-            'data_bundle_path': r'E:\rq\bundle',
+            'data_bundle_path': _E.data('bundle'),   # 路径由 config.local.json 的 paths 段决定
         },
         "mod": {
             "sys_analyser": {

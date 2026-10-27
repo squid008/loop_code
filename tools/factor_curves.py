@@ -43,6 +43,7 @@ ROOT = os.path.dirname(HERE)
 # ★ 2026-09-29（`loop_todo §1.40.3` 可移植性平台化）：探活改走 `os_compat`（Win32 只在那一个文件里 ✗）
 sys.path.insert(0, os.path.join(ROOT, 'engine'))
 import os_compat as OC       # noqa: E402
+import loop_env as _E        # noqa: E402  外部数据根唯一事实源
 DOCS = os.path.join(ROOT, 'docs')
 CURVE_DIR = os.path.join(DOCS, 'factor_curves')
 
@@ -1192,7 +1193,7 @@ def _build_context(a, LE, B, dates, cols, close):
     LIM = None
     if a.stage in ('strip2', 'style+strip2', 'all'):
         import pandas as pd
-        cap2 = os.path.join(r'E:\rq\others\market-cap', 'market_cap_2.h5')
+        cap2 = _E.data('others', 'market-cap', 'market_cap_2.h5')
         try:
             df = pd.read_hdf(cap2)
             flo = df.iloc[:, 0].unstack(level=0)

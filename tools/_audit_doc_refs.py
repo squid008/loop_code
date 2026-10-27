@@ -9,7 +9,7 @@
 ## 判据
 扫 `docs/**/*.md` + 根 `*.md` 里的**反引号内**或行内的**仓库相对路径**（含 `/`、以已知顶层目录开头、
 或形如 `xxx.py`），检查 `os.path.exists` ⇒ 不存在就报 ✓
-★ 排除：`docs/history`→`history` 已迁移（同样判存在性即可）· 外部绝对路径（`E:\\rq` 等另外报）
+★ 排除：`docs/history`→`history` 已迁移（同样判存在性即可）· 外部绝对路径（`D:\\rq` 等另外报）
 """
 import io
 import os

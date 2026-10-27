@@ -12,7 +12,7 @@
     「风格面板 >0.5 的编码」⇒ **静默错误**（多个风格面板互相覆盖）。
   · ⇒ 这直接**卡住了「组合构建的行业中性」**（roadmap §8.39 瓶颈 B）。
 
-好消息：**源数据里有行业** —— `E:\\rq\\others\\barra\\v1\\<code>.h5` 的 `data` 有 **42 列** =
+好消息：**源数据里有行业** —— `D:\\rq\\others\\barra\\v1\\<code>.h5` 的 `data` 有 **42 列** =
   11 风格 + **31 个申万一级行业**（银行 / 计算机 / 环保 / …）。
 
 本脚本把行业**单独**落成 `engine/industry.h5`（**不动 `barra.h5`，不动任何引擎代码**）：
@@ -38,7 +38,9 @@ except Exception:
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 ENGINE = os.path.join(ROOT, 'engine')
-SRC = r'E:\rq\others\barra\v1'
+sys.path.insert(0, ENGINE)            # ★ 为了 import engine/loop_env.py（外部路径唯一事实源）
+import loop_env as _E                 # noqa: E402
+SRC = _E.data('others', 'barra', 'v1')
 PANEL = os.path.join(ENGINE, 'panel.h5')
 
 STYLES = ['size', 'non_linear_size', 'momentum', 'liquidity', 'book_to_price',

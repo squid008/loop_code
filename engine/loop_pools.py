@@ -22,8 +22,9 @@ import os
 
 import numpy as np
 
-# E:\rq\constituents\index\ —— 聚宽导出，带 change_dates（PIT）
-POOL_DIR = os.environ.get('LOOP_POOL_DIR', r'E:\rq\constituents\index')
+# 聚宽导出的成分文件目录（带 change_dates=PIT）；★ 位置由 config.local.json 的 paths 段决定
+import loop_env as _E     # ★ 外部数据根的唯一事实源
+POOL_DIR = os.environ.get('LOOP_POOL_DIR') or _E.data('constituents', 'index')
 POOLS = {
     '300': os.path.join(POOL_DIR, '000300.XSHG.h5'),    # 沪深300
     '500': os.path.join(POOL_DIR, '000905.XSHG.h5'),    # 中证500

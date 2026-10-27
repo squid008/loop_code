@@ -17,8 +17,9 @@ import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PANEL = os.path.join(HERE, 'panel.h5')
-MF = r'E:\rq\moneyflow3'
-MC = r'E:\rq\others\market-cap\market_cap.h5'
+import loop_env as _E     # ★ 外部数据根的唯一事实源（config.local.json 的 paths 段）
+MF = _E.data('moneyflow3')
+MC = _E.data('others', 'market-cap', 'market_cap.h5')
 
 t0 = time.time()
 

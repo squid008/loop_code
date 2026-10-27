@@ -33,8 +33,9 @@ sys.path.insert(0, os.path.join(ROOT, 'engine'))
 import loop_pools as LP                                   # noqa: E402
 
 PANEL = os.path.join(ROOT, 'engine', 'panel.h5')
-IDX_PATH = {'300': r'E:\rq\constituents\index\000300.XSHG.h5',
-            '500': r'E:\rq\constituents\index\000905.XSHG.h5'}
+import loop_env as _E                                     # noqa: E402  外部数据根唯一事实源
+IDX_PATH = {'300': _E.data('constituents', 'index', '000300.XSHG.h5'),
+            '500': _E.data('constituents', 'index', '000905.XSHG.h5')}
 
 OK = True
 

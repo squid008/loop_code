@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 """
-资金流数据读取器 —— 配合 E:\\rq\\moneyflow\\ 下的 h5 使用
+资金流数据读取器 —— 配合 D:\\rq\\moneyflow\\ 下的 h5 使用
 
 数据结构
 --------
-E:\\rq\\moneyflow\\
+D:\\rq\\moneyflow\\
     sid.h5      /sid : S16 数组, sid -> order_book_id
     mf_{yyyy}.h5
         /data  : (date i4, sid i4, 11 个数值字段 f4), 按 (date, sid) 排序
@@ -29,6 +29,7 @@ E:\\rq\\moneyflow\\
 import os
 import numpy as np
 import h5py
+import loop_env as _E     # ★ 外部数据根的唯一事实源（config.local.json 的 paths 段）
 
 FIELDS = ['change_pct', 'net_amount_main', 'net_pct_main',
           'net_amount_xl', 'net_pct_xl',
@@ -38,8 +39,8 @@ FIELDS = ['change_pct', 'net_amount_main', 'net_pct_main',
 
 
 class MoneyFlow:
-    def __init__(self, root=r'E:\rq\moneyflow'):
-        self.root = root
+    def __init__(self, root=None):
+        self.root = root or _E.data('moneyflow')     # 默认 = 数据根下的 moneyflow/（config 决定）
         with h5py.File(os.path.join(root, 'sid.h5'), 'r') as f:
             self.sid_list = [s.decode() for s in f['sid'][:]]
         self.obid2sid = {s: i for i, s in enumerate(self.sid_list)}

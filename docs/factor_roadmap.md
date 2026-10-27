@@ -138,7 +138,7 @@ IC 仅 0.010~0.016, 但 IC_IR 0.20~0.32、Calmar 0.25~0.46 —— 已属可用�
 ## 数据事实（探针确认）
 - `panel.h5`：3309日×5384股（2013-01~2026-08），含 close/mktcap 等；`universe.h5` 可交易池 bool
 - `barra.h5`：2017-01 起，11风格 + 31申万行业哑变量，5460股
-- PIT `E:\rq\finance\pit\*.h5`：5567 股 ×394 财务字段，含 `info_date`(公告日)/`quarter`/`if_adjusted`
+- PIT `D:\rq\finance\pit\*.h5`：5567 股 ×394 财务字段，含 `info_date`(公告日)/`quarter`/`if_adjusted`
 - **PIT 语义坑**：`operating_revenue/net_profit_parent_company` 等为**累计值(YTD)**；`*TTM` 为滚动12月；
   资产负债表字段(current_assets/current_liabilities/gross_profit)对银行股为 NaN（银行无此科目）
   → 同比用 q vs q-4（去年同 quarter 累计同比）；盈利质量/估值尽量用 TTM 分子保证跨披露期可比
@@ -155,15 +155,15 @@ IC 仅 0.010~0.016, 但 IC_IR 0.20~0.32、Calmar 0.25~0.46 —— 已属可用�
 - 逐代诊断：`docs/loop_journal.md`（gen4~22）；全叙事 `docs/factor_roadmap.md`（Round12~26）
 - 状态快照：`engine/loop_state.pkl`（收官态：bank 9 / seeds 30 / 失败库 1738 / L1 已测 12133）
 - 代码：`engine/loop_engine.py` / `loop_critic.py` / `loop_llm.py` / `loop_watch.py` / `loop_status.py`；每代对话录音 `ai_test/loop_conv/gen*C_conv.md`
-- 引擎依赖外部数据盘 `E:\rq`（bundle/panel/universe）
+- 引擎依赖外部数据盘（**位置见 `config.local.json` 的 `paths.data_root`**，唯一读取方 `engine/loop_env.py`；含 bundle/panel/universe）
 
 **续跑方法**（若日后要接着挖，从 gen23 起）：
 ```powershell
 # 1) 启动 watcher 自动接力（每 5min 轮询，空闲自动启下一代）
-cd E:\quant\loop_code\engine
-Start-Process python -ArgumentList '-u','loop_watch.py' -WorkingDirectory 'E:\quant\loop_code\engine' -WindowStyle Hidden
+cd D:\quant\loop_code\engine
+Start-Process python -ArgumentList '-u','loop_watch.py' -WorkingDirectory 'D:\quant\loop_code\engine' -WindowStyle Hidden
 # 2) 查看进度/阶段
-D:\miniconda3\envs\rqdata\python.exe E:\quant\loop_code\engine\loop_status.py
+D:\miniconda3\envs\rqdata\python.exe D:\quant\loop_code\engine\loop_status.py
 ```
 如需改目标代数：编辑 `loop_watch.py` 中的上限（默认 50）；IDE automation「loop-gen50」已 PAUSED，可手动恢复/删除。
 如需重置目标（例如以新叶子池重跑），应新建 state 或先存档现有 `loop_state.pkl`。

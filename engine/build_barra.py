@@ -8,7 +8,8 @@ import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT = os.path.join(HERE, 'barra.h5')
-SRC = r'E:\rq\others\barra\v1'
+import loop_env as _E     # ★ 外部数据根的唯一事实源（config.local.json 的 paths 段）
+SRC = _E.data('others', 'barra', 'v1')
 # 只保留连续风格(入叶, 量纲 R); 行业哑变量不入叶/不入盘
 STYLES = ['size', 'non_linear_size', 'momentum', 'liquidity', 'book_to_price',
           'leverage', 'growth', 'earnings_yield', 'beta', 'residual_volatility',

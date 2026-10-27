@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-cd E:\quant\loop_code\strategies\all01; D:\miniconda3\envs\rqdata\python.exe all00.py
-D:\miniconda3\envs\rqdata\python.exe E:\quant\loop_code\engine\loop_status.py
+cd D:\quant\loop_code\strategies\all01; D:\miniconda3\envs\rqdata\python.exe all00.py
+D:\miniconda3\envs\rqdata\python.exe D:\quant\loop_code\engine\loop_status.py
 
 组合策略【基准版】all00 (单账户一体化, 一键运行)
 ================================================================
@@ -37,6 +37,15 @@ D:\miniconda3\envs\rqdata\python.exe E:\quant\loop_code\engine\loop_status.py
 """
 import os
 import sys
+
+# ★ 外部数据路径的唯一事实源 = config.local.json 的 paths 段（与 engine/ 共用同一份配置）
+import importlib.util as _ilu
+import os as _os
+_spec = _ilu.spec_from_file_location('loop_env', _os.path.join(
+    _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+    'engine', 'loop_env.py'))
+_E = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_E)
 import time
 import bisect
 import pickle
@@ -108,7 +117,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SNAP_PATH = os.path.join(HERE, 'factor_snapshot.pkl')
 REGIME_PATH = os.path.join(HERE, 'market_regime.csv')
 CROWD_PATH = os.path.join(HERE, 'turnover_pctile.csv')
-CSI300_H5 = r'E:\rq\constituents\index\000300.XSHG.h5'
+CSI300_H5 = _E.data('constituents', 'index', '000300.XSHG.h5')
 
 
 def to_int_date(v, default):
@@ -530,7 +539,7 @@ if __name__ == '__main__':
             "start_date": start_date,
             "end_date": end_date,
             "accounts": {"stock": 10000000},
-            'data_bundle_path': r'E:\rq\bundle',
+            'data_bundle_path': _E.data('bundle'),   # 路径由 config.local.json 的 paths 段决定
         },
         "mod": {
             "sys_analyser": {

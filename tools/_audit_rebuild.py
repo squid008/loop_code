@@ -24,7 +24,7 @@ for f in sorted(os.listdir(ENG)):
     for n, l in enumerate(t.splitlines(), 1):
         s = l.strip()
         if re.match(r'^[A-Z_]{2,}\s*=\s*', s):
-            if re.search(r"E:\\rq|E:/rq", s):
+            if re.search(r"D:\\rq|D:/rq", s):
                 ins.append(s[:104])
             elif re.search(r"\.h5|\.pkl|\.csv", s) and re.search(r"join|\br['\"]", s):
                 outs.append(s[:104])
@@ -38,7 +38,7 @@ for f in sorted(os.listdir(ENG)):
 
 print()
 print('=' * 100)
-print('【B】`E:\\rq` 下各数据源被哪些脚本依赖（家的前置条件）')
+print('【B】`D:\\rq` 下各数据源被哪些脚本依赖（家的前置条件）')
 print('=' * 100)
 need = {}
 for r, ds, fs in os.walk(ENG):
@@ -47,7 +47,7 @@ for r, ds, fs in os.walk(ENG):
         if not f.endswith('.py'):
             continue
         t = io.open(os.path.join(r, f), encoding='utf-8', errors='replace').read()
-        for m in re.finditer(r"[rR]?['\"](E:\\rq\\[^'\"]{0,60})['\"]", t):
+        for m in re.finditer(r"[rR]?['\"](D:\\rq\\[^'\"]{0,60})['\"]", t):
             p = m.group(1).replace('\\\\', '\\')
             need.setdefault(p, set()).add(f)
 for p in sorted(need):
@@ -65,7 +65,7 @@ for f in ('README.md', 'docs/software_framework.md', 'docs/factor_roadmap.md'):
         continue
     t = io.open(p, encoding='utf-8', errors='replace').read()
     hits = [l.strip()[:110] for l in t.splitlines()
-            if re.search(r'E:\\rq|重建|从零|依赖数据|build_panel|数据源', l)]
+            if re.search(r'D:\\rq|重建|从零|依赖数据|build_panel|数据源', l)]
     print('  --- %s（%d 处相关）---' % (f, len(hits)))
     for h in hits[:8]:
         print('      %s' % h)

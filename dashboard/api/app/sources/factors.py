@@ -372,10 +372,39 @@ def library(pool):
     # ★★ 2026-09-17：CSV 现在**显式带 `in_bank` 列** ⇒ 优先读它（老格式没有 ⇒ 回退旧推断）✓
     _has_ib = bool(mt_info.get('inBankCol'))
 
+    def _in_tbl(nm):
+        """指标表里这一行的 `in_bank` —— 三态：True 在库 / False 已移出 / **None = 表里根本没这行**。
+
+        ★★ 2026-10-27（用户报"公司入库的 F53 在家里显示已移出"）：
+          **"表里没有这一行" ≠ "已移出"** ✗ —— 指标表是**派生文件**（`.gitignore`，不进 git），
+          换机器/刚 pull 完必定落后于库文档（实测：F53 于 10-24 入库，表停在 10-20）
+          ⇒ 旧实现把缺行一律判 `False` ⇒ 新因子凭空显示"已移出"（与公司那边相反）✗
+        """
+        row = mtab.get(nm)
+        if not isinstance(row, dict):
+            return None
+        s = str(row.get('in_bank', '')).strip().lower()
+        if s in ('1', 'true'):
+            return True
+        if s in ('0', 'false'):
+            return False
+        return None
+
     def _inb(nm):
+        """`已测` 口径（表里明写 in_bank=1 才算测过；缺行**不算**）。"""
         if _has_ib:
-            return str((mtab.get(nm) or {}).get('in_bank', '')).strip() not in ('0', 'false', 'False')
+            return _in_tbl(nm) is True
         return nm in mtab
+
+    def _md_inb(f):
+        """退回**库文档那一行**的状态列（引擎 `_lib_sync` 写库时同步写入）。"""
+        s = f.get('status') or ''
+        if '已移出' in s:
+            return False
+        if '已入库' in s:
+            return True
+        return None
+
     _measured = sum(1 for nm in _names if _inb(nm))          # = 本池**在库且已测**的条数
     _nhist = sum(1 for nm, v in _mt_pool.items() if _has_ib and not _inb(nm))
     # ★★ `inBankKnown` = 敢不敢判"在不在库"：
@@ -441,8 +470,11 @@ def library(pool):
                 except (TypeError, ValueError):
                     pass
         # 三态：True 在库 / False 已移出 / None 未知（表不完整或没跑）✓
+        # ★★ 2026-10-27：表里**没有这一行**时**退回库文档的状态列**（`已入库`/`已移出`），
+        #   仍然拿不到才按老逻辑给 False/None —— 见 `_in_tbl` 的注释（F53 那次误判）
+        _mdst = _md_inb(f) if nm not in mtab else None
         f['inBank'] = (_inb(nm) if (inbank_known and nm in mtab) else
-                       (False if inbank_known else None))
+                       (_mdst if _mdst is not None else (False if inbank_known else None)))
     return {
         'pool': pool, 'label': core.pool_label(pool), 'found': True,
         'declaredCount': int(m.group(1)) if m else None,   # md 声明（可能落后）

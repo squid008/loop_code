@@ -423,7 +423,7 @@ if __name__ == '__main__':
     ap.add_argument('--min_strip_calmar_b', type=float, default=0.5,
                     help='通道B: strip_calmar 下限(默认 0.5；标定：1496 条里仅 1 条达标)')
     ap.add_argument('--min_strip_ann_b', type=float, default=0.03,
-                    help='通道B: strip_ann_ex 下限(默认 0.03 = 剥风格后年化 3%)')
+                    help='通道B: strip_ann_ex 下限(默认 0.03 = 剥风格后年化 3%%)')
     ap.add_argument('--min_strip_sharpe_b', type=float, default=0.8,
                     help='通道B: strip_sharpe 下限(默认 0.8)')
     ap.add_argument('--min_ic_b', type=float, default=0.02,

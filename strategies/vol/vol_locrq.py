@@ -64,7 +64,7 @@ __config__ = {
         "end_date": end_date,
         "accounts": {"stock": 1000000},      # 股票账户初始资金
         "benchmark": "000300.XSHG",          # 基准；不要基准就写 None
-        # "mmap_data_service": "E:/rq",      # 本地跑必须写；网页端由服务端注入，写了不生效
+        # "mmap_data_service": "D:/rq",      # 本地跑必须写；网页端由服务端注入，写了不生效
     },
     "extra": {
         "log_level": "info",                 # verbose / debug / info / warning / error

@@ -1714,7 +1714,7 @@ handler 结束时**隐式 `del e`** ⇒ 那样"绑过"的名字到调用行**必
 | **正规评估** | `standard/standard_test.py` | ★ 正规评估管线（**【1】全A 扫描 / 【2】成分内增强 / 【6】剥风格归因**，已双口径） |
 | | `standard/pool_tags.py` → `docs/pool_tags.csv` | 池标签派生（口径与 `engine/loop_pools.derive_tag` **同一事实源**）|
 | | `standard/obs_analysis.py` | 观测跑后的联合分析（剥风格 × 池内 × 全A） |
-| **数据重建（`E:\rq` 唯一外部依赖）** | `engine/build_panel.py` → `build_mf_leaves` / `augment_panel` / `build_barra` / `build_fa_pit` → `build_universe.py` | ★ `panel.h5`/`barra.h5`/`fa_pit.h5`/`universe.h5` 的**重建链**（顺序不能乱；详见 `tools/_audit_rebuild.py`）|
+| **数据重建（`D:\rq` 唯一外部依赖）** | `engine/build_panel.py` → `build_mf_leaves` / `augment_panel` / `build_barra` / `build_fa_pit` → `build_universe.py` | ★ `panel.h5`/`barra.h5`/`fa_pit.h5`/`universe.h5` 的**重建链**（顺序不能乱；详见 `tools/_audit_rebuild.py`）|
 
 **池标签取值（`loop_pools.derive_tag`）**：`all3` = 全A **且所有池都通过**（**真 alpha**）·
 `csi_all_only` = **只有全A通过**（小盘/流动性溢价嫌疑，**指数增强不可用**）·

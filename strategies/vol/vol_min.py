@@ -6,6 +6,15 @@ from rqalpha import run_func
 import pandas as pd
 from time import time
 
+# ★ 外部数据路径的唯一事实源 = config.local.json 的 paths 段（与 engine/ 共用同一份配置）
+import importlib.util as _ilu
+import os as _os
+_spec = _ilu.spec_from_file_location('loop_env', _os.path.join(
+    _os.path.dirname(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__)))),
+    'engine', 'loop_env.py'))
+_E = _ilu.module_from_spec(_spec)
+_spec.loader.exec_module(_E)
+
 '''
 conda activate rqdata
 python vol_min.py
@@ -77,7 +86,7 @@ if __name__ == '__main__':
             "accounts": {
                 "stock": 10000000
             },
-            'data_bundle_path': r'E:\rq\bundle',
+            'data_bundle_path': _E.data('bundle'),   # 路径由 config.local.json 的 paths 段决定
         },
         "mod": {
             "sys_analyser": {

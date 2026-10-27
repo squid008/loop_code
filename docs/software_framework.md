@@ -10,7 +10,7 @@
 
 ## 0. 两个系统的分工与现状
 
-| | **loop_code**（本库 `E:\quant\loop_code`） | **qlib_code**（`D:\quant\qlib_code`） |
+| | **loop_code**（本库 `D:\quant\loop_code`） | **qlib_code**（`D:\quant\qlib_code`） |
 |---|---|---|
 | 定位 | 自动**挖掘**（生成 → 筛选 → 入库） | **平台**（因子库 / 看板 / 回测 / 公式编辑器） |
 | 技术栈 | Python 自研引擎 + B角 LLM 审查 | FastAPI 后端 + 前端（React/TS） |
@@ -113,7 +113,7 @@ qlib 表达式引擎是为"少量因子、精确回测"设计的。强行统一 
 | 项 | 本库现状 | 敏感度（实测） |
 |---|---|---|
 | **成本档** | 引擎默认 `0.004`；`standard_test` 默认 `0.007`（**两者差的是"双边滑点"，不是记账口径**，见下 §3.0.1） | F25 Calmar **1.295 → 0.695（-46%）** |
-| **成分口径** | **PIT**：`E:\rq\constituents\index\*.h5` 的 `components` 仅 **71 个调整日快照**（半年调整），按 `bisect_right(cdates,d)-1` 取"d 之前最近一次" | 300 等权池 **2.96% → 14.14%（+11.2pp）**（改静态成分） |
+| **成分口径** | **PIT**：`D:\rq\constituents\index\*.h5` 的 `components` 仅 **71 个调整日快照**（半年调整），按 `bisect_right(cdates,d)-1` 取"d 之前最近一次" | 300 等权池 **2.96% → 14.14%（+11.2pp）**（改静态成分） |
 | **排名口径** | **池内排名**（A 模式） | "先全市场排名再取成分内"（B 模式）对指数池**病态**：持仓仅 10~15 只、大量期数被跳过 |
 | **基准** | 池等权 / 池市值加权（`≈`指数）；`weights` 日频长表可做**真实指数权重基准**（尚未用） | 影响 300 超额约 1~2pp |
 | **universe** | `universe.h5` 可交易过滤 | 影响换手与持仓数 |
@@ -442,7 +442,7 @@ O(N²) 全对全不可行（4.5×10¹⁰ 对）。三步：
 
 - [ ] **（本侧，最急）** 每入库因子写一条结构化元数据（JSON，schema 按 §5.4 设计）——防考古债
 - [ ] `ops_map.yaml` + `fields_map.yaml`（§2 的映射落为数据文件）
-- [ ] 确认 `E:\rq\constituents\index\000300.XSHG.h5` 是否 **PIT 逐日成分**（决定多池能否用作选择压力）
+- [ ] 确认 `D:\rq\constituents\index\000300.XSHG.h5` 是否 **PIT 逐日成分**（决定多池能否用作选择压力）
 - [ ] 确认 qlib 侧 `cs_demean` / `cs_scale` / `ts_rank→Quantile` 语义
 - [ ] 对方文档更正：`md/自定义因子与因子库架构.md` §7.2（轴序）、§7.3（依赖表述：pyarrow 才是硬依赖，h5py 是可选且为 rqalpha 用）
 - [ ] `FactorStore` 抽象 + `H5Store` 实现（§4.3）

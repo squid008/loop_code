@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-一期: 资金流原始拆分入叶 —— moneyflow3(E:\\rq\\moneyflow3) → panel.h5
+一期: 资金流原始拆分入叶 —— moneyflow3(D:\\rq\\moneyflow3) → panel.h5
 ======================================================================
 moneyflow3 原始 16 列 = {小s/中m/大l/特大x} × 买b/卖s × {量q(手)/额a(万元)}。
 设计决策(v2, 用户评审):
@@ -23,7 +23,8 @@ import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PANEL = os.path.join(HERE, 'panel.h5')
-MF = r'E:\rq\moneyflow3'
+import loop_env as _E     # ★ 外部数据根的唯一事实源（config.local.json 的 paths 段）
+MF = _E.data('moneyflow3')
 
 # 源字段 → 新叶子名(买额/卖额/买量/卖量 四组, 每档)
 # 命名规则: mf_档位_方向(_qty=量, 默认金额)

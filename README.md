@@ -3,9 +3,31 @@
 > **当前版本 v1.50.3**（2026-10-27）
 
 
-从 `D:\rqalpha_demo` 整理迁移（2026-09-08），原目录保留备份。机器外部数据依赖：米筐 bundle `E:\rq`（本地数据盘）。
+从 `D:\rqalpha_demo` 整理迁移（2026-09-08），原目录保留备份。外部数据（米筐 bundle 那套）的位置
+**不写死**：统一由 `config.local.json` 的 `paths` 段决定（公司 / 家里各一套 profile，见下）。
 
 ## 环境准备（新机器 / 换盘）
+
+**0) 路径配置 —— 换机器/换盘只改这一处**
+
+```bash
+copy config.example.json config.local.json      # 首次；已存在就直接编辑它
+```
+
+```json
+"paths": {
+  "active": "auto",
+  "profiles": {
+    "company": {"data_root": "E:/rq", "project_root": "E:/quant/loop_code"},
+    "home":    {"data_root": "D:/rq", "project_root": "D:/quant/loop_code"}
+  }
+}
+```
+
+`engine/loop_env.py` 是**唯一读取方**：引擎、工具、看板、`strategies/` 都从它取数据根，
+所以代码里**不再有盘符**。`active=auto` 时按"哪个 profile 的 `data_root` 下真有 `bundle/`"自动选；
+想锁死就写 `company` 或 `home`（写错会直接报错，不会偷偷换机器）。
+临时覆盖：环境变量 `LOOP_PROFILE=home` 或 `LOOP_DATA_ROOT=D:/rq`。
 
 **1) Python 环境**（开发机实测 **3.11.15**）
 
@@ -23,16 +45,14 @@ cd dashboard/web && npm install
 
 | 文件 / 目录 | 约 | 能否重建 |
 |---|---|---|
-| `engine/panel.h5` · `barra.h5` · `fa_pit.h5` · `alt_data.h5` | **2.6 GB** | 能（`build_*.py` + `tools/fetch_alt_data.py`，但需要 `E:\rq` 原始数据与 tushare token） |
+| `engine/panel.h5` · `barra.h5` · `fa_pit.h5` · `alt_data.h5` | **2.6 GB** | 能（`build_*.py` + `tools/fetch_alt_data.py`，但需要数据根（`paths.data_root`）里的原始数据与 tushare token） |
 | `docs/loop_archive*.csv` · `docs/loop_style_obs*.csv` · `docs/loop_strip_style*.csv` 等 | 200 MB | **不能**（逐代档案，删了就没了） |
 | `engine/loop_state*.pkl` | 几十 MB | **不能**（挖掘轨迹） |
-| `config.local.json` | 1 KB | 能（自己填 tushare token），但**不入库** |
+| `config.local.json` | 1 KB | 能（自己填 `paths` 与 tushare token），但**不入库** |
 
-> **路径说明**：代码里**没有任何绝对路径**（全部相对 `__file__` 或 `dashboard/config.json` 的
-> `project.root`）⇒ 整个目录放到 `D:\quant\loop_code` 也能直接跑，**不需要改配置**。
-> 只有 6 个**数据构建脚本**（`build_barra.py` / `build_fa_pit.py` / `build_mf_leaves.py` /
-> `augment_panel.py` / `build_moneyflow.py` / `audit_f11.py`）写死了 `E:\rq` —— 它们是一次性
-> 数据构建用的，**日常挖掘不碰**。
+> **路径说明**：代码里**没有任何盘符** —— 仓库内路径一律相对 `__file__`（或 `dashboard/config.json`
+> 的 `project.root`）；**仓库外**的数据根一律来自 `config.local.json` 的 `paths` 段
+> （唯一读取方 `engine/loop_env.py`）。⇒ 换机器只需改那一段，源码、注释、文档都不用动。
 
 **4) 自检**
 
@@ -55,7 +75,7 @@ python tools/release_check.py     # 60 项守门；全绿 = 环境就绪
   - `factor_miner.py` 因子挖掘基础框架（panel 加载/预筛选/两段式验证）
   - `fastops.py` L1 向量化快速算子
   - `build_mf_leaves.py` / `build_barra.py` / `build_fa_pit.py` 扩展数据源叶子构建（资金流16列入 panel / barra.h5 / fa_pit.h5，幂等可重建）
-  - `panel.h5` / `universe.h5` / `barra.h5` / `fa_pit.h5` L1 筛选用数据（由 `build_*.py` 从 E:\rq 重建）
+  - `panel.h5` / `universe.h5` / `barra.h5` / `fa_pit.h5` L1 筛选用数据（由 `build_*.py` 从 D:\rq 重建）
   - `loop_state.pkl` 引擎滚动状态（运行中会变）
   - `_check_*.py` 机制自检（dry-run 零误杀验证）
 - `tools/` — **生产管线与工具（纳入 git）**。2026-09-14（v0.5.2）从 `ai_test/` 迁出：
@@ -103,7 +123,7 @@ python tools/release_check.py     # 60 项守门；全绿 = 环境就绪
 ## 运行
 ```powershell
 # 引擎一代（后台）：参数与三道闸详见 loop_engine.py argparse
-cd E:\quant\loop_code\engine
+cd D:\quant\loop_code\engine
 D:\miniconda3\envs\rqdata\python.exe loop_engine.py --gen=13 --n=800 --l2=30 --seed=123
 #   LLM 双子开关（均默认 auto，可 on/off 强开/强关；无 key 或调用失败自动回退纯规则，不影响无人值守）：
 #     --llm_guide  A角生成引导：候选引导位由 loop_llm 解析语义候选，失败/无 key 回退本地 13 机制族
@@ -114,20 +134,20 @@ D:\miniconda3\envs\rqdata\python.exe loop_engine.py --gen=13 --n=800 --l2=30 --s
 # 无人值守多代接力（可选）：启动 watcher 后每 5min 轮询，空闲且该代无 err 自动启下一代
 #   停止条件：任一代 err 非空即停下等人工（铁律）；代数达 loop_watch.py 上限（默认 50）自动结束。
 #   防多实例/防重复代已内置；引擎在跑时 watcher 只等待不动作，可随时手动启动。
-cd E:\quant\loop_code\engine
-Start-Process "D:\miniconda3\envs\rqdata\python.exe" -ArgumentList '-u','loop_watch.py' -WorkingDirectory 'E:\quant\loop_code\engine' -WindowStyle Hidden
+cd D:\quant\loop_code\engine
+Start-Process "D:\miniconda3\envs\rqdata\python.exe" -ArgumentList '-u','loop_watch.py' -WorkingDirectory 'D:\quant\loop_code\engine' -WindowStyle Hidden
 
 # 进度查询（脚本在 engine/ 下且按自身路径定位：带全路径即可，从任意目录运行都行）
-D:\miniconda3\envs\rqdata\python.exe E:\quant\loop_code\engine\loop_status.py
+D:\miniconda3\envs\rqdata\python.exe D:\quant\loop_code\engine\loop_status.py
 
 # 无人值守期间人工查看（代号 N 换成当前代，如 loop23C.*）：
-Get-Content E:\quant\loop_code\engine\loop_watcher.log -Tail 20   # watcher 接力事件: [START]/[OK]/[RUN]/[SKIP]/[STOP]/[DONE]
-Get-Content E:\quant\loop_code\engine\loop23C.log -Tail 20        # 当前代引擎进度（阶段字样见 loop_status.py）
-Get-Content E:\quant\loop_code\engine\loop23C_err.log             # 当前代错误日志（空=正常）
-Get-Content E:\quant\loop_code\docs\loop_journal.md -Tail 30      # B角每代诊断 + AI 审查落档
+Get-Content D:\quant\loop_code\engine\loop_watcher.log -Tail 20   # watcher 接力事件: [START]/[OK]/[RUN]/[SKIP]/[STOP]/[DONE]
+Get-Content D:\quant\loop_code\engine\loop23C.log -Tail 20        # 当前代引擎进度（阶段字样见 loop_status.py）
+Get-Content D:\quant\loop_code\engine\loop23C_err.log             # 当前代错误日志（空=正常）
+Get-Content D:\quant\loop_code\docs\loop_journal.md -Tail 30      # B角每代诊断 + AI 审查落档
 
 # 定稿策略回测（示例）
-cd E:\quant\loop_code\strategies\all04
+cd D:\quant\loop_code\strategies\all04
 D:\miniconda3\envs\rqdata\python.exe all04.py
 ```
 
@@ -179,7 +199,7 @@ python tools/factor_curves.py --only-new --stage=strip
 （`factor_curves` / `build_facs` 目前是单进程，可按因子分片多进程跑）✓
 
 ## 说明
-- 引擎所有文件读写都相对 `engine/` 定位，`loop_code` 可整体搬移；唯一外部依赖是 `E:\rq` 数据盘。
+- 引擎所有文件读写都相对 `engine/` 定位，`loop_code` 可整体搬移；唯一外部依赖是 `D:\rq` 数据盘。
 - `loop_state.pkl` 为滚动态：**持续多池在挖**（★ 2026-09-26 复核：全A **80** 代 · 300 **190** · 500 **98** · 1000 **46** · 50 **66**），当前在库 **67** 个（all 46 · 300 4 · 500 10 · 1000 7 · 50 0；★ 与 `state.bank` / 登记表 / `factor_metrics*.csv` 的 `in_bank=1` **三处一致**，见 `§1.31`）。**"现在到底多少"一律以 `docs/loop_todo.md §0` 为准**（那节是各池现状快照；命令行 `python tools/tracks_status.py` 秒级实测）✓。整体复盘见 `docs/factor_roadmap.md` 附录 A/B；入库因子明细见 `docs/factor_library*.md`；逐代诊断见 `docs/loop_journal*.md`。跨系统（存储/数据库/对齐）决策见 `docs/software_framework.md`。
 - **gen51 起新增两道抗冗余闸门**（治 gen50 同代近重复 F20~F23）：`--dedup_corr`（默认 0.85，同代 L1 TopN 两两 |rank corr| 超阈即丢弃后者）+ `--fam_sole`（默认开，族指纹并入"单叶变换"维度把"同叶不同壳"的叶子代理候选归同族）。标定/验证见 `tools/calib_dedup_leaf.py`（★ 2026-09-15 由 `calib_gates.py` **改名**，与 `calib_gate.py` 只差一个 `s`、用途不同）；冒烟脚本 `qa_fam_smoke.py` 已随 `ai_test/` 归档到 `history/ai_test_20260915/`。
 - 数据文件（*.h5/*.pkl）体积大且可由 `build_*.py` 重建，git 入库时按 `.gitignore` 排除。
@@ -218,7 +238,7 @@ git tag -a v0.2 -F <说明文件>               # 建新版（说明按上表四
 | tag | 日期 | 提交 | 一句话内容 |
 |---|---|---|---|
 | **v1.38.0** | 2026-10-14 | `tag 自身` | ★★ **财报叶子 +2**（用户："算子里有没有自由现金流/ROE/ROA？"）—— 新增 **`fa_fcf_yield`**（自由现金流收益率 =(经营现金流TTM−资本开支TTM)/**日总市值**）与 **`fa_ocf_ta`**（**现金 ROA** = 经营现金流TTM/总资产）✓。**口径先实测后定**（逐日截面 rank 相关，10 个候选，矩阵见 change_log）⇒ 与全部旧叶子的最大 \|相关\| 仅 **0.485 / 0.553** ✓。★ **净利润口径 ROA 四个变体全部共线** ✗（0.824~0.947，对 fa_roe / fa_np_margin / fa_np_yoy；换分母也压不下来 ⇒ 分子同源）⇒ 改用**现金流口径** ✓，结论已固化进 `build_fa_pit.py` 顶部。实现：新增 `_ttm()` 做 YTD→TTM（资本开支 `cash_paid_for_asset` 源里没有 TTM 版 ✓）+ 新增 `--cand_out` 体检模式 ✓；叶子池 **61 → 63**；`fa_pit.h5` 重建（**17 列** ✓）。**顺带修两处**：`build_fa_pit.py` 缺 UTF-8 stdout（重定向下打印 `⇒` 抛 UnicodeEncodeError 直接中断构建 ✗ —— 实测跑到 4800/5567 崩）+ 注释记账校正（"8→20 个叶子 / 其它 19" ⇒ 实际落地 15 ✓）。**验证**：★ 旧 **15 列逐位不变** ✓ · `cand_ocf_ta ≡ fa_ocf_ta` **BITWISE SAME** ✓ · 覆盖率 **66.7% / 75.1%** ✓ · 5384 只股票 **0 只缺科目** ✓ · 守门 `ops_sync 28/28` ✓ `ops_math 51/51` ✓ `ops_manual` ✓ `undefined_names 0` ✓ `reports_expr 34/34` ✓ `ops_registry 17/17` ✓ · 手册(`ops.py`)/A角提示词/skill 的手写字段说明已补 ✓（守门当场抓到缺失 ⇒ 补齐后全过 ✓）· ★ **`release_check` 59/59 全绿**（**6.7 min** ✓；⚠ 第 1 轮 58/59 = `_test_mine_launch` 被**面板缓存失效**连带 ⇒ 重建缓存后过 ✓）· ★ **部署三步**：重建 `fa_pit.h5` ✓ · **重建面板缓存**（62→64 字段 / 4.70 GB ✓）· **重启看板后端** ✓ |
-| **v1.37.1** | 2026-10-08 | `tag 自身` | ★ **搬盘后的文档/注释校正（纯文档版 · 代码零改动）** —— 项目 2026-10-08 由 **`D:\loop_code` 挪到 `E:\quant\loop_code`** ✓ ⇒ 把**活跃文档与当前代码注释**里的旧项目根改成新根 ✓（**13 个文件 / 29 处**：`README.md` 运行段 9 · `engine/loop_watch|loop_status|audit_f11|gen_f11_daily|loop_llm` 6 · `strategies/all01/all00|all03` 与 `all04/all04|all04_barra|all04_f11_idx` 9 · `docs/factor_roadmap|software_framework` 4）；`engine/loop_llm.py` 两处"写死盘符"的注释改成"仓库根（派生，不写死盘符）"✓。⚠ **约 10 处有意保留** ✗：`docs/log/*`·`.codebuddy/memory/*`（当时实录）、`change_log.md` 历史条目、以及 `standard/`·`tools/` 里"原为硬编码 ⇒ 改 `__file__` 派生"的**整改注解**（改了反而丢掉"为什么这么写"的证据）。**同时更正 `待办.md` 两处事实错误**：① 环境名**不是 `rq`** —— 本机 `conda env list` 只有 **`rqdata`**（`D:\miniconda3\envs\rqdata\python.exe` ✓），文档早先"已改名 rq、`envs\rqdata` 是旧路径"的说法**与事实相反**；② §3.1 原写"项目根仅 1 处（README）"**低估**（实测 13 文件/29 处）⇒ 表格按实测重写；另统一 §0 里自相矛盾的 `D:\work\loop_code` ✓。**验证**：`tools/_test_version_sync.py` **6 项全绿** ✓；本轮**未动任何运行代码** ⇒ 无行为变更、不适用"同 seed A/B 逐字节" ✓。★ 搬盘完整性复核（未丢进度）：**`engine/loop_state*.pkl` 6 个全在** ✓ · `config.local.json` ✓ · `.deepseek_key` ✓ · 数据盘 `E:\rq` ✓ · `_panel_cache` 与 `panel|barra|fa_pit|universe|industry.h5` ✓ · 前端 `node_modules` ✓；无残留挖掘进程 ✓。★ **全量回归已跑 ⇒ `release_check` 59/59 全绿** ✓（**实测 6.6 分钟** ✓，跑完无脏状态、无引擎进程残留 ✓；⚠ 该跑发生在提交之前，本行是**据实补记** ✓）|
+| **v1.37.1** | 2026-10-08 | `tag 自身` | ★ **搬盘后的文档/注释校正（纯文档版 · 代码零改动）** —— 项目 2026-10-08 由 **`D:\loop_code` 挪到 `D:\quant\loop_code`** ✓ ⇒ 把**活跃文档与当前代码注释**里的旧项目根改成新根 ✓（**13 个文件 / 29 处**：`README.md` 运行段 9 · `engine/loop_watch|loop_status|audit_f11|gen_f11_daily|loop_llm` 6 · `strategies/all01/all00|all03` 与 `all04/all04|all04_barra|all04_f11_idx` 9 · `docs/factor_roadmap|software_framework` 4）；`engine/loop_llm.py` 两处"写死盘符"的注释改成"仓库根（派生，不写死盘符）"✓。⚠ **约 10 处有意保留** ✗：`docs/log/*`·`.codebuddy/memory/*`（当时实录）、`change_log.md` 历史条目、以及 `standard/`·`tools/` 里"原为硬编码 ⇒ 改 `__file__` 派生"的**整改注解**（改了反而丢掉"为什么这么写"的证据）。**同时更正 `待办.md` 两处事实错误**：① 环境名**不是 `rq`** —— 本机 `conda env list` 只有 **`rqdata`**（`D:\miniconda3\envs\rqdata\python.exe` ✓），文档早先"已改名 rq、`envs\rqdata` 是旧路径"的说法**与事实相反**；② §3.1 原写"项目根仅 1 处（README）"**低估**（实测 13 文件/29 处）⇒ 表格按实测重写；另统一 §0 里自相矛盾的 `D:\work\loop_code` ✓。**验证**：`tools/_test_version_sync.py` **6 项全绿** ✓；本轮**未动任何运行代码** ⇒ 无行为变更、不适用"同 seed A/B 逐字节" ✓。★ 搬盘完整性复核（未丢进度）：**`engine/loop_state*.pkl` 6 个全在** ✓ · `config.local.json` ✓ · `.deepseek_key` ✓ · 数据盘 `D:\rq` ✓ · `_panel_cache` 与 `panel|barra|fa_pit|universe|industry.h5` ✓ · 前端 `node_modules` ✓；无残留挖掘进程 ✓。★ **全量回归已跑 ⇒ `release_check` 59/59 全绿** ✓（**实测 6.6 分钟** ✓，跑完无脏状态、无引擎进程残留 ✓；⚠ 该跑发生在提交之前，本行是**据实补记** ✓）|
 | **v1.37.0** | 2026-10-01 | `tag 自身` | ★★ **性能 7 → 8**（八维综合 **8.5 → 8.6**）—— 兑现 09-29 那句"让 mining 真跑一代 n=800，读 `[计时] 去相关` 那行即知" ✓。⚠ **纯文档版**：**代码零改动** ✗（只更新 `docs/maintainability.md §五` ＋ 记账）。★ **拿生产实测补上那一档**（09-29 只给 7 的原因是"省 ≈25 min 是**推算**"✗）：用户 09-30 跑到 gen205 ⇒ 实测 **去相关 1321~1838 s → 73~81 s** ✓（日志写「批内就地判定 · **0 次重复求值**」✓，**省 ≈21~29 min/代** ✓，与推算**吻合** ✓）；**整代 107~127 min → 68~81 min** ✓（**≈快 35%** ✓）；⚠ L2 精筛 1595~2561 → 1110~1710 s 但**候选数/负载不同 ⇒ 归因不清、不邀功** ✗。⚠ **不给 9**：**L1 仍占整代 ≈67%（52 min）且单核** ✗ ⇒ 再上一档须做 **L1 多进程并行**（≈2~4×，**要动架构+内存预算** ✗，且**必然改变运行期行为** ⇒ **不适用"逐位不变"** ✗ ⇒ **需单独授权** ✓）。另：**v1.36.0 的最终全量回归已跑完 ⇒ 59/59 全绿** ✓（39.8 分钟，据实补记 ✓）。**验证**：`_test_version_sync` ✓；本版**未动代码** ⇒ 提交后照例补跑全量 ✓（⚠ 机器上**另一个项目的重活**把全量从 ~20 min 拖到 **39.8 min** ✗，`/api/status` 也曾被压到 40 秒超时 ✗ ⇒ 与项目记忆里"外部重活造成假阳性"同源 ✓）|
 | **v1.36.0** | 2026-10-01 | `tag 自身` | ★★★ **修「signal is aborted without reason」**（用户 2026-09-30 报错截图）＋ **查明一个更大的问题**。**两个根因**：① 前端 `api.ts` 的 `ctl.abort()` **不带原因** ✗ ⇒ 浏览器抛出的原始文案就是那句 ✗ ⇒ 界面把**实现细节**当错误弹给用户 ✗✗；② 后端 `mine._procs()` **每次都先 `pop` 掉自己的缓存** ✗ ⇒ 每次轮询真起一次 PowerShell ⇒ `/api/mine/state` 实测 **1.3 秒/次** ✗ ⇒ 机器一忙顶到前端超时 ⇒ 被**前端自己的定时器**取消 ✓。★ **那行 `pop` 不是随手写的** ✗：`git log -S` 查到是 **2026-09-16 v1.2.0**（"每池一进程 + 修「停止没反应」"）为**"点停止要立刻看见引擎"**加的 ✓（正确性优先 ✓）⇒ 本版**没有**删掉该语义 ✗，而是**按用途分流** ✓。**改动**：(a) `api.ts` `abort()` **带原因** ✓ + 新增 `ApiError{kind:'timeout'|'http'|'network'}` ✓ ⇒ 超时/断连**翻译成人话** ✓（并说明"动作通常已生效"✓）· (b) `mine._procs(fresh=False)` **分流** ✓（**只读轮询**走 2 秒缓存 ✓；**启停/等待/闸门**传 `fresh=True` 强制真查 ✓，8 处调用点全在启停路径 ✓）· (c) `main.py` **慢请求日志** ✓（≥2 秒记一行到 `ai_test/_tracks/_api_slow.log` ✓ ⇒ 下次**直接指名** ✓；异常全吞**绝不影响请求** ✓）。★★ **顺带查明（比那条红字更要紧）**：看板后端 pid 26560 **自 09-27 00:22 连续跑 4 天** ✗ 且 `config.json` 里 `"reload": false` ✗ ⇒ **它跑的是旧代码** ⇒ **v1.31.0~v1.35.0 的后端改动全都没生效** ✗（含 v1.35.0 那个"起两次才开起来"的修复 ✗、`pausedAll` ✗），而前端是 Vite **热更新**（09-24 起 ✓）⇒ **前后端不一致** ⇒ **本版发布动作含重启前后端** ✓（**不影响挖掘** ✓ 调度器是独立进程 ✓）。**验证**：① 新守门 `tools/_test_api_speed.py` **4 组 13 条全过** ✓ 含**实测**：冷扫 **0.678s → 缓存读 0.0000s** ✓（**600+ 倍** ✓）、`fresh=True` 确实重扫 ✓、两者结果一致 ✓（⚠ 守门第一版**两条断言自己写错** ✗ 并当场暴露：`except` 后的 `# noqa` 没留位置 ✗、判无参 `abort` 时**匹配到自己注释里引用的旧写法** ✗ ⇒ 改成**先剔注释** ✓）· ② **重启后实测** `/api/mine/state` **1.3s → 0.795 / 0.005 / 0.049 秒** ✓✓（**缓存分流生效** ✓）· ③ 前端 `tsc --noEmit` **rc=0** ✓ · ④ `release_check` ⚠ **据实**：两轮各查出**两条真失败** ✗，都是**我改签名（加 `fresh=`）撞了守门的桩** ✗（`_test_mine_launch` / `_test_stop_scope` 的 lambda 不收参数 ✗）⇒ **桩已改**（`lambda *a, **k:` ✓ 防护不减 ✓）并**各自单独重跑全过** ✓；最终一轮跑到 **[40/59] 零失败** ✓（新守门 `_test_api_speed` 第 4/59 条通过 ✓）⇒ **本版不宣称 59/59** ✗（该轮提交时仍在跑：`_test_parallel_runner` 在**真跑一代引擎** ⇒ 慢，不是卡死 ✓）· ⑤ 名字守门 **0 处** ✓|
 | **v1.35.0** | 2026-09-30 | `tag 自身` | ★★★ **修「起两次才把池开起来」**（用户 2026-09-30：_「第一次启动的时候，全A池停在了待启动」_）。**根因两处**（日志坐实 ✓）：① `mine.start_pool()` 冷启动**先起调度器** ✓、**之后**才补写"把该池从 `stopped` 摘掉" ✗ ⇒ 新调度器**第一轮**读到 `enabled=[pool]` ∧ `stopped` 含 pool（自相矛盾 ✗）；② "没候选池 ⇒ break"却照样 `rnd += 1` ✗ ⇒ **50 轮在同一秒烧光** ⇒ 撞上限退出 ✗✗（而那时补写已落地 ⇒ 界面反而显示「待启动」✗ ⇒ **界面说在等、调度器其实已经死了** ✗）。★ 关键澄清：`enabled ∩ stopped` **是设计允许的** ✓（`stopped` = "暂时不跑"的配置 ✓；`mine.stop()` 的 2026-09-16 **BUG A** 修复刻意规定"单独停绝不动 `enabled`" ✗）⇒ 本版**没有**强行互斥（那会推翻既有修复 ✗），而是修**顺序**与**烧轮次** ✓。**改动 4 处**：`mine.start(…, stopped=None)` 新增"显式 stopped"⇒ 并进**同一次写入**（起进程前 ✓，优先于 `reset_stopped` ✓）+ `start_pool` 冷启动改用它并删掉滞后补写 ✗ · **调度器两条路**（`parallel_runner` ✓ ＋ `run_tracks` 轮转 ✓）在"启用池全被停用"时**原地等待+重读**（20 s ✓）**不消耗轮次** ✓ 并写/清 `pausedAll` ✓ · `run_tracks` 新增共用口径 `runnable_pools`/`all_pools_paused` ✓（调度器与看板不再各写一句 ✗）· 看板徽标**不再**把"调度器没在跑"说成「待启动」✗（改 `已配置 · 未启动` ✓ / `已停用 · 调度器在等` ✓）+ `api.ts` 声明 `pausedAll` ✓。**验证**：① ★★ **真跑实测** `ai_test/_livetest_ctl_fix.py`（故意摆成事故现场 ✓，**两条路各测一遍** ✓：`start_pool` ⇒ 第一轮就起引擎 ✓ 无告警 ✓；绕开它就 ⇒ 告警 ✓ + **45 秒一行轮次都没打** ✓ + 恢复后"未消耗任何轮次"✓ **立刻起引擎** ✓ 轮号仍 **第 1 轮** ✓；跑完按 pid 清理 + **逐字节还原** ctl ✓；⚠ 第一版实测**只覆盖并行** ✗ ⇒ 当场暴露"轮转路径也烧轮次"✗ ⇒ 才补上 ✓）· ② 新守门 `tools/_test_ctl_invariants.py` **4 组 20 条全过** ✓（纯函数 6 例 ✓ + **两条路**"等待分支必须在 `rnd += 1` 之前" ✓ + 冷启动同一次写入（且不许回到"起进程后补写"✗）+ 接线 ✓）· ③ 前端 `npx tsc --noEmit` **rc=0** ✓（项目无守门跑 tsc ✗，手工跑 ✓）· ④ `release_check` **58/58** ✓ · ⑤ 名字守门 **0 处** ✓。⚠ **记账**：`run_tracks --from_ctl=1` **不继承** ctl 里的 `execMode` ✗（明明写 parallel 却按轮转跑 ✓，看板路径显式传参故日常无碍 ✓ —— 实测脚本第一版正被它带偏 ✓ 也因此白捡了这个 bug ✓）；实测起的两代被中途杀 ⇒ `_engine_exits.log` 多两条"被停"✓（该代作废、下次重跑 ✓ 无脏数据 ✓）；**没有**把 `enabled ∩ stopped` 强行互斥 ✓（那不是 bug 而是设计 ✓）|
@@ -242,7 +262,7 @@ git tag -a v0.2 -F <说明文件>               # 建新版（说明按上表四
 | **v1.22.4** | 2026-09-25 | `tag 自身` | ★★★★ **修「本轮启动过、又被停掉」的池会永久排队（且本轮永不收口）**（用户实测："我重新开启（沪深300），它怎么要排队了？"）—— **真因**：`300` 本轮**已启动过一次**（20 秒后被停）⇒ 留在调度器的 `launched` 名单里，而它原来**只有**"跑完一代继续领"与"崩溃重试"两处会清 ⇒ "被用户停掉"的池**本轮再也回不来** ✗；同时它 0 代 ⇒ 收轮判据（每个启用池 ≥ `min_gens_per_round` 代）**恒不成立** ⇒ `all` 跑完继续领下一代 ⇒ `running` 永不为空 ⇒ **本轮收不了口、轮末全局收尾（跨池审查/精选池/指标表/登记表）也不执行** ✗✗ ⇒ 死等（不是"排队一会儿"）⇒ **修法**：抽纯函数 **`candidate_pools(en_list, st, launched, deferred, killed_user)`**（候选 = 启用 − 已停 − 本轮已启动 − 本轮已放弃，`launched`/`deferred` 各带"你放回来就允许马上上"的逃逸口 ✓）+ `_reap` 被停时记 `killed_user[pool]`（= 被停那一刻的 stopped 快照）⇒ **池被停后又回到启用集（不在 st）⇒ 本轮可再上** ✓；循环候选改调纯函数 ✓ ⇒ 新守门 **`tools/_test_sched_relaunch.py`**（复现现场 + 负向 + st/deferred 回归）+ 同步更新 `_test_sched_fair.py`/`_test_parallel_runner.py` 两条静态断言（内联写法 → 纯函数调用）⇒ **全量回归 50/50** ✓（含 `_test_parallel_runner` 端到端 `--gen_only` 真跑、state SHA 未变 ✓）；⚠ **需重启调度器才生效**（用户重启后实测：300 只等一会儿内存（槽位 1→2）就开始并行挖 ✓） |
 | **v1.22.3** | 2026-09-25 | `2b927d8` | ★★★★★ **详情页加「IC 口径注」＋ 9 个编号的「在库」口径收口**（用户："详情页加 IC 口径注" · "9 个编号收口"）—— ① ★★ **先纠正一条旧结论**：2026-09-21 记的"库里指标**按池**、曲线**全A** ⇒ 同一页两套口径并排"**不成立** ✗（逐行读代码 + 当场复算：`factor_metrics.py` 走的 `evaluate_real` 投资域是 `get_universe()` = **全市场 PIT** ⇒ **与曲线同一掩码**；且 CSV 的 `ic_doc` 与重算 `ic` **15 位完全相同**）⇒ 真因是 **IC 的定义/采样不同**（同一个因子三个数都对 ✓）：文字 `0.00988` = **逐日 2090 天** Spearman 均值（窗口重叠）· 图 `ic` `0.01167` = **换仓日 418 期** Pearson · 图 `rank_ic` `0.01005` = 同一条序列的换仓日采样 ⇒ 用户拍板 **"先用全A 的指标"**（**不重算曲线、不改指标口径** ✓）⇒ 唯一改动 = **详情页加口径注**（`App.tsx`：「费后指标」前一行 `dt-note` 说清三个 IC 的关系 + **非全A池的投资域是全市场、不是该池成分股**；IC 图下 `ch-note` 补"本图两条都是换仓日采样"；文案过 `_test_ai_tone` + `_test_ui_quotes` ✓；守门 `_test_frontend_wiring.py` 新增 **【12】3 条** ✓）；② ★★★ **9 个编号收口**（`state.bank` 合计 **67** 而 CSV `in_bank=1` 合计 **76** ⇒ 看板把 9 条显示成"在库"✗）：`1000` 六个（`F02/F04/F05/F06/F08/F09`）剥风格后**转负**（−0.05~−0.10）⇒ 纯风格 · `300/F02`/`500/F01`（同式子在 1000 池在库）⇒ 别名 · `500/F02`（+0.171 过门槛）⇒ **原因待查**（不臆造 ✓）⇒ **三处一起改**：md 的**总览状态列 + 明细段体内**各标「已移出」（⚠ 只改总览列不够：`build()` 用 `set(overview)\|set(detail)` ✗）＋ `library_entries.jsonl` 删 9 条（**它被留着会被 `refresh_in_bank` 每轮刷回 1** ✗）＋ `factor_metrics*.csv` **不手改**（走 `export_factor_registry.py` → `factor_metrics --only-new`，5 日/20 日各刷 6 行 ✓）⇒ 登记表条目 **67 = `state.bank` 67** ✓、各池差集**归零** ✓、★ **接口实测**（8101 在线）9 条 `inBank=false` + 新状态串 ✓；③ 文档：`docs/loop_todo.md` 的 `§1.30`（改写为"三个 IC 各有定义" + 留痕记下原错 ✗）· `§1.31`（新增 → 执行后 ✅）· `§0.x`（按实测更新；并记明 **20 日双口径已在生产 `extra`**：`--dual_fwd=20 --min_calmar2=0.701` ✓）⇒ **全量回归 49/49** ✓ · `tsc --noEmit` ✓（详见 [`change_log.md`](change_log.md) ✓） |
 | **v1.22.2** | 2026-09-25 | `ae1d3cf` | ★★★★★ **修「一份代码里并存两个 `Node` 类」＋ 修「新入库日志卡点开的详情页 20 日按钮被误置灰」**（用户实测：_"这 F47 为啥会显示未分类"_ · _"20 日的那个按钮我点不了，提示还未生成"_）—— ① **真因**：引擎**直跑**时模块名是 `__main__`（类全名 `__main__.Node`），而 `loop_critic` 的**惰性** `import loop_engine` 会把本文件**再执行一遍** ⇒ 同一进程里**两个 `Node` 类** ✗（实测 `bank` 439 个 Node 里 **438 个**是第二份；`seeds`/`last_l1` 各混 24 个 ⇒ 异类共 **486**）⇒ `isinstance(x, Node)` 对它们**恒为 False** ⇒ 牵连：`collect()`→`leaf_parts()` **家族全落「未分类」**（`loop_archive*.csv` 的 `cat`/`leaf` 空 **392 行**）· **`skeleton()` ⇒ 骨架去重 / FSA 冻结失效** · `key()`/`size()`/`crossover`/`mutate`/`dim_of()`/`clone` 同失效 ⇒ **两处修**：**治本**（末尾 `__main__` 块第一条 `sys.modules.setdefault('loop_engine', sys.modules['__main__'])` ⇒ 结构上不可能再有第二份 ✓；⚠ **不能放文件顶部** —— `_test_fwd_wiring.py` 取**第一个** `__main__` 块并在其中断言三个直接语句，顶部另起一块会抢走"目标块"、该守门**当场失败** ✗）＋ **治旧**（新增 `_StateUnpickler`：`find_class` 把类名 `Node` 一律映射回本模块 ⇒ 旧 state 的 **486 个异类**读盘即**自动归一** ✓）＋ **回填** `loop_archive*.csv` 空 `cat` **392 → 0**（只补 `cat`/`leaf`，**指标逐字未动** ✓）＋ 文档 `factor_library*.md` **9 处**「未分类」修正（`F47`→`价格`/`low` · `F34`→`风格`×3 · `F10`→`换手率`/`风格`×2 ✓）＋ 新守门 `tools/_test_node_single.py`（静态 / 功能 / 数据 **4 组** ✓）；② **前端**：详情弹层**三条入口**都必须传 `metrics20` —— 实测「新入库日志」卡**漏传** ⇒ 该入口 20 日口径按钮**恒置灰**（提示"还未生成"，而数据早就算好 ✓）⇒ 补 `App.tsx` 传参 ＋ `api.ts::LibraryEntryDto` 补 `hzn`/`metrics20` ＋ 守门 `_test_frontend_wiring.py`【11】**三条入口各钉一处** ✓；③ `.gitignore` 加 `*.bak_before_*` ✓ ⇒ **全量回归 49/49 通过** ✓（含真机冒烟 4/4 · `loop_state*.pkl` SHA256 **未变** ✓）（详见 [`change_log.md`](change_log.md) ✓） |
-| **v1.22.1** | 2026-09-25 | `tag 自身` | ★★★★★ **收尾补「5 日动态风格暴露」+ 全仓路径改 `__file__` 派生**（用户之问：_"刚入库的因子有自动做20日的审查吗？还有各种动态风格曲线图有在画吗？"_ → _"统一改成 __file__ 派生，让公司、家里的目录都没问题"_）—— ① **找回收尾缺口**：`expo`（动态风格暴露）只在 `--stage in ('expo','all')` 时才算，而收尾的 5 日曲线三步（`④core / ⑤strip / ⑥style+strip2`）**都不含它** ✗，唯一含它的 `⑥b` 又带 `--fwd=20` ⇒ 只写 20 日目录 ⇒ **5 日目录 `docs/factor_curves/` 的 `expo` 段从来没人生成** ✗（实测刚入库 `F47`：5 日 JSON 无 `expo` / 20 日 JSON 有 ✓）⇒ 池内 + 全局收尾**各加一步 `⑥c`**（`factor_curves.py --only-new --stage=expo`）✓；补算现有 ⇒ 5 日 expo 覆盖 **75 → 76** ✓（余 2 个属正常：已移出的 `F42` · 当年 Alpha143 探索件 `Xe308ae`）；② **全仓 48 文件 68 处硬编码 `D:\loop_code` 改 `__file__` 派生**（公司机 `D:\loop_code`、家里 `E:\quant\loop_code` 通用 ✓；注释里的说明文字保留不动 ✓）＋ 补 `_verify_extra_args.py` 缺的 `import os` ✓ ⇒ **全量回归 48/48 通过**（这批测试在本机**首次全部跑通** ✓，此前因硬编码路径全数报错 ✗）（详见 [`change_log.md`](change_log.md) ✓） |
+| **v1.22.1** | 2026-09-25 | `tag 自身` | ★★★★★ **收尾补「5 日动态风格暴露」+ 全仓路径改 `__file__` 派生**（用户之问：_"刚入库的因子有自动做20日的审查吗？还有各种动态风格曲线图有在画吗？"_ → _"统一改成 __file__ 派生，让公司、家里的目录都没问题"_）—— ① **找回收尾缺口**：`expo`（动态风格暴露）只在 `--stage in ('expo','all')` 时才算，而收尾的 5 日曲线三步（`④core / ⑤strip / ⑥style+strip2`）**都不含它** ✗，唯一含它的 `⑥b` 又带 `--fwd=20` ⇒ 只写 20 日目录 ⇒ **5 日目录 `docs/factor_curves/` 的 `expo` 段从来没人生成** ✗（实测刚入库 `F47`：5 日 JSON 无 `expo` / 20 日 JSON 有 ✓）⇒ 池内 + 全局收尾**各加一步 `⑥c`**（`factor_curves.py --only-new --stage=expo`）✓；补算现有 ⇒ 5 日 expo 覆盖 **75 → 76** ✓（余 2 个属正常：已移出的 `F42` · 当年 Alpha143 探索件 `Xe308ae`）；② **全仓 48 文件 68 处硬编码 `D:\loop_code` 改 `__file__` 派生**（公司机 `D:\loop_code`、家里 `D:\quant\loop_code` 通用 ✓；注释里的说明文字保留不动 ✓）＋ 补 `_verify_extra_args.py` 缺的 `import os` ✓ ⇒ **全量回归 48/48 通过**（这批测试在本机**首次全部跑通** ✓，此前因硬编码路径全数报错 ✗）（详见 [`change_log.md`](change_log.md) ✓） |
 | **v1.22.0** | 2026-09-23 | `4d41fca` | ★★★ **版本号升到 1.22.0**（用户：_"把版本升到1.22.0然后push吧"_）—— **纯版本收口，零代码改动** ✓：只动四处版本串（`VERSION` / `dashboard/web/package.json` / 本表上方的「当前版本」/ `change_log.md` ✓），**不碰 `engine/` 与 `tools/`** ✓ ⇒ 把 2026-09-23 一天里"调度与运维"这条线上的 11 个补丁版（`v1.21.39` 统一槽位口径 ⇒ `v1.21.40` 单实例闸 + 20 日收尾不再刷假警报 ⇒ `v1.21.41` 指标表「行完整性 / 行真实性」⇒ `v1.21.42` 超额算术/几何口径 ⇒ `v1.21.43`~`v1.21.46` 收尾与文档 ⇒ `v1.21.47` 全部停止的表述与静默 ⇒ `v1.21.48` 补位规则 + 收轮判据 + 徽标四态 ⇒ `v1.21.49` 回填口径张冠李戴 ⇒ 本版）收在一个**小版本号**上，以后"**1.22 那一版**"就是这一串的统称 ✓（排障/对比时比逐个报 `v1.21.4x` 清楚得多 ✓）；代码与产物同 `v1.21.49` **逐字一致** ⇒ 那版 **48/48 全量回归**（空闲窗口、无静默跳过 ✓）的结论继续有效 ✓；本次只跑 `tools/_test_version_sync.py`（四处一致 ✓）|
 | **v1.21.49** | 2026-09-23 | `a6899c0` | ★★★★★ **修「空出的槽永远回填不上」**（用户实测：_"我停1000池啦，它还在等啊"_）—— **真因是口径张冠李戴** ✗✗：运行期"有效并行上限" `_eff_max()` 算的是 `slot_cap(avail_gb(), …)`，而 **`avail_gb()` 是"当前可用内存"（已经扣掉在跑的引擎 ✗）** ⇒ 它其实是"**还能再开几个**"，却被拿去和 `len(running)`（**同时在跑几个**）比 ✗ ⇒ 实测 `在跑 2 个 | 待启动 1 | 上限 2(自动) | 可用 17.3 GB` ⇒ `2 < 2` 为假 ⇒ **排队的 50 起不来**（用户"停 1000"白停 ✗）；历史症状同理：**任一池跑完腾出的槽回填不了** ⇒ 排队池几乎要等全轮结束才轮到 ✗（也正是"1000 跑了 6 代、500 才 1 代"的观感来源 ✓）⇒ 修法：算「**总容量**」时把在跑的 k 个**按预算加回**（`slot_cap(free + k×per, …)` ✓ ⇒ 语义 = "若从零开始能同时跑几个" ✓），再加**启动那一刻容量的天花板**（防"内存被在跑的吃光后总容量虚高 ⇒ 悄悄多开" ✗）与"此刻真的还塞得下几个"（与启动循环那道内存闸同义 ✓）；**三个入参都有默认值 ⇒ 拿实时内存的旧调用结果一字不变** ✓；日志改成 `待启动 1 (50) | 上限 3(自动·总容量)` ✓；守门 `_test_slot_caliber.py`【5】**复现今天现场**（旧口径 `2` ✗ / 新实现 `3` ✓，**结论必须相反** ✓）＋ 入参优先 / 天花板 / 内存紧仍不起 / 旧调用不变 ✓；全量回归 **48/48** ✓（**空闲窗口**跑、**无静默跳过** ✓）（详见 [`change_log.md`](change_log.md) ✓） |
 | **v1.21.48** | 2026-09-23 | `8296a3d` | ★★★★★ **修「单独停池后的补位规则 + 收轮判据 + 徽标四态」**（用户实测：_"我一键开启了全部，然后把全A停止了，为啥上证50池没有马上启动起来，一直显示并行中？"_）—— ① **补位规则写宽了** ✗：本意是"别自动把**闲置**池顶上来"（用户 09-16 诉求 ✓），实现却把**所有还没启动的池**都 `deferred` ✗ ⇒ 连"**正在排队等槽位**"的 50（`待启动 1` ✓）也被挡住 ✗ ⇒ 新增纯函数 **`topup_defer_list(en, launched, waiting)`**：**只 defer 真·闲置**（本轮从没进过候选队列的 ✓），**在排队的池照旧顶上** ✓；② ★★ **收轮判据被 `deferred` 卡死** ✗（更要命）：判据 = "每个启用池都完成 ≥`min_gens` 代"，而 deferred 池本轮永远跑不了 ⇒ 永远 0 代 ⇒ 判据**永不成立** ⇒ **本轮永远收不了口** ⇒ `cand` 永不为空 ⇒ **轮末全局收尾（跨池审查/精选池/指标表/登记表）永不执行** ✗✗（与 v1.21.20「1 代判据」、v1.21.38「被饿的池」同类，这次入口是 `deferred` ✗）⇒ 新增纯函数 **`pending_pools(en, st, deferred)`**（**排掉 deferred** ⇒ 语义澄清为"deferred = 本轮不参与，收轮不等它" ✓）；③ 顺手修一个**隐患**：内存不足时原来是内层 `sleep(15); continue` ✗ ⇒ 内层继续条件靠 `running/eff_max`、而它们只在**外层收割**时变 ⇒ **永远不去收割** ⇒ 已跑完的引擎腾不出内存 ⇒ 死等 ✗ ⇒ 改 `break` 回外层（收割 + 重算上限 ✓）；④ 界面把「并行中」**拆成四态** ✓：`挖掘中 / 审查中 / 已跑 N 代·等其它池 / 排队中·等槽位|等内存`（原来"并行中"把"跑完了在等"和"**一次都没轮到**"糊成一个词 ✗，正是用户困惑的根源 ✗）；新守门 `tools/_test_sched_defer.py`（**复现今天现场**：`waiting={50}` ⇒ 必须不 defer ✓ / `deferred={50}` ⇒ 待收轮名单不含它 ✓ ＋ 旧口径对照 ✓）（详见 [`change_log.md`](change_log.md) ✓） |
@@ -363,7 +383,7 @@ git tag -a v0.2 -F <说明文件>               # 建新版（说明按上表四
 | **v0.20.6** | 2026-09-15 | `tag 自身` | **核对 `loop_todo §1` 真实状态** —— ★★ **12 条里 8 条早已做完却没标完成**（完成记录其实都在 `change_log` 的 v0.5.2/0.6.0/0.6.1/0.7.0/0.8.0/0.9.0/0.11.0 里）⇒ 真待办只剩 3 条（`§1.3-E` 换手优化 · `§1.24-①c` 剥 2→4 等数据 · `§1.4` 产品定位待拍板）；`§1.6` 可关闭 | 无代码行为变更（**纯文档核对**）|
 | **v0.20.5** | 2026-09-15 | `tag 自身` | **复核「剥风格」概念**（用户问「叶子本身用 BARRA 11 个构造，剥离不是白剥了么」）—— ★★ 厘清 **`STYLE_KEYS`（4 个系统性暴露，来自 `base_fields` 现算，**这才是剥离清单**） vs `BARRA_LEAVES`（11 个构造原料，**不能剥**，全库 28/57 因子含 `barra_` 叶子，`barra_residual_volatility` 一个被 22 个因子用）** ⇒ 名字像（`lncap` vs `barra_size`）但**来源完全不同** ⇒ **剥 `lncap`+`lnamt` 不是"白剥"**（实证 `F33` 剥后日频回撤 −19%→−10%）✓ | 无代码行为变更（**纯文档厘清**）|
 | **v0.20.4** | 2026-09-15 | `tag 自身` | **文档大复核**（用户：「`loop_todo.md` 是不是又要清理了？看看里面有没有错的？有没有要归档的？把各个文档再查一轮」）—— ★★ 抓到 **5 处**：① **`§0`「一屏速览」停在 09-13**（写着"正在跑 ×3 轮 / 当前代 gen=3"，而**轨道早已结束、引擎停止**）⇒ 按**实测**重写（各池 75/27/14/12 代；入库 41/2/3/5）② **`§4.2`「现役门槛参数」缺 4 个生产在用的**（`--strip_style`/`--style_obs`/`--dup_ex_corr`/`--min_strip_calmar`）③ **`§4.6`「关键工具清单」列了 ~18 个已归档的 `ai_test/*` 工具**（自称"新会话最需要的一页"，照着跑会**全部失败**）⇒ 改为只列常驻工具 + 加 `ai_test/` 归档说明 ④ **`§1.3-A`（"首版已完成"却留在**待办**里 + 87 行详节）** ⇒ 归档到 `docs/log/todo_done.md`（`loop_todo` 1034→1012 行）⑤ README 里旧名 `tools/calib_gates.py` · 新增 `tools/_audit_doc_refs.py`（**扫文档里的路径引用是否存在**；★ 只判带目录前缀的 —— 初版把 `values_q.h5` 这类**泛指名字**误报为"路径不存在" ✗）| 无代码行为变更（**纯文档**）|
-| **v0.20.3** | 2026-09-15 | `tag 自身` | **复核会话结论（用户："你几乎每轮都会出错，要不要再查一轮"）+ 回答「clone 多大 / 跑起来生成多少」** —— ★ **抓到并更正我自己写错的**：`change_log` 的 v0.20.1 条目曾写「最大函数 1291 行 → 223 行」（**张冠李戴**：把 `run()` 1291→921 与 `evaluate_real` 222 行混成一句）⇒ **真值：`run()` 仍是 920 行的全项目最大函数** ⇒ **`P0-2b`（引入 `ctx` 继续拆）依然必要** ✓ · 澄清 P0-1 的"10 处 → 1 处"口径（**4 代码 + 6 文档 → 机械清单 1 处**；实现/数值测试是**职责不是副本**）· 新增 `tools/_audit_clone_size.py`（**clone=3.66 MB / 生成≈8 GB**）与 `tools/_audit_rebuild.py`（重建链条：`E:\rq` **188 GB** 是唯一外部依赖）| 无代码行为变更（**纯文档更正 + 审计脚本**）|
+| **v0.20.3** | 2026-09-15 | `tag 自身` | **复核会话结论（用户："你几乎每轮都会出错，要不要再查一轮"）+ 回答「clone 多大 / 跑起来生成多少」** —— ★ **抓到并更正我自己写错的**：`change_log` 的 v0.20.1 条目曾写「最大函数 1291 行 → 223 行」（**张冠李戴**：把 `run()` 1291→921 与 `evaluate_real` 222 行混成一句）⇒ **真值：`run()` 仍是 920 行的全项目最大函数** ⇒ **`P0-2b`（引入 `ctx` 继续拆）依然必要** ✓ · 澄清 P0-1 的"10 处 → 1 处"口径（**4 代码 + 6 文档 → 机械清单 1 处**；实现/数值测试是**职责不是副本**）· 新增 `tools/_audit_clone_size.py`（**clone=3.66 MB / 生成≈8 GB**）与 `tools/_audit_rebuild.py`（重建链条：`D:\rq` **188 GB** 是唯一外部依赖）| 无代码行为变更（**纯文档更正 + 审计脚本**）|
 | **v0.20.2** | 2026-09-15 | `tag 自身` | **补上 `--style_obs`（长期遗漏）+ `research/` 归档** —— ★★ `run_tracks.py` 一直**没透传** `--style_obs`，而它**成本≈0**（与已开的 `--strip_style` **共用** `style_features`，一代一次；**无额外回测**）却能补一个**已知盲区**：我们"剥风格"**只剥 2 个**（`lncap`/`lnamt`），`--style_obs` 记录 **4 个** ⇒ `lntr`/`lnpx` 一直看不见（实证：`F07` 号称"最独立"，`lntr` 暴露 **−0.51**）· `research/`（91 py，**0 生产引用**，停更 09-08）→ **`history/research/`** | 引擎行为**不变**（`--style_obs` 只落观测、不进选择）；**数据侧**：`docs/loop_style_obs.csv` 将从下轮起恢复累积 |
 | **v0.20.1** | 2026-09-15 | `tag 自身` | **清生产侧硬编码路径 14 处** —— `standard_test.py`(PANEL/UNIVERSE/BARRA) · `qa_style_obs.py` · `loop_watch.py` · `calib_dedup_leaf.py` · `l1_shape_calib.py` · `gen_f11_daily.py` 全改 **`__file__` 派生**（**等价性已验证**）⇒ **换目录/换机器不再崩** · `_audit_deadcode.py` 加"**动态按名查找抓不到**"警告（实测差点误删活代码 `cs_demean_op`）· 全项目盘点（`research/`+`strategies/` = **0 生产引用**属历史；重复代码 24 组**全在历史目录**；最大函数 1291→223 行）| 引擎行为**不变**（纯路径派生，逐字等价） |
 | **v0.20.0** | 2026-09-15 | `tag 自身` | **★★★ 修 P0-2 引入的「幽灵实参」崩溃**（`UnboundLocalError: e`，**已实际崩掉 `pool=300 gen28` 与 `pool=500 gen15` 两代**）+ **文件精简归档**（`docs/history/`→根 `history/`；`ai_test/` 整体归档；`standard/` 可归档件归档；50 池=上证50 产物归档）| 引擎行为**不变**（纯删多余形参，不改任何计算）；★ 但**修复了必崩** ⇒ 受影响代可正常跑完 |

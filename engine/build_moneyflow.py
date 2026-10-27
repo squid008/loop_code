@@ -9,7 +9,7 @@
 * sid 编码: 用 instruments.pk 里 type=CS 的全集排序后统一编号,
   保证各年份文件的 sid 完全一致(跨年通用)。
 * 数值用 float32: 金额单位万元/占比单位%, 7 位有效数字足够。
-* 输出: E:\\rq\\moneyflow\\mf_{year}.h5
+* 输出: D:\\rq\\moneyflow\\mf_{year}.h5
     /data  : (date i4, sid i4, 11 个数值字段 f4)  按 (date, sid) 排序
     /index : (date i4, line_no u4, count u4)      每天起始行与行数
     /sid   : S16 数组, sid -> order_book_id
@@ -29,9 +29,10 @@ import h5py
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-SRC = r'D:\mydata'
-PK = r'E:\rq\bundle\instruments.pk'
-OUTDIR = r'E:\rq\moneyflow'
+import loop_env as _E     # ★ 外部路径的唯一事实源（config.local.json 的 paths 段）
+SRC = _E.opt('moneyflow_csv_root', r'D:\mydata')   # 资金流 CSV 源目录（profile 里可覆盖）
+PK = _E.data('bundle', 'instruments.pk')
+OUTDIR = _E.data('moneyflow')
 
 C_DATE, C_CODE, C_NAME = 0, 1, 2
 VAL_COLS = [

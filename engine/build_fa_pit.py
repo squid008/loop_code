@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-财报 PIT as-of 展开入叶 —— E:\\rq\\finance\\pit\\*.h5 → fa_pit.h5
+财报 PIT as-of 展开入叶 —— D:\\rq\\finance\\pit\\*.h5 → fa_pit.h5
 ======================================================================
 PIT 实测结构: 每股票 h5 = keys{fields(组,~394科目)/if_adjusted/info_date/quarter/rice_create_tm}
 无 ann_date。同 report_period(quarter) 存在多条版本行(首次披露 + 后续每份报告带一版修正,
@@ -100,7 +100,8 @@ except Exception:                          # noqa: BLE001
 HERE = os.path.dirname(os.path.abspath(__file__))
 PANEL = os.path.join(HERE, 'panel.h5')
 OUT = os.path.join(HERE, 'fa_pit.h5')
-PIT = r'E:\rq\finance\pit'
+import loop_env as _E     # ★ 外部数据根的唯一事实源（config.local.json 的 paths 段）
+PIT = _E.data('finance', 'pit')
 
 # ---- 核心输入科目（TTM 字段为 RQ 已算好的 12 月滚动值, 避开 YTD 拼接）----
 CORE8 = ['net_profitTTM', 'operating_revenueTTM', 'gross_profitTTM',

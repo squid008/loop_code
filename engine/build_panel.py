@@ -2,7 +2,8 @@
 """
 构建前复权价量面板 panel.h5
 ============================
-数据: E:\rq\bundle\stocks.h5 (未复权OHLCV) + ex_cum_factor.h5 (累计除权因子)
+数据: <数据根>\bundle\stocks.h5 (未复权OHLCV) + ex_cum_factor.h5 (累计除权因子)
+      数据根由 config.local.json 的 paths 段决定（见 engine/loop_env.py）
 前复权: price_adj(t) = price_raw(t) * F(t) / F(last)
         volume_adj(t) = volume_raw(t) * F(last) / F(t)   (保持成交额不变)
 说明: rqalpha 回测用"动态前复权"(以回测当日为基准), 与本面板固定基准前复权
@@ -16,7 +17,8 @@ import h5py
 import numpy as np
 import pandas as pd
 
-B = r'E:\rq\bundle'
+import loop_env as _E     # ★ 外部数据根的唯一事实源（config.local.json 的 paths 段）
+B = _E.data('bundle')
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'panel.h5')
 START = 20130101
 
