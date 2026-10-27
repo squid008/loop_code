@@ -97,6 +97,79 @@
 
 > ⚠ **归档动作（2026-10-27）**：承诺只保留最近 15 个版本，当时已累积 **16** 条 ⇒ 已把最旧的 1 条**整段原文**搬进 `history/change_log_archive.md` ✓。
 
+> ⚠ **归档动作（2026-10-27 第二次）**：承诺只保留最近 15 个版本，当时已累积 **16** 条 ⇒ 已把最旧的 1 条**整段原文**搬进 `history/change_log_archive.md` ✓。
+
+## [1.51.0] — 2026-10-27
+
+> 主题：**外部路径可配置（公司 / 家里两套 profile）** —— 家里那台机器做的，本次合并收口 ✓
+> 来源：远端 commit `9090280`（44 文件 +587/−392），本地补了 `config.local.json` 的 `paths` 段并实测。
+
+### 一、为什么需要
+
+之前所有"外部数据根"都**写死在 `E:\rq`**（10 个 build 脚本），换到家里（D 盘）就得逐个改 ✗
+用户问过「能不能在 config.local.json 里配路径1/路径2」——当时我回答"项目自包含、不用配"，
+**那只说对了一半**：代码侧确实零绝对路径，但**数据构建脚本**是硬编码的。
+
+### 二、做法（`engine/loop_env.py`，新 200 行）
+
+外部路径的**唯一事实源**，解析优先级：
+
+1. 环境变量 `LOOP_DATA_ROOT`（排错 / 临时用）
+2. 环境变量 `LOOP_PROFILE`（company / home）
+3. `config.local.json` 的 `paths.active` —— **不是 auto 就照它走，且不再探测**
+   （配错要立刻炸，绝不静默换机器）
+4. `active=auto`：按 `profiles` 顺序，取第一个 `<data_root>/bundle` **真实存在**者
+5. 兜底：探测 `D:/rq` → `E:/rq`（**打一行告警**，不静默）
+
+公开 API：`data(*parts)` · `profiles()` · `resolve()` · `describe()` · `opt(key, default)`
+
+### 三、改成读配置的脚本
+
+`audit_f11` · `augment_panel` · `build_barra` · `build_fa_pit` · `build_mf_leaves` ·
+`build_moneyflow` · `build_panel` · `build_turnover` · `build_universe` · `gen_f11_daily`
+⇒ 全部改成 `_E.data(...)`，**不再写死 `E:\rq`** ✓
+
+### 四、顺带修的一个显示 bug
+
+`dashboard/api/app/sources/factors.py`：**指标行缺失不再被当成"已退役因子"** ——
+原来看板在指标表里查不到该编号时会判 `inBank=false`，于是显示「已不在当前有效库（历史编号）」，
+而实际上只是指标还没重算 ⇒ 误导 ✗（用户曾为此困惑）
+
+### 五、本地配置（不入库）
+
+`config.local.json` 补了 `paths` 段（原文件只有 tushare token）：
+
+```json
+"paths": { "active": "auto",
+  "profiles": { "company": {"data_root": "E:/rq", "project_root": "E:/quant/loop_code"},
+                "home":    {"data_root": "D:/rq", "project_root": "D:/quant/loop_code"} } }
+```
+
+实测：`loop_env.describe()` → **`数据根: E:\rq（profile=company）· 仓库根: E:\quant\loop_code`**
+⇒ 显式命中 company，不再走兜底探测 ✓（`config.local.json` 仍在 `.gitignore`）
+
+### 六、`config.example.json`
+
+新增模板（32 行）：注明「复制成 `config.local.json` 后填自己的值」，
+含 `paths` / `sources.tushare` / `notify.feishu` 三段。
+
+### 七、验证
+
+| 项 | 结果 |
+|---|---|
+| `loop_env.describe()` | `数据根: E:\rq（profile=company）` ✓ |
+| 全量回归 | 见 §八 |
+
+### 八、发版回归
+
+★ **全量回归：61/61 全绿** ✓（**实测 8.4 分钟** ✓；最慢 `_test_e2e_l1l2` 157 s ·
+`_test_parallel_runner` 117 s · `_test_daily_dd` 55 s ✓）。
+
+* 守门数 **60 → 61**：家里新增了 `tools/_test_inbank_fallback.py`（正对 §四 那个 inBank 修复）
+* 跑前**本项目无挖掘在跑** ✓（另有一个 `E:\datacausal` 的 `run_tracks` 在跑，与本项目无关）
+
+---
+
 ## [1.50.3] — 2026-10-27
 
 > 主题：**保底名额第二次修** —— 找错了池子（从过滤后的 17 条里找，而不是过滤前的 700 条）✓
@@ -839,54 +912,6 @@ TypeError: 'Node' object is not iterable
 ★ **全量回归：59/59 全绿** ✓（**实测 7.3 分钟** ✓；最慢 `_test_e2e_l1l2` 118 s ·
 `_test_parallel_runner` 112 s · `_test_daily_dd` 40 s ✓）。
 跑前无挖掘在跑 ✓；跑完**未起引擎** ✓、控制文件已复位 ✓。
-
----
-
-## [1.42.0] — 2026-10-19
-
-> 主题：**L1 排序改为 `mono_n`（风格中性十档单调性）主导** ✓
-> 起因：用户 _"L1 排序换成 mono_n 主导，跑 2~3 代看通过数"_。
-
-### 一、依据（n=107，gen161-164 的 L2 候选 vs `strip_calmar` Spearman）
-
-| L1 指标 | vs `strip_calmar` | vs `strip_ann_ex` | vs 日频 `strip_calmar_d` |
-|---|---|---|---|
-| **`mono_n`（中性化十档单调性）** | **+0.764** | **+0.754** | **+0.770** |
-| `ic_n`（风格中性 IC） | +0.386 | +0.332 | +0.396 |
-| `ic`（原始 IC） | +0.057 | +0.039 | +0.064 |
-| `stab`（旧主项） | **−0.210** | −0.200 | −0.222 |
-
-⇒ `mono_n` 是唯一强预测项，且**零额外成本**（`decile_shape` 已在算、每代落盘）。
-
-### 二、改动
-
-* `engine/loop_metrics.py`：`l1_score(..., mono_n=None)` 增 `mode='mono_n'` = `clip(mono_n, 0, 1)`
-* `engine/loop_l1.py`：`_make_score` 增 `mono_n` 分支；缺值（未开 `--style_obs`）
-  **回退 `new` 并告警**（不静默 ✓）
-* `engine/loop_engine.py`：`--score_mode` choices 加 `'mono_n'`
-* `tools/run_tracks.py`：生产 extra `--score_mode=new` → **`--score_mode=mono_n`**（含依据与回退注释）
-* `engine/loop_l1.py`（顺带）：`_ic_n` 的异常**不再静默** + 首调用一次性诊断
-  （v1.38.3 就是被 `except` 吞掉，导致 gen161 的 `ic_n` 整列 NaN 而日志无线索 ✗；
-  实测 gen162 起已恢复正常，2180 条有值 ✓）
-
-### 三、验证
-
-| 项 | 结果 |
-|---|---|
-| 单元（`ai_test/_test_score_mono_n.py`） | **7/7**：mono_n 裁剪 / 全空回退 / 列缺失回退 / `new`·`ic_n` 逐位不变 / argparse / 生产 extra ✓ |
-| `py_compile` / 未定义名 | OK / **0 处**（185 文件）✓ |
-| R1 审计 | 无新增（`engine/` 仍只剩既存 `build_fa_pit.main()` 150 行）✓ |
-| 前端接线守门 | **全过** ✓ |
-| 冒烟（带 `--score_mode=mono_n`） | **4/4**（rc=0 · 无 Traceback/NameError · 全部 state SHA256 未变）✓ |
-| 全量回归 | 见 §四 |
-
-### 四、发版回归
-
-★ **全量回归：59/59 全绿** ✓（**实测 14.8 分钟** —— 机器偏慢，
-`_test_e2e_l1l2` 248 s / `_test_parallel_runner` 207 s / `_test_gen_determinism` 86 s）。
-跑前无挖掘在跑 ✓（且全程**只跑这一个任务**，不与补测并行 —— 2026-10-19 曾因
-`build_facs`(5 GB) 与回归测试引擎(2×4.5 GB) 并跑把内存压到 2 GB 而被迫中断）；
-跑完**未起引擎** ✓、控制文件已复位 ✓。
 
 ---
 

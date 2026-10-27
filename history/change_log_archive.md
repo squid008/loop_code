@@ -1,8 +1,56 @@
-# change_log 归档（v1.41.0 及以前）
+# change_log 归档（v1.42.0 及以前）
 
 > 本文件由 `ai_test/_cl_split.py` 从 `change_log.md` 切出（2026-09-27）——
 > 目的是让主 `change_log.md` 只保留近期版本、可读可查（原文**一字未改** ✓）。
 > 新增条目请照旧写进主 `change_log.md` 的**最新**位置 ✓。
+
+---
+
+## [1.42.0] — 2026-10-19
+
+> 主题：**L1 排序改为 `mono_n`（风格中性十档单调性）主导** ✓
+> 起因：用户 _"L1 排序换成 mono_n 主导，跑 2~3 代看通过数"_。
+
+### 一、依据（n=107，gen161-164 的 L2 候选 vs `strip_calmar` Spearman）
+
+| L1 指标 | vs `strip_calmar` | vs `strip_ann_ex` | vs 日频 `strip_calmar_d` |
+|---|---|---|---|
+| **`mono_n`（中性化十档单调性）** | **+0.764** | **+0.754** | **+0.770** |
+| `ic_n`（风格中性 IC） | +0.386 | +0.332 | +0.396 |
+| `ic`（原始 IC） | +0.057 | +0.039 | +0.064 |
+| `stab`（旧主项） | **−0.210** | −0.200 | −0.222 |
+
+⇒ `mono_n` 是唯一强预测项，且**零额外成本**（`decile_shape` 已在算、每代落盘）。
+
+### 二、改动
+
+* `engine/loop_metrics.py`：`l1_score(..., mono_n=None)` 增 `mode='mono_n'` = `clip(mono_n, 0, 1)`
+* `engine/loop_l1.py`：`_make_score` 增 `mono_n` 分支；缺值（未开 `--style_obs`）
+  **回退 `new` 并告警**（不静默 ✓）
+* `engine/loop_engine.py`：`--score_mode` choices 加 `'mono_n'`
+* `tools/run_tracks.py`：生产 extra `--score_mode=new` → **`--score_mode=mono_n`**（含依据与回退注释）
+* `engine/loop_l1.py`（顺带）：`_ic_n` 的异常**不再静默** + 首调用一次性诊断
+  （v1.38.3 就是被 `except` 吞掉，导致 gen161 的 `ic_n` 整列 NaN 而日志无线索 ✗；
+  实测 gen162 起已恢复正常，2180 条有值 ✓）
+
+### 三、验证
+
+| 项 | 结果 |
+|---|---|
+| 单元（`ai_test/_test_score_mono_n.py`） | **7/7**：mono_n 裁剪 / 全空回退 / 列缺失回退 / `new`·`ic_n` 逐位不变 / argparse / 生产 extra ✓ |
+| `py_compile` / 未定义名 | OK / **0 处**（185 文件）✓ |
+| R1 审计 | 无新增（`engine/` 仍只剩既存 `build_fa_pit.main()` 150 行）✓ |
+| 前端接线守门 | **全过** ✓ |
+| 冒烟（带 `--score_mode=mono_n`） | **4/4**（rc=0 · 无 Traceback/NameError · 全部 state SHA256 未变）✓ |
+| 全量回归 | 见 §四 |
+
+### 四、发版回归
+
+★ **全量回归：59/59 全绿** ✓（**实测 14.8 分钟** —— 机器偏慢，
+`_test_e2e_l1l2` 248 s / `_test_parallel_runner` 207 s / `_test_gen_determinism` 86 s）。
+跑前无挖掘在跑 ✓（且全程**只跑这一个任务**，不与补测并行 —— 2026-10-19 曾因
+`build_facs`(5 GB) 与回归测试引擎(2×4.5 GB) 并跑把内存压到 2 GB 而被迫中断）；
+跑完**未起引擎** ✓、控制文件已复位 ✓。
 
 ---
 
