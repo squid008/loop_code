@@ -1,8 +1,57 @@
-# change_log 归档（v1.40.2 及以前）
+# change_log 归档（v1.41.0 及以前）
 
 > 本文件由 `ai_test/_cl_split.py` 从 `change_log.md` 切出（2026-09-27）——
 > 目的是让主 `change_log.md` 只保留近期版本、可读可查（原文**一字未改** ✓）。
 > 新增条目请照旧写进主 `change_log.md` 的**最新**位置 ✓。
+
+---
+
+## [1.41.0] — 2026-10-19
+
+> 主题：**20 日口径的剥风格指标** ✓（用户："20 日的还没算完？挖完会自动算吗？"）
+> 此前 `strip2` 只在**入库那一刻**算过、且只喂 md 文档，**不落结构化文件** ⇒ 看板切 20 日永远是空 ✗。
+
+### 一、为什么以前一直空
+
+* `engine/loop_l2.py` 的 `strip2`（副口径剥风格）**算了**，但只进 `_strip2_by_expr`（写 md 用），
+  没有独立 CSV。
+* `tools/build_facs.py` 三处 `window=5` 硬编码 ⇒ 收尾补测**只跑 5 日** ⇒ 汇总表也只有 5 日。
+
+### 二、改动（A 长期自动 + B 立即回填）
+
+**A（引擎侧，以后自动有）**
+* `engine/loop_paths.py`：新增 `STRIP_OBS_20 = docs/loop_strip_style_20.csv`，纳入 `_PATH_KEYS`（各池独立 ✓）
+* `engine/loop_persist.py`：新增 **`_dump_strip_detail20()`**（schema-safe；先过滤 `None` 行）
+* `engine/loop_l2.py`：`_L2Acc` 增 `strip2_rows`；候选循环收集；代末落盘
+
+**B（补测 + 展示）**
+* `tools/build_facs.py`：每因子在 5 日剥风格后**再跑一次 `FWD=20`**（复用同一份中性化因子值），
+  写 `docs/loop_strip_style_bank_fwd20.csv`
+* `dashboard/api/app/sources/factors.py`：新增 `strip_bank_20()` / `_strip_bank_20_map()`
+  （mtime 缓存、命中零 IO）与 **`_merge_strip_into()`**（5 日/20 日**共用**，含 `strip_dd` 恒等式兜底）；
+  20 日字段并入 `metrics20`
+* **前端零改动**（`METRIC_GROUPS` 在 20 日模式本来就读 `metrics20`）
+
+### 三、验证（实测）
+
+| 项 | 结果 |
+|---|---|
+| `py_compile` / 未定义名 | OK / **0 处**（185 文件）✓ |
+| R1 审计 | 无新增（中途 `_l2_candidates` 到 **122** 行，已压回 **120**）✓ |
+| 前端接线守门 | **全过** ✓ |
+| 单元（`ai_test/_test_strip_rec_of.py`） | 22 字段齐 / 超额口径逐字未变 / 缺字段不抛 ✓ |
+| 全量回归 | 见 §四 |
+| 20 日回填 | 见 §五 |
+
+### 四、发版回归
+
+★ **全量回归：59/59 全绿** ✓（**实测 13.8 分钟** —— 机器偏慢，
+`_test_e2e_l1l2` 232 s / `_test_parallel_runner` 178 s）。
+跑前无挖掘在跑 ✓；跑完**未起引擎** ✓、控制文件已复位 ✓。
+
+### 五、20 日回填
+
+（待补测跑完后回填——本次补测会给全库 68 个因子补上 20 日剥风格）
 
 ---
 

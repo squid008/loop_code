@@ -730,6 +730,10 @@ def _run_l1_phase(ctx, args):
                                               Rsub_s_n, bank, bank_ext)
     # ★ 2026-09-29（§1.40 ①）：去相关已**批内就地判定** ✓ ⇒ 这里只把结果传下去做过滤 ✓
     #   （不再传 `B`/`bank`/`bank_ext` ✗ —— `Kr` 的构造已搬进 `_known_rank_map` ✓）
+    # ★★★ 2026-10-27（替代数据保底修法）：**过滤前的全量表也要留一份**。
+    #   实测：每代 L1 计算 ~700 条、含替代数据 5.7%，但 `_l1_filter` 之后只剩 **~17 条、含替代数据 0**
+    #   ⇒ 保底若从过滤后的 `l1` 里找，永远 `命中=0`（v1.50.0/1.50.1 就是这样白跑 30 代）✗
+    ctx['l1_all'] = l1          # 只读快照；`< 2%` 内存（700 行的表）
     l1 = _l1_filter(l1, Bsub, args, _reuse_v, _min_mono, _score_mode, dec_keep, dec_info)
     if l1 is None:
         return True

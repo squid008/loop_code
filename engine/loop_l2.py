@@ -379,7 +379,7 @@ def _l2_pool_tags(j, nd, fac, dates, cols, close, args, POOL_M, MCAP, _pools, _l
 #   而 R1 要求函数 ≤120 行 ⇒ 抽块时会变成「30 个形参的上帝参数表」✗（文档自己警告过的形态 ✗）。
 #   ⇒ 先把**只读口径**与**本代累积**分成两个有名字、有边界的对象 ✓，再抽块 ⇒ 形参 3 个 ✓。
 # ★ 名字对应只有**一个来源**：`_L2IN_MAP`（键 == 旧局部名 == 当时的 ctx 键 ✓，逐字来自源码 ✓）。
-_L2IN_MAP = {'_min_pool_calmar': 'min_pool_calmar', '_min_sharpe': 'min_sharpe', '_pool_gate_mode': 'pool_gate_mode', '_pool_gate_on': 'pool_gate_on', '_pool_gate_or_all': 'pool_gate_or_all', '_pool_obs': 'pool_obs', '_pools': 'pools', 'cols': 'cols', 'dates': 'dates', 'l1': 'l1', 'B': 'B', 'close': 'close', 'STYLE_FULL': 'STYLE_FULL', '_strip_style': 'strip_style', 'fail_lib': 'fail_lib', 'bank_ex': 'bank_ex', 'bank_ex_ext': 'bank_ex_ext', '_dup_ex_corr': 'dup_ex_corr', '_ex_by_expr': 'ex_by_expr', '_tag_by_expr': 'tag_by_expr', '_strip_by_expr': 'strip_by_expr', '_strip2_by_expr': 'strip2_by_expr', '_hzn2_by_expr': 'hzn2_by_expr'}
+_L2IN_MAP = {'_min_pool_calmar': 'min_pool_calmar', '_min_sharpe': 'min_sharpe', '_pool_gate_mode': 'pool_gate_mode', '_pool_gate_on': 'pool_gate_on', '_pool_gate_or_all': 'pool_gate_or_all', '_pool_obs': 'pool_obs', '_pools': 'pools', 'cols': 'cols', 'dates': 'dates', 'l1': 'l1', 'l1_all': 'l1_all', 'B': 'B', 'close': 'close', 'STYLE_FULL': 'STYLE_FULL', '_strip_style': 'strip_style', 'fail_lib': 'fail_lib', 'bank_ex': 'bank_ex', 'bank_ex_ext': 'bank_ex_ext', '_dup_ex_corr': 'dup_ex_corr', '_ex_by_expr': 'ex_by_expr', '_tag_by_expr': 'tag_by_expr', '_strip_by_expr': 'strip_by_expr', '_strip2_by_expr': 'strip2_by_expr', '_hzn2_by_expr': 'hzn2_by_expr'}
 
 
 @dataclasses.dataclass(frozen=True)
@@ -395,6 +395,9 @@ class _L2In:
     cols: object
     dates: object
     l1: object
+    # ★ 2026-10-27：**过滤前**的 L1 全量表（~700 条；`l1` 是过滤后的 ~17 条）
+    #   替代数据保底必须从这张表里捞（那些因子单调性低，在 L1 硬过滤就被淘汰了）
+    l1_all: object
     B: object
     close: object
     STYLE_FULL: object
@@ -537,15 +540,22 @@ def _is_alt(node):
     return any(nm in s for nm in ALT_NAMES)
 
 
-def _boost_alt_top(top, l1, args):
-    """★ A 方案：从 L1 里**补** N 个"含替代数据"的候选进 L2（挤掉 top 末尾 N 个）。
+def _boost_alt_top(top, l1_all, args):
+    """★ A 方案：从 **L1 全量表（过滤前）** 里补 N 个"含替代数据"的候选进 L2。
+
+    ⚠⚠ **必须传过滤前的表**（`ctx['l1_all']`）—— 2026-10-27 实测根因：
+      每代 L1 计算 ~700 条（含替代数据 5.7%），但 `_l1_filter` 之后只剩 ~17 条、含替代数据 **0**
+      ⇒ 从过滤后的表里找，命中恒为 0（v1.50.0/1.50.1 因此白跑 30 代，日志 `命中=0`）✗
+      替代数据因子天然单调性低 ⇒ 在 L1 硬过滤阶段就被淘汰 ⇒ **只能在过滤前捞** ✓
 
     * 只在 `--alt_l2_slots > 0` 时生效；`0` ⇒ 原样返回 `top`（零行为变化 ✓）
     * "挤掉末尾"而不是"扩大名额" ⇒ 每代回测数量不变、耗时不变 ✓
     * 已经在 `top` 里的不重复补；补不到就原样返回（不报错）✓
     """
     n = int(getattr(args, 'alt_l2_slots', 0) or 0)
-    if n <= 0 or top is None or l1 is None or not len(top) or 'node' not in l1.columns:
+    if n <= 0 or top is None or l1_all is None or not len(top):
+        return top
+    if 'node' not in l1_all.columns:
         return top
     try:
         # ⚠ 一次性诊断（首次调用打印入参形状）—— 2026-10-25 保底**一次都没触发**，
@@ -553,10 +563,9 @@ def _boost_alt_top(top, l1, args):
         if not getattr(_boost_alt_top, '_dbg', False):
             _boost_alt_top._dbg = True
             try:
-                _n0 = int(l1['node'].map(_is_alt).sum()) if 'node' in l1.columns else -1
-                print(f"  [替代数据保底] 诊断: l1={len(l1)} top={len(top)} slots={n} "
-                      f"列={list(l1.columns)[:6]} node={type(l1['node'].iloc[0]).__name__} "
-                      f"命中={_n0}", flush=True)
+                _n0 = int(l1_all['node'].map(_is_alt).sum())
+                print(f"  [替代数据保底] 诊断: l1_all={len(l1_all)} top={len(top)} slots={n} "
+                      f"node={type(l1_all['node'].iloc[0]).__name__} 命中={_n0}", flush=True)
             except Exception as _e:                  # noqa: BLE001
                 print(f"  [替代数据保底] 诊断失败: {type(_e).__name__}: {_e}", flush=True)
         # ⚠ 两条硬约束（2026-10-25 单测抓到的）：
@@ -565,7 +574,7 @@ def _boost_alt_top(top, l1, args):
         want = min(n, len(top) // 2)
         if want <= 0:
             return top
-        alt = l1[l1['node'].map(_is_alt)]
+        alt = l1_all[l1_all['node'].map(_is_alt)]
         have = set(top['node'].map(str))
         add = alt[~alt['node'].map(str).isin(have)].head(want)
         if not len(add):
@@ -595,7 +604,8 @@ def _run_l2_phase(ctx, args):
             MCAP = None
     # ★ 5 行累加器初始化已收进 `_L2Acc` 的字段默认值 ✓
     # ★ S3b-3：本块已抽成 `_l2_candidates(...)` ✓（形参/回传由 AST 机器算 ✓）
-    top = _boost_alt_top(top, cal.l1, args)  # ★ A 方案：替代数据保底名额（默认 0 = 关）
+    # ★ A 方案：替代数据保底 —— 用 **过滤前** 的全量表（`cal.l1_all`），不是 `cal.l1`
+    top = _boost_alt_top(top, cal.l1_all, args)
     top = _drop_hist_skipped(top, args)     # ★ B 方案：同口径已测且未过 ⇒ 不再回测
     acc = _l2_candidates(MCAP, POOL_M, _lp, acc, args, cal, top)
     print(f"  [计时] L2 费后精筛 {len(top)} 个 用时 {time.time() - _t_l2:.0f}s", flush=True)
