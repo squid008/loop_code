@@ -51,7 +51,8 @@ KEEP = ["ts_code", "name", "report_date", "quarter", "eps", "np", "pe", "roe",
 #   ⇒ 间隔取 370 秒（6 分 10 秒）正好卡住 10 次/小时，留一点余量 ✓
 #   ⚠ 一开始按 61 秒设，跑到第 3 个窗口就开始连续 FAIL（浪费配额还丢数据）
 SLEEP = 370.0
-RETRY = 3             # 单个窗口最多试 3 次（避开瞬时限流）
+RETRY = 3             # 每轮试 3 次（避开 1 次/分钟的瞬时限流）
+MAX_WAIT = 4 * 3600   # 单个窗口最多等 4 小时（配额耗尽时；等不到就跳过，下次重跑补）
 
 
 def _token():
@@ -119,19 +120,31 @@ def fetch(pro, windows, force=False):
         if os.path.isfile(f + ".tmp"):
             os.remove(f + ".tmp")
         df = None
-        for attempt in range(1, RETRY + 1):
-            try:
-                df = pro.report_rc(start_date=s, end_date=e)
-                break
-            except Exception as exc:                      # noqa: BLE001
-                msg = str(exc)[:70]
-                print("  [%d/%d] %s~%s FAIL(第%d次) %s"
-                      % (i, len(todo), s, e, attempt, msg), flush=True)
-                if attempt < RETRY:
-                    time.sleep(SLEEP)                     # 等配额再试，**不跳过数据**
+        waited = 0
+        # ★ 2026-10-29：**配额耗尽时要"等"，不能"跳过"**。
+        #   原实现 3 次失败就 continue ⇒ 53 个窗口全部空转失败（实测第 1 个窗口连败 3 次，
+        #   每个窗口还要空跑 18 分钟）✗
+        #   现在：重试 RETRY 次仍失败 ⇒ 长等 30 分钟再试同一窗口（最多等 MAX_WAIT 小时）。
+        while df is None:
+            for attempt in range(1, RETRY + 1):
+                try:
+                    df = pro.report_rc(start_date=s, end_date=e)
+                    break
+                except Exception as exc:                  # noqa: BLE001
+                    print("  [%d/%d] %s~%s FAIL(第%d次) %s"
+                          % (i, len(todo), s, e, attempt, str(exc)[:60]), flush=True)
+                    if attempt < RETRY:
+                        time.sleep(SLEEP)
+            if df is None:
+                if waited >= MAX_WAIT:
+                    print("  [配额] %s~%s 已等 %.1f 小时仍失败 ⇒ 跳过（下次重跑会补）"
+                          % (s, e, waited / 3600), flush=True)
+                    break
+                print("  [配额] %s~%s 重试 %d 次失败 ⇒ 等 30 分钟再试（累计 %.1f 小时）"
+                      % (s, e, RETRY, waited / 3600), flush=True)
+                time.sleep(1800)
+                waited += 1800
         if df is None:
-            # 三次都失败 ⇒ 不写分片（下次重跑会补），并继续等下一轮配额
-            time.sleep(SLEEP)
             continue
 
         if df is None or not len(df):
