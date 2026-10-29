@@ -8,6 +8,10 @@ _commit_msg.txt
 
 # 大二进制数据（*.h5/*.pkl 可由 build_*.py 从 D:\rq 重建）
 *.h5
+# ★ 2026-10-29（用户：数据不要放 engine 里）—— 所有「拉取类」数据放 data/，一律不入库
+#   都能由 tools/ 里的脚本重建；仓库只留 data/README.md 说明来源
+data/*
+!data/README.md
 *.npy
 *.pkl
 
