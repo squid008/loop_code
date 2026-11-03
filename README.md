@@ -24,7 +24,7 @@ copy config.example.json config.local.json      # 首次；已存在就直接编
 }
 ```
 
-`engine/loop_env.py` 是**唯一读取方**：引擎、工具、看板、`strategies/` 都从它取数据根，
+`engine/loop_env.py` 是**唯一读取方**：引擎、工具、看板都从它取数据根，
 所以代码里**不再有盘符**。`active=auto` 时按"哪个 profile 的 `data_root` 下真有 `bundle/`"自动选；
 想锁死就写 `company` 或 `home`（写错会直接报错，不会偷偷换机器）。
 临时覆盖：环境变量 `LOOP_PROFILE=home` 或 `LOOP_DATA_ROOT=D:/rq`。
@@ -117,7 +117,6 @@ python tools/release_check.py     # 60 项守门；全绿 = 环境就绪
   · `history/loop_archive.legacy_pre_gen16.csv`（gen16 前 L2 旧快照，**`build_facs.py` 仍需读它**）
   · `history/research/`（**早期研究脚本留档**，91 个 `round*.py`/`probe_*`/归因拆解；**0 生产引用**，停更 09-08）
   · `history/ai_test_20260915/`（旧草稿区整体归档）· `history/20260915_cleanup/`（含 `manifest.txt` 记录来源与理由）
-- `strategies/` — 定稿 rqalpha 回测策略：`all01/`（all00/01/03 + factor_snapshot 数据）、`all04/`（barra 落地 + g6 数据）、`vol/`、`big_small/`，共享 `bt_utils.py`
 - `ai_test/` — **草稿区**（临时脚本/产物，可整删；`run_tracks.py` 等会自动重建所需子目录）
 
 ## 运行
@@ -146,9 +145,6 @@ Get-Content D:\quant\loop_code\engine\loop23C.log -Tail 20        # 当前代引
 Get-Content D:\quant\loop_code\engine\loop23C_err.log             # 当前代错误日志（空=正常）
 Get-Content D:\quant\loop_code\docs\loop_journal.md -Tail 30      # B角每代诊断 + AI 审查落档
 
-# 定稿策略回测（示例）
-cd D:\quant\loop_code\strategies\all04
-D:\miniconda3\envs\rqdata\python.exe all04.py
 ```
 
 ## 换机器：pull 之后怎么把「库 / facs / 曲线」重建出来（2026-09-17）
